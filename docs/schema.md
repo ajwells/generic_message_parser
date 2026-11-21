@@ -168,17 +168,53 @@ protocols:
 | `type` | keys | description |
 |--------|------|-------------|
 | `none` | | The whole buffer is one frame (datagrams, CAN payloads). No stream parser. |
-| `fixed` | `sync`, `size` | Fixed-size frames, optionally starting with a sync pattern. Without `size`, all messages must share one fixed size. Shorter messages are zero padded. |
-| `length_prefixed` | `sync`, `length: { field, covers, adjust }` | The size comes from a header field. `covers`: `body` (default), `header_body` or `all` (prefix through checksum). Covered length = value + `adjust`. |
+| `fixed` | `sync`, `size`, `escape` | Fixed-size frames, optionally starting with a sync pattern. Without `size`, all messages must share one fixed size. Shorter messages are zero padded. |
+| `length_prefixed` | `sync`, `length: { field, covers, adjust, counts }`, `escape` | The size comes from a header field. `covers`: `body` (default), `body_checksum` (body and checksum), `header_body` or `all` (prefix through checksum). Covered length = value + `adjust`. |
 | `delimited` | `start`, `end`, `escape` | Bounded by delimiters (`start` is optional). Identical start and end bytes (HDLC `0x7E`) may share a flag between frames. |
 | `custom` | `framer` | User type from `custom.framers` providing `static gmp::FrameScan scan(gmp::bytes_view)`. |
 
 Shared keys:
 - `max_frame`: largest frame and the stream buffer size. It is computed when every message is bounded, and required otherwise.
 - `sync` / `start` / `end`: a list of bytes `[0xAA, 0x55]`, a string `"$"`, or an integer `0xA5A5` (big endian).
-- `escape` (delimited only):
-  - `{ char: 0x7D, xor: 0x20 }` is HDLC/PPP style. Delimiter bytes and the escape byte are escaped.
-  - `{ char: 0xDB, map: { 0xC0: 0xDC, 0xDB: 0xDD } }` is SLIP style.
+- `escape` (`delimited`, `fixed` and `length_prefixed`): byte stuffing, see below.
+
+#### escape (reserved bytes)
+
+Reserved bytes never appear between the sync/start pattern and the end of the frame. Each one is sent as the escape
+`char` followed by a code byte:
+
+```yaml
+escape:
+  char: 0x81                 # escape byte; always reserved
+  code: index                # xor (default) | index | map
+  reserved: [0x80, 0x81]     # optional; default = sync/start bytes, end bytes, then char
+  base: 0x00                 # index only: code of the first reserved byte
+  xor: 0x20                  # xor only (default 0x20)
+  map: { 0xC0: 0xDC, 0xDB: 0xDD }   # map only: raw -> code; the keys are the reserved bytes
+```
+
+| `code` | reserved byte `b` is sent as | example |
+|--------|------------------------------|---------|
+| `xor` | `char, b ^ xor` | HDLC/PPP: `{ char: 0x7D, xor: 0x20 }` |
+| `index` | `char, base + position of b in reserved` | `{ char: 0x81, code: index, reserved: [0x80, 0x81] }`: `0x80` -> `81 00`, `0x81` -> `81 01` |
+| `map` | `char, map[b]` | SLIP: `{ char: 0xDB, map: { 0xC0: 0xDC, 0xDB: 0xDD } }` |
+
+- Up to 16 reserved bytes (the escape char included).
+- With `index` or `map`, the escape char must be in the reserved list / map.
+- No code may itself be a reserved byte, and codes must be unique. With `index`, use `base` to move the codes if `0x00` is
+  reserved.
+- `delimited`: the first `end` byte must be reserved.
+- `fixed` / `length_prefixed`: a sync byte that is not reserved only gives a warning. When it is reserved, a sync byte inside
+  a frame means the frame was cut short, and the parser restarts there at once.
+- Sizes count unescaped bytes: the `fixed` `size` and the `length` field value. `max_frame` (wire bytes) is doubled
+  automatically.
+- `length: { field: len, covers: body, counts: wire }` makes the length the body size on the wire (after escaping).
+  `covers: body_checksum` also counts the escaped checksum, which must then have `checksum.covers: body`.
+  Other coverages are rejected: a length that counts its own escaped bytes, or a checksum over it, cannot always be
+  encoded.
+- The checksum is computed over the unescaped bytes. Use `checksum.over: wire` for protocols that compute it over the
+  escaped bytes. The checksum itself is escaped either way.
+- Decoding unescapes in place, so `parse` / `open` / `decode` take a mutable buffer.
 
 ### checksum
 
@@ -186,6 +222,7 @@ Shared keys:
 checksum:
   algo: crc16_ccitt      # built-in name, a custom.checksums name, or { crc: {...} }
   covers: header_body    # binary: header_body (default), body, all (prefix..body)
+  over: unescaped        # with framing.escape: unescaped (default) or wire (the escaped bytes)
   endian: big            # byte order of the stored checksum
   separator: "*"         # text: checksum follows this character as hex digits
   required: true         # text: reject frames without a checksum

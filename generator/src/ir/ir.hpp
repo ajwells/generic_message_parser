@@ -261,21 +261,30 @@ struct ChecksumSpec {
     std::size_t size = 0;              // bytes (binary) / bytes encoded as hex pairs (text)
     Endian endian = Endian::Big;
     Covers covers = Covers::HeaderBody;
+    bool over_wire = false;            // binary + escape: computed over the escaped (wire) bytes
     // text
     char separator = '*';
     bool required = true;
 };
 
 struct EscapeSpec {
+    enum class Code { Xor, Map, Index };
     bool enabled = false;
+    SourceLoc loc;
     std::uint8_t esc = 0;
+    Code code = Code::Xor;
     std::uint8_t xor_mask = 0x20;
-    std::vector<std::pair<std::uint8_t, std::uint8_t>> map;  // raw -> code (SLIP style)
+    std::uint8_t base = 0;                                   // index: code of the first reserved byte
+    std::vector<std::uint8_t> reserved;                      // explicit reserved list (empty = default)
+    std::vector<std::pair<std::uint8_t, std::uint8_t>> map;  // raw -> code (map style)
+
+    // derived: every byte that must be escaped (esc included) and the code sent for it
+    std::vector<std::pair<std::uint8_t, std::uint8_t>> table;
 };
 
 struct FramingSpec {
     enum class Type { None, Fixed, LengthPrefixed, Delimited, Custom };
-    enum class LengthCovers { Body, HeaderBody, All };
+    enum class LengthCovers { Body, BodyChecksum, HeaderBody, All };
     Type type = Type::None;
     SourceLoc loc;
     std::vector<std::uint8_t> sync;   // sync word / start delimiter
@@ -285,6 +294,7 @@ struct FramingSpec {
     std::string length_field;         // header field holding the length
     LengthCovers length_covers = LengthCovers::Body;
     std::int64_t length_adjust = 0;   // actual covered length = value + adjust
+    bool length_counts_wire = false;  // with escape + covers body: the length counts body bytes on the wire
     std::optional<std::size_t> max_frame;
     const CustomFramer* custom = nullptr;
     std::string custom_name;

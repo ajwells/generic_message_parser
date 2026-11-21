@@ -434,7 +434,7 @@ struct Hdlc {
     template <std::size_t Capacity = max_frame>
     using Stream = gmp::StreamParser<Hdlc, Capacity>;
 
-    static constexpr gmp::DelimitedConfig framing_config{gmp::Pattern{{0x7E}, 1}, gmp::Pattern{{0x7E}, 1}, gmp::EscapeConfig{true, 0x7D, 0x20, 0, {}, {}, {0x7E}, 1}, max_frame};
+    static constexpr gmp::DelimitedConfig framing_config{gmp::Pattern{{0x7E}, 1}, gmp::Pattern{{0x7E}, 1}, gmp::make_xor_escape(0x7D, 0x20, {0x7E}), max_frame};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_delimited(b, framing_config); }
 
     /// A validated frame split into its parts (views into the input buffer).
@@ -656,7 +656,7 @@ struct Summed {
     template <std::size_t Capacity = max_frame>
     using Stream = gmp::StreamParser<Summed, Capacity>;
 
-    static constexpr gmp::DelimitedConfig framing_config{gmp::Pattern{{0xC0}, 1}, gmp::Pattern{{0xC0}, 1}, gmp::EscapeConfig{true, 0xDB, 0x20, 2, {0xC0, 0xDB}, {0xDC, 0xDD}, {}, 0}, max_frame};
+    static constexpr gmp::DelimitedConfig framing_config{gmp::Pattern{{0xC0}, 1}, gmp::Pattern{{0xC0}, 1}, gmp::make_map_escape(0xDB, {0xC0, 0xDB}, {0xDC, 0xDD}), max_frame};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_delimited(b, framing_config); }
 
     /// A validated frame split into its parts (views into the input buffer).

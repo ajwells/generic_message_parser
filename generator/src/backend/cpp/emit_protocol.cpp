@@ -32,29 +32,25 @@ std::string pattern(const std::vector<std::uint8_t>& v) {
     return "gmp::Pattern{{" + byte_list(v) + "}, " + sz(v.size()) + "}";
 }
 
-std::string escape_config(Ctx& c, const Protocol& p) {
+std::string escape_config(const Protocol& p) {
     const auto& e = p.framing.escape;
     if (!e.enabled) return "gmp::EscapeConfig{}";
-    std::string raw, code, reserved;
-    std::size_t reserved_len = 0;
-    for (std::size_t i = 0; i < e.map.size(); ++i) {
-        raw += (i ? ", " : "") + hex_byte(e.map[i].first);
-        code += (i ? ", " : "") + hex_byte(e.map[i].second);
+    std::string raw, code;
+    for (const auto& [r, c] : e.table) {
+        if (e.code == EscapeSpec::Code::Xor && r == e.esc) continue;  // always escaped
+        raw += (raw.empty() ? "" : ", ") + hex_byte(r);
+        code += (code.empty() ? "" : ", ") + hex_byte(c);
     }
-    if (e.map.empty()) {
-        std::set<std::uint8_t> r;
-        for (auto b : p.framing.sync) r.insert(b);
-        for (auto b : p.framing.end) r.insert(b);
-        r.erase(e.esc);
-        if (r.size() > 4) c.diag.error(p.framing.loc, "escape: at most 4 distinct delimiter bytes are supported");
-        for (auto b : r) {
-            if (reserved_len == 4) break;
-            reserved += (reserved_len ? ", " : "") + hex_byte(b);
-            ++reserved_len;
-        }
+    switch (e.code) {
+        case EscapeSpec::Code::Xor:
+            return "gmp::make_xor_escape(" + hex_byte(e.esc) + ", " + hex_byte(e.xor_mask) + ", {" + raw + "})";
+        case EscapeSpec::Code::Index:
+            return "gmp::make_index_escape(" + hex_byte(e.esc) + ", {" + raw + "}" +
+                   (e.base ? ", " + hex_byte(e.base) : std::string()) + ")";
+        case EscapeSpec::Code::Map:
+            return "gmp::make_map_escape(" + hex_byte(e.esc) + ", {" + raw + "}, {" + code + "})";
     }
-    return "gmp::EscapeConfig{true, " + hex_byte(e.esc) + ", " + hex_byte(e.xor_mask) + ", " + sz(e.map.size()) + ", {" +
-           raw + "}, {" + code + "}, {" + reserved + "}, " + sz(reserved_len) + "}";
+    return "gmp::EscapeConfig{}";
 }
 
 char text_sep(const Protocol& p) { return p.separator; }
@@ -71,6 +67,7 @@ public:
         text_ = p.format == Format::Text;
         has_header_ = !text_ && !p.header->fields.empty();
         escape_ = p.framing.escape.enabled;
+        wire_cs_ = escape_ && p.checksum.present && p.checksum.over_wire && !text_;
         stream_ = p.framing.type != FT::None && p.max_frame > 0;
         all_struct_ = std::all_of(p.messages.begin(), p.messages.end(), [](const Message* m) { return m->want_struct; });
         all_view_ = std::all_of(p.messages.begin(), p.messages.end(), [](const Message* m) { return m->want_view; });
@@ -137,7 +134,8 @@ private:
                 w_.line("static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::FrameScan::frame(b.size(), b.size(), b.size()); }");
                 break;
             case FT::Fixed:
-                w_.line("static constexpr gmp::FixedFrameConfig framing_config{" + pattern(fr.sync) + ", " + sz(*fr.size) + "};");
+                w_.line("static constexpr gmp::FixedFrameConfig framing_config{" + pattern(fr.sync) + ", " + sz(*fr.size) +
+                        (escape_ ? ", " + escape_config(p_) + ", suffix_size" : std::string()) + "};");
                 w_.line("static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_fixed(b, framing_config); }");
                 break;
             case FT::LengthPrefixed: {
@@ -146,18 +144,26 @@ private:
                 const auto trailer = static_cast<std::int64_t>(p_.trailer_size);
                 const auto suffix = static_cast<std::int64_t>(p_.suffix_size);
                 std::int64_t add = fr.length_adjust + suffix;
-                if (fr.length_covers == FramingSpec::LengthCovers::Body) add += prefix + header + trailer;
+                if (fr.length_counts_wire) add = fr.length_adjust;  // body wire size = value + adjust
+                else if (fr.length_covers == FramingSpec::LengthCovers::Body) add += prefix + header + trailer;
+                else if (fr.length_covers == FramingSpec::LengthCovers::BodyChecksum) add += prefix + header;
                 else if (fr.length_covers == FramingSpec::LengthCovers::HeaderBody) add += prefix + trailer;
                 w_.line("static constexpr gmp::LengthPrefixedConfig framing_config{" + pattern(fr.sync) + ", " +
                         sz(p_.length_field_offset) + ", " + sz(prim_size(fr.length->prim)) + ", " +
                         endian_expr(fr.length->endian) + ", " + int_literal(add) + ", " +
-                        sz(p_.prefix_size + p_.header_size + p_.trailer_size + p_.suffix_size) + ", max_frame};");
+                        sz(p_.prefix_size + p_.header_size + p_.trailer_size + p_.suffix_size) + ", max_frame" +
+                        (escape_ ? ", " + escape_config(p_) + ", suffix_size" : std::string()) +
+                        (fr.length_counts_wire
+                             ? std::string(", true, header_size, trailer_size, ") +
+                                   (fr.length_covers == FramingSpec::LengthCovers::BodyChecksum ? "true" : "false")
+                             : std::string()) +
+                        "};");
                 w_.line("static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_length_prefixed(b, framing_config); }");
                 break;
             }
             case FT::Delimited:
                 w_.line("static constexpr gmp::DelimitedConfig framing_config{" + pattern(fr.sync) + ", " + pattern(fr.end) +
-                        ", " + escape_config(c_, p_) + ", max_frame};");
+                        ", " + escape_config(p_) + ", max_frame};");
                 w_.line("static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_delimited(b, framing_config); }");
                 break;
             case FT::Custom: {
@@ -196,6 +202,7 @@ private:
         if (escape_) w_.line("/// The frame is unescaped in place.");
         w_.open("[[nodiscard]] static gmp::Result<Frame> open(" + frame_param() + ") noexcept {");
         w_.line("if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) " + fail("Truncated"));
+        if (wire_cs_) emit_wire_checksum();
         if (escape_) {
             w_.line("auto n = gmp::unescape_in_place(frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size), framing_config.escape);");
             w_.line("if (!n) return gmp::fail(n.error());");
@@ -207,6 +214,29 @@ private:
         else emit_open_binary();
         w_.close();
         w_.line();
+    }
+
+    /// checksum.over: wire - compute the checksum over the escaped bytes before unescaping.
+    void emit_wire_checksum() {
+        w_.line("std::uint64_t computed = 0;  // checksum.over: wire");
+        w_.open("{");
+        w_.line("const gmp::bytes_view wire = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);");
+        w_.line("const auto un = gmp::unescaped_size(wire, framing_config.escape);");
+        w_.line("if (!un) return gmp::fail(un.error());");
+        w_.line("if (*un < header_size + trailer_size) " + fail("Truncated"));
+        w_.line("const auto t = gmp::walk_escaped(wire, 0, *un - trailer_size, framing_config.escape);");
+        w_.line("if (t.kind != gmp::EscapeWalk::Kind::done) return gmp::fail(t.kind == gmp::EscapeWalk::Kind::bad ? t.error : gmp::Error::Truncated);");
+        std::string covered;
+        switch (p_.checksum.covers) {
+            case ChecksumSpec::Covers::HeaderBody: covered = "wire.first(t.wire)"; break;
+            case ChecksumSpec::Covers::Body:
+                w_.line("const auto h = gmp::walk_escaped(wire, 0, header_size, framing_config.escape);");
+                covered = "wire.subspan(h.wire, t.wire - h.wire)";
+                break;
+            case ChecksumSpec::Covers::All: covered = "gmp::bytes_view(frame.data(), prefix_size + t.wire)"; break;
+        }
+        w_.line("computed = static_cast<std::uint64_t>(" + checksum_call(covered) + ");");
+        w_.close();
     }
 
     void emit_open_binary() {
@@ -225,7 +255,8 @@ private:
             w_.open("{");
             w_.line("const auto stored = gmp::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, " +
                     endian_expr(p_.checksum.endian) + ");");
-            emit_checksum_compare(covered, "stored");
+            if (wire_cs_) w_.line("if (stored != computed) " + fail("BadChecksum"));
+            else emit_checksum_compare(covered, "stored");
             w_.close();
         }
         w_.line("Frame f;");
@@ -421,34 +452,57 @@ private:
             const auto n = prim_size(fr.length->prim);
             std::string covered;
             switch (fr.length_covers) {
-                case FramingSpec::LengthCovers::Body: covered = "body_len"; break;
+                case FramingSpec::LengthCovers::Body:
+                    covered = fr.length_counts_wire
+                                  ? "body_len + gmp::escape_overhead(gmp::bytes_view(out.data() + body_at, body_len), framing_config.escape)"
+                                  : "body_len";
+                    break;
+                case FramingSpec::LengthCovers::BodyChecksum:
+                    covered = fr.length_counts_wire ? "body_wire + trailer_wire" : "body_len + trailer_size";
+                    break;
                 case FramingSpec::LengthCovers::HeaderBody: covered = "header_size + body_len"; break;
                 case FramingSpec::LengthCovers::All: covered = "prefix_size + header_size + body_len + trailer_size"; break;
             }
-            const std::string maxv = n >= 8 ? "UINT64_MAX" : sz((std::uint64_t{1} << (8 * n)) - 1) + "ull";
             w_.open("{");
+            if (fr.length_counts_wire && fr.length_covers == FramingSpec::LengthCovers::BodyChecksum) emit_wire_trailer_size();
             w_.line("const std::int64_t value = static_cast<std::int64_t>(" + covered + ") - (" + int_literal(fr.length_adjust) + ");");
-            w_.line("if (value < 0 || static_cast<std::uint64_t>(value) > " + maxv + ") " + fail("BadLength"));
+            w_.line("if (value < 0 || static_cast<std::uint64_t>(value) > " + max_uint(n) + ") " + fail("BadLength"));
             w_.line("w.patch_uint(header_at + " + sz(*fr.length->static_offset) + ", static_cast<std::uint64_t>(value), " +
                     sz(n) + ", " + endian_expr(fr.length->endian) + ");");
             w_.close();
         }
-        if (p_.checksum.present) {
+        if (p_.checksum.present && !wire_cs_) {
             std::string covered;
             switch (p_.checksum.covers) {
                 case ChecksumSpec::Covers::HeaderBody: covered = "w.written().subspan(header_at)"; break;
                 case ChecksumSpec::Covers::Body: covered = "w.written().subspan(body_at)"; break;
                 case ChecksumSpec::Covers::All: covered = "w.written()"; break;
             }
-            bool fn = false;
-            const auto impl = checksum_impl(p_.checksum, fn);
-            const auto call = fn ? impl + "(" + covered + ")" : impl + "::compute(" + covered + ")";
-            w_.line("const auto cs = static_cast<std::uint64_t>(" + call + ");");
+            w_.line("const auto cs = static_cast<std::uint64_t>(" + checksum_call(covered) + ");");
             w_.line("if (auto e = w.write_uint(cs, trailer_size, " + endian_expr(p_.checksum.endian) +
                     "); !e) return gmp::fail(e.error());");
         }
         w_.line("std::size_t total = w.position();");
-        if (escape_) {
+        if (wire_cs_) {
+            if (p_.checksum.covers == ChecksumSpec::Covers::Body)
+                w_.line("const std::size_t body_wire = body_at + gmp::escape_overhead(gmp::bytes_view(out.data() + prefix_size, "
+                        "body_at - prefix_size), framing_config.escape);");
+            w_.line("auto esc = gmp::escape_in_place(out, prefix_size, total - prefix_size, framing_config.escape);");
+            w_.line("if (!esc) return gmp::fail(esc.error());");
+            w_.line("total = prefix_size + *esc;");
+            std::string covered;
+            switch (p_.checksum.covers) {
+                case ChecksumSpec::Covers::HeaderBody: covered = "gmp::bytes_view(out.data() + prefix_size, total - prefix_size)"; break;
+                case ChecksumSpec::Covers::Body: covered = "gmp::bytes_view(out.data() + body_wire, total - body_wire)"; break;
+                case ChecksumSpec::Covers::All: covered = "gmp::bytes_view(out.data(), total)"; break;
+            }
+            w_.line("const auto cs = static_cast<std::uint64_t>(" + checksum_call(covered) + ");  // over the wire bytes");
+            w_.line("if (out.size() - total < trailer_size) " + fail("BufferFull"));
+            w_.line("gmp::store_uint(out.data() + total, trailer_size, cs, " + endian_expr(p_.checksum.endian) + ");");
+            w_.line("auto esc_cs = gmp::escape_in_place(out, total, trailer_size, framing_config.escape);");
+            w_.line("if (!esc_cs) return gmp::fail(esc_cs.error());");
+            w_.line("total += *esc_cs;");
+        } else if (escape_) {
             w_.line("auto esc = gmp::escape_in_place(out, prefix_size, total - prefix_size, framing_config.escape);");
             w_.line("if (!esc) return gmp::fail(esc.error());");
             w_.line("total = prefix_size + *esc;");
@@ -460,6 +514,42 @@ private:
         }
         w_.line("return total;");
         w_.close();
+    }
+
+    /// length.counts: wire + covers: body_checksum - the checksum only covers the body (checked in lowering),
+    /// so it can be computed before the length is written to find how many of its bytes need escaping.
+    void emit_wire_trailer_size() {
+        w_.line("// the length counts the escaped body and the escaped checksum");
+        w_.line("const std::size_t body_wire = body_len + gmp::escape_overhead(gmp::bytes_view(out.data() + body_at, body_len), framing_config.escape);");
+        if (!p_.checksum.present) {
+            w_.line("const std::size_t trailer_wire = 0;");
+            return;
+        }
+        if (wire_cs_) {
+            // over the escaped body: escape it in place, checksum it, and restore it
+            w_.line("std::uint64_t cs0 = 0;");
+            w_.open("{");
+            w_.line("auto e = gmp::escape_in_place(out, body_at, body_len, framing_config.escape);");
+            w_.line("if (!e) return gmp::fail(e.error());");
+            w_.line("cs0 = static_cast<std::uint64_t>(" + checksum_call("gmp::bytes_view(out.data() + body_at, *e)") + ");");
+            w_.line("(void)gmp::unescape_in_place(out.subspan(body_at, *e), framing_config.escape);");
+            w_.close();
+        } else {
+            w_.line("const auto cs0 = static_cast<std::uint64_t>(" + checksum_call("gmp::bytes_view(out.data() + body_at, body_len)") + ");");
+        }
+        w_.line("std::array<std::uint8_t, 8> cs_bytes{};");
+        w_.line("gmp::store_uint(cs_bytes.data(), trailer_size, cs0, " + endian_expr(p_.checksum.endian) + ");");
+        w_.line("const std::size_t trailer_wire = trailer_size + gmp::escape_overhead(gmp::bytes_view(cs_bytes.data(), trailer_size), framing_config.escape);");
+    }
+
+    static std::string max_uint(std::size_t n) {
+        return n >= 8 ? "UINT64_MAX" : sz((std::uint64_t{1} << (8 * n)) - 1) + "ull";
+    }
+
+    std::string checksum_call(const std::string& covered) const {
+        bool fn = false;
+        const auto impl = checksum_impl(p_.checksum, fn);
+        return fn ? impl + "(" + covered + ")" : impl + "::compute(" + covered + ")";
     }
 
     void emit_encode_text(std::size_t i) {
@@ -505,7 +595,7 @@ private:
     Ctx& c_;
     CodeWriter& w_;
     const Protocol& p_;
-    bool text_ = false, has_header_ = false, escape_ = false, stream_ = false, all_struct_ = false, all_view_ = false;
+    bool text_ = false, has_header_ = false, escape_ = false, wire_cs_ = false, stream_ = false, all_struct_ = false, all_view_ = false;
 };
 
 } // namespace

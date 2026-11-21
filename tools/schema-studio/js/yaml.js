@@ -179,30 +179,40 @@
       if (fr.type === 'delimited') {
         const end = G.patternBytes(fr.endMode, fr.end) || [];
         if (end.length) fo.end = patternNode(fr.endMode, fr.end);
-        if (fr.escape.enabled) {
-          const e = { char: raw(fr.escape.char || '0x7D') };
-          if (fr.escape.style === 'map') {
-            const m = {};
-            (fr.escape.map || '').split(',').forEach((pair) => {
-              const [a, b] = pair.split(':').map((x) => (x || '').trim());
-              if (G.isInt(a) && G.isInt(b)) m[a] = raw(b);
-            });
-            e.map = flow(m);
-          } else e.xor = raw(fr.escape.xor || '0x20');
-          fo.escape = flow(e);
-        }
       }
     }
+    const escapable = ['delimited', 'fixed', 'length_prefixed'].includes(fr.type);
+    const escapeNode = () => {
+      const e = { char: raw(fr.escape.char || '0x7D') };
+      if (fr.escape.style === 'map') {
+        const m = {};
+        (fr.escape.map || '').split(',').forEach((pair) => {
+          const [a, b] = pair.split(':').map((x) => (x || '').trim());
+          if (G.isInt(a) && G.isInt(b)) m[a] = raw(b);
+        });
+        e.map = flow(m);
+        return flow(e);
+      }
+      if (fr.escape.style === 'index') e.code = 'index';
+      const list = G.parseIntList(fr.escape.reserved);
+      if (list && list.length) e.reserved = list.map((b) => raw(G.hex2(b)));
+      if (fr.escape.style === 'index') { if (G.isInt(fr.escape.base) && G.parseInt(fr.escape.base) !== 0) e.base = raw(fr.escape.base); }
+      else e.xor = raw(fr.escape.xor || '0x20');
+      return flow(e);
+    };
     if (fr.type === 'fixed' && G.isInt(fr.size)) fo.size = raw(fr.size);
     if (fr.type === 'length_prefixed') {
       const l = { field: fr.lengthField || 'length' };
       if (fr.covers && fr.covers !== 'body') l.covers = fr.covers;
+      if (fr.counts === 'wire' && fr.escape.enabled) l.counts = 'wire';
       if (G.isInt(fr.adjust) && G.parseInt(fr.adjust) !== 0) l.adjust = raw(fr.adjust);
       fo.length = flow(l);
     }
     if (fr.type === 'custom') fo.framer = fr.framer;
     if (G.isInt(fr.maxFrame)) fo.max_frame = raw(fr.maxFrame);
-    o.framing = fr.type === 'length_prefixed' || fr.escape.enabled ? fo : flow(fo);
+    const escaping = fr.escape.enabled && escapable;
+    if (escaping) fo.escape = escapeNode();
+    o.framing = fr.type === 'length_prefixed' || escaping ? fo : flow(fo);
 
     const c = p.checksum;
     if (c.enabled) {
@@ -218,6 +228,7 @@
       } else co.algo = c.algo;
       if (fmt === 'binary' && c.covers && c.covers !== 'header_body') co.covers = c.covers;
       if (fmt === 'binary' && has(c.endian)) co.endian = c.endian;
+      if (fmt === 'binary' && fr.escape.enabled && c.over === 'wire') co.over = 'wire';
       if (fmt === 'text' && has(c.separator) && c.separator !== '*') co.separator = c.separator;
       if (fmt === 'text' && !c.required) co.required = false;
       o.checksum = flow(co);
@@ -466,18 +477,23 @@
         type: fr.type || 'none', syncMode: sync.mode, sync: sync.text, endMode: end.mode, end: end.text,
         size: str(fr.size), maxFrame: str(fr.max_frame), framer: str(fr.framer),
         lengthField: str((fr.length || {}).field), covers: (fr.length || {}).covers || 'body', adjust: str((fr.length || {}).adjust),
+        counts: (fr.length || {}).counts === 'wire' ? 'wire' : '',
       });
       if (fr.escape) {
+        const ex = fr.escape;
         proto.framing.escape = {
-          enabled: true, style: fr.escape.map ? 'map' : 'xor', char: hexOrDec(fr.escape.char), xor: hexOrDec(fr.escape.xor ?? 0x20),
-          map: fr.escape.map ? Object.entries(fr.escape.map).map(([a, b]) => `${hexOrDec(Number(a))}:${hexOrDec(b)}`).join(', ') : '0xC0:0xDC, 0xDB:0xDD',
+          enabled: true, style: ex.code === 'index' ? 'index' : ex.map || ex.code === 'map' ? 'map' : 'xor',
+          char: hexOrDec(ex.char), xor: hexOrDec(ex.xor ?? 0x20),
+          map: ex.map ? Object.entries(ex.map).map(([a, b]) => `${hexOrDec(Number(a))}:${hexOrDec(b)}`).join(', ') : '0xC0:0xDC, 0xDB:0xDD',
+          reserved: Array.isArray(ex.reserved) ? ex.reserved.map((b) => hexOrDec(b)).join(', ') : '',
+          base: ex.base != null ? hexOrDec(ex.base) : '',
         };
       }
       if (p.checksum) {
         const ck = p.checksum;
         Object.assign(proto.checksum, {
           enabled: true, covers: ck.covers || 'header_body', endian: str(ck.endian),
-          separator: ck.separator || '*', required: ck.required !== false,
+          separator: ck.separator || '*', required: ck.required !== false, over: ck.over === 'wire' ? 'wire' : '',
         });
         if (ck.algo && typeof ck.algo === 'object' && ck.algo.crc) {
           const cr = ck.algo.crc;

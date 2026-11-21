@@ -46,6 +46,71 @@ window.GMP = window.GMP || {};
 
   G.newConversion =(over = {}) => ({ uid: G.uid(), name: '', scale: '', offset: '', unit: '', ...over });
 
+  /** Integer list "0x80, 0x81" / "80 81" -> numbers (null when any entry is not an integer). */
+  G.parseIntList = (text) => {
+    const parts = String(text || '').split(/[\s,]+/).filter(Boolean);
+    const out = parts.map((x) => (G.isInt(x) ? G.parseInt(x) : (/^[0-9a-f]{1,2}$/i.test(x) ? parseInt(x, 16) : NaN)));
+    return out.some((v) => Number.isNaN(v) || v < 0 || v > 255) ? null : out;
+  };
+
+  /**
+   * Resolved byte stuffing of a protocol (mirrors the generator): the escape byte, the style and
+   * [raw, code] for every reserved byte (escape byte included). `errors` lists problems; null when off.
+   */
+  G.escapeTable = (s, p) => {
+    const fr = p.framing, e = fr.escape;
+    if (!e || !e.enabled) return null;
+    const errors = [];
+    const hx = G.hex2;
+    const esc = G.parseInt(e.char);
+    if (Number.isNaN(esc) || esc < 0 || esc > 255) errors.push('escape byte must be 0..255');
+    const style = e.style === 'map' || e.style === 'index' ? e.style : 'xor';
+    const reserved = [];
+    const add = (b) => { if (!reserved.includes(b)) reserved.push(b); };
+    let codes = null;
+    if (style === 'map') {
+      codes = [];
+      String(e.map || '').split(',').forEach((pair) => {
+        if (!pair.trim()) return;
+        const [a, b] = pair.split(':').map((x) => G.parseInt((x || '').trim()));
+        if (Number.isNaN(a) || Number.isNaN(b)) { errors.push(`map entry "${pair.trim()}" must be raw:code`); return; }
+        if (reserved.includes(a)) errors.push(`map lists ${hx(a)} twice`);
+        reserved.push(a); codes.push(b);
+      });
+      if (!reserved.includes(esc)) errors.push(`map must include the escape byte ${hx(esc)} (it has to be escaped too)`);
+    } else if (String(e.reserved || '').trim()) {
+      const list = G.parseIntList(e.reserved);
+      if (!list) errors.push('reserved bytes must be a list like "0x80, 0x81"');
+      for (const b of list || []) {
+        if (reserved.includes(b)) errors.push(`reserved lists ${hx(b)} twice`);
+        reserved.push(b);
+      }
+      if (style === 'index' && !reserved.includes(esc)) errors.push(`reserved bytes must include the escape byte ${hx(esc)}`);
+      if (style === 'xor') add(esc);
+    } else {
+      const sync = G.patternBytes(fr.syncMode, fr.sync) || [];
+      const end = fr.type === 'delimited' ? G.patternBytes(fr.endMode, fr.end) || [] : [];
+      sync.forEach(add); end.forEach(add); add(esc);
+    }
+    if (reserved.length > 16) errors.push('at most 16 reserved bytes (escape byte included)');
+    const xor = G.parseInt(e.xor || '0x20');
+    const base = G.parseInt(e.base || '0') || 0;
+    const table = reserved.map((b, i) => [b, style === 'xor' ? (b ^ xor) & 0xff : style === 'index' ? base + i : codes[i]]);
+    if (style === 'index' && base + reserved.length - 1 > 255) errors.push('base + reserved index exceeds 0xFF');
+    table.forEach(([b, c], i) => {
+      if (reserved.includes(c)) errors.push(`code ${hx(c)} for ${hx(b)} is itself a reserved byte${style === 'index' ? ' (set a base to move the codes)' : ''}`);
+      const j = table.findIndex((x, k) => k < i && x[1] === c);
+      if (j >= 0) errors.push(`code ${hx(c)} is used for both ${hx(table[j][0])} and ${hx(b)}`);
+    });
+    const byRaw = new Map(table), byCode = new Map(table.map(([b, c]) => [c, b]));
+    return {
+      esc, style, xor, base, reserved, table, errors,
+      isReserved: (b) => byRaw.has(b),
+      encode: (b) => (byRaw.has(b) ? byRaw.get(b) : null),
+      decode: (c) => (style === 'xor' ? (c ^ xor) & 0xff : (byCode.has(c) ? byCode.get(c) : null)),
+    };
+  };
+
   /** Bytes on the wire for a checksum algorithm (protocol checksum or field `crc`); 0 when unknown. */
   G.checksumSize = (s, algo, crcParams) => {
     if (!algo) return 0;
@@ -66,11 +131,11 @@ window.GMP = window.GMP || {};
     header: [],
     framing: {
       type: 'none', syncMode: 'hex', sync: '', endMode: 'hex', end: '', size: '',
-      lengthField: '', covers: 'body', adjust: '', maxFrame: '', framer: '',
-      escape: { enabled: false, style: 'xor', char: '0x7D', xor: '0x20', map: '0xC0:0xDC, 0xDB:0xDD' },
+      lengthField: '', covers: 'body', adjust: '', counts: '', maxFrame: '', framer: '',
+      escape: { enabled: false, style: 'xor', char: '0x7D', xor: '0x20', map: '0xC0:0xDC, 0xDB:0xDD', reserved: '', base: '' },
     },
     checksum: {
-      enabled: false, algo: 'crc16_ccitt', covers: 'header_body', endian: '', separator: '*', required: true,
+      enabled: false, algo: 'crc16_ccitt', covers: 'header_body', endian: '', separator: '*', required: true, over: '',
       crc: { width: '16', poly: '0x1021', init: '0xFFFF', refin: false, refout: false, xorout: '0x0' },
     },
     message_type: { kind: 'none', field: '', token: '0' },

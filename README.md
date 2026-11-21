@@ -75,9 +75,10 @@ stream.feed(chunk, gmp::overloaded{
 });
 ```
 
-Working programs are in [examples/](examples): `binary_telemetry`, `nmea_text`, `bitpacked_can`, `custom_codec` and
+Working programs are in [examples/](examples): `binary_telemetry`, `nmea_text`, `bitpacked_can`, `custom_codec`,
 `sensirion_sht4x` (an I²C humidity sensor with per-word CRCs, built from its datasheet; `sht4x.yaml` has one message per
-command, `sht4x_enum.yaml` has the commands as an enum).
+command, `sht4x_enum.yaml` has the commands as an enum) and `reserved_sync` (a serial link where `0x80` is reserved as the
+sync byte, escaped as `81 00` / `81 01` everywhere else).
 
 **Prefer a visual editor?** Open [`tools/schema-studio/index.html`](tools/schema-studio) in a browser. You build
 schemas with forms on the left and see a size-proportional layout of every message and frame on the right, then
@@ -461,8 +462,8 @@ protocols:
 | `type` | keys | how frames are found |
 |--------|------|----------------------|
 | `none` | | The whole buffer is one frame. Use it for datagrams, CAN payloads, or anything already split by a lower layer. Whole-buffer mode only; there is no stream parser. |
-| `fixed` | `sync`, `size` | Every frame is `size` bytes, optionally starting with a `sync` pattern. Without `size`, every message must have the same fixed size and the frame size is derived. Bodies shorter than the frame are zero padded on encode. Without `sync` the parser cannot resynchronise, so a bad frame is dropped whole. |
-| `length_prefixed` | `sync`, `length` | A header field gives the size. `length.field` names the header field (unsigned integer). `length.covers` says what the value measures: `body` (default), `header_body`, or `all` (prefix through checksum). `length.adjust` is added to the value: covered size = value + adjust. On encode the field is filled in automatically. |
+| `fixed` | `sync`, `size`, `escape` | Every frame is `size` bytes, optionally starting with a `sync` pattern. Without `size`, every message must have the same fixed size and the frame size is derived. Bodies shorter than the frame are zero padded on encode. Without `sync` the parser cannot resynchronise, so a bad frame is dropped whole. |
+| `length_prefixed` | `sync`, `length`, `escape` | A header field gives the size. `length.field` names the header field (unsigned integer). `length.covers` says what the value measures: `body` (default), `body_checksum` (body and checksum), `header_body`, or `all` (prefix through checksum). `length.adjust` is added to the value: covered size = value + adjust. With `escape`, `length.counts: wire` makes the value the body size on the wire (see below). On encode the field is filled in automatically. |
 | `delimited` | `start`, `end`, `escape` | Frames bounded by delimiters. `start` is optional (without it, frames are separated by `end` only, like lines); `end` is required. If a new `start` appears before `end`, the partial frame is dropped (`BadDelimiter`). When `start` and `end` are the same (HDLC `0x7E`), one flag may close a frame and open the next. |
 | `custom` | `framer` | A user framer from `custom.framers` decides frame boundaries. |
 
@@ -473,7 +474,37 @@ Shared framing keys:
 | `sync` / `start` | Bytes at the start of every frame. Synonyms: use `sync` for binary sync words and `start` for delimiters. |
 | `end` | Bytes ending every frame (`delimited`). |
 | `max_frame` | Largest frame in bytes. It bounds the length check and sizes the stream buffer. Computed automatically for binary protocols whose messages are all bounded (doubled when escaping is on). Required for text protocols and unbounded messages. |
-| `escape` | Byte stuffing for `delimited` frames, so delimiter bytes can appear in the payload. `{ char: 0x7D, xor: 0x20 }` is HDLC/PPP style: the escape byte and every delimiter byte are sent as `char, byte ^ xor`. `{ char: 0xDB, map: { 0xC0: 0xDC, 0xDB: 0xDD } }` is SLIP style, with explicit replacement codes (up to 4 entries). Decoding unescapes in place, so `parse`/`open`/`decode` of escaped protocols take a mutable buffer. |
+| `escape` | Byte stuffing for `delimited`, `fixed` and `length_prefixed` frames, so reserved bytes (such as a sync byte) never appear inside a frame. See [Reserved bytes and escaping](#reserved-bytes-and-escaping). |
+
+#### Reserved bytes and escaping
+
+Some links reserve byte values: for example, `0x80` may only ever mean "start of frame". `escape` replaces every reserved byte
+between the sync pattern and the end of the frame with two bytes: the escape `char` and a code.
+
+```yaml
+framing:
+  type: length_prefixed
+  sync: [0x80]
+  length: { field: len }
+  escape: { char: 0x81, code: index, reserved: [0x80, 0x81] }   # 0x80 -> 81 00, 0x81 -> 81 01
+```
+
+| key | description |
+|-----|-------------|
+| `char` | The escape byte. It is always reserved. |
+| `code` | How the code byte is chosen. `xor` (default) sends `b ^ xor`, as in HDLC/PPP. `index` sends the position of `b` in `reserved`, plus `base`. `map` sends `map[b]`, as in SLIP. |
+| `reserved` | The bytes to escape, in order (the order gives the `index` codes). The default is the sync/start bytes, then the end bytes, then `char`. With `index`, `char` must be in the list. Up to 16 bytes. |
+| `base` | `index` only: the code of the first reserved byte (default `0`). Use it when `0x00` is reserved, because no code may be a reserved byte. |
+| `xor` | `xor` only: the mask (default `0x20`). |
+| `map` | `map` only: `{ raw: code }`. The keys are the reserved bytes and must include `char`. |
+
+Escaping rules:
+- **Sizes:** the `fixed` frame `size` and the `length` field count unescaped bytes. The parser reads the length through the escaping and then walks the escaped bytes to find where the frame ends.
+- **Lengths counting wire bytes:** for links whose length field gives the body size *after* escaping, set `length: { field: len, covers: body, counts: wire }`. On encode the body is escaped first and its wire size written to the length field. Use `covers: body_checksum` when the length also counts the escaped checksum; the checksum must then cover only the body (`checksum.covers: body`). Other coverages are rejected: a length that counted its own bytes, or a checksum computed over the length field, would change how many escapes it needs, so some frames could not be encoded at all. A length that ends inside an escape pair fails with `BadLength`.
+- **Checksum:** computed over the unescaped bytes by default. Set `checksum.over: wire` when the protocol computes it over the escaped bytes. The checksum bytes are escaped either way.
+- **Resync:** when the sync byte is reserved, a sync byte inside a frame can only mean the frame was cut short. The stream parser drops the partial frame (`BadDelimiter`) and starts a new frame at that byte. A sync byte that is not reserved gives a warning.
+- **Errors:** an unknown code after the escape byte fails with `InvalidValue`.
+- **Buffers:** decoding unescapes in place, so `parse`, `open` and `decode` of escaped protocols take a mutable buffer. `max_frame` is doubled automatically for the worst case.
 
 Byte patterns (`sync`, `start`, `end`) can be written three ways:
 - a list `[0xAA, 0x55]`
@@ -498,6 +529,7 @@ checksum:
 | `algo` | A built-in name, the name of a `custom.checksums` entry, or inline CRC parameters (below). |
 | `covers` | Binary only. The bytes the checksum is computed over: `header_body` (default; becomes `body` when there is no header), `body`, or `all` (prefix + header + body). The checksum is stored right after the body. |
 | `endian` | Byte order of the stored checksum. Defaults to the protocol's `endian`. |
+| `over` | With `framing.escape`: `unescaped` (default) computes the checksum over the bytes before escaping; `wire` computes it over the escaped bytes as sent. |
 | `separator` | Text only. The character before the hex checksum (default `*`, as in NMEA). |
 | `required` | Text only. If `true` (default), sentences without a checksum are rejected. If `false`, a missing checksum is accepted and a present one is still verified. |
 

@@ -1,0 +1,121 @@
+schema_version: 1
+namespace: link::stuffed
+# Reserved sync bytes with escape + index byte stuffing on every framing type.
+
+messages:
+  Data:
+    type_id: 0x01
+    fields:
+      - { name: n, type: u8 }
+      - { name: data, type: bytes, length: n, max: 120 }
+  Ping:
+    type_id: 0x02
+    fields:
+      - { name: seq, type: u32 }
+
+protocols:
+  # 0x80 only ever appears as the sync byte: 0x80 -> 81 00, 0x81 -> 81 01
+  SyncLink:
+    header:
+      - { name: kind, type: u8 }
+      - { name: len, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0x80]
+      length: { field: len, covers: body }
+      escape: { char: 0x81, code: index, reserved: [0x80, 0x81] }
+    checksum: { algo: crc16_ccitt }
+    message_type: { field: kind }
+    messages: [Data, Ping]
+
+  # checksum computed over the escaped bytes on the wire
+  WireChecksum:
+    header:
+      - { name: kind, type: u8 }
+      - { name: len, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0x80]
+      length: { field: len, covers: body }
+      escape: { char: 0x81, code: index, reserved: [0x80, 0x81] }
+    checksum: { algo: crc16_ccitt, over: wire }
+    message_type: { field: kind }
+    messages: [Data, Ping]
+
+  # the length field gives the size of the body on the wire (after escaping)
+  WireLength:
+    header:
+      - { name: kind, type: u8 }
+      - { name: len, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0x80]
+      length: { field: len, covers: body, counts: wire }
+      escape: { char: 0x81, code: index, reserved: [0x80, 0x81] }
+    checksum: { algo: crc16_ccitt }
+    message_type: { field: kind }
+    messages: [Data, Ping]
+
+  # the length counts the body and the checksum (unescaped bytes)
+  CrcLength:
+    header:
+      - { name: kind, type: u8 }
+      - { name: len, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0x80]
+      length: { field: len, covers: body_checksum }
+      escape: { char: 0x81, code: index, reserved: [0x80, 0x81] }
+    checksum: { algo: crc16_ccitt }
+    message_type: { field: kind }
+    messages: [Data, Ping]
+
+  # the length counts the body and the checksum on the wire; the checksum covers the body only
+  WireCrcLength:
+    header:
+      - { name: kind, type: u8 }
+      - { name: len, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0x80]
+      length: { field: len, covers: body_checksum, counts: wire }
+      escape: { char: 0x81, code: index, reserved: [0x80, 0x81] }
+    checksum: { algo: crc16_ccitt, covers: body }
+    message_type: { field: kind }
+    messages: [Data, Ping]
+
+  # as above, with the checksum computed over the escaped body
+  WireCrcOverWire:
+    header:
+      - { name: kind, type: u8 }
+      - { name: len, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0x80]
+      length: { field: len, covers: body_checksum, counts: wire }
+      escape: { char: 0x81, code: index, reserved: [0x80, 0x81] }
+    checksum: { algo: crc16_ccitt, covers: body, over: wire }
+    message_type: { field: kind }
+    messages: [Data, Ping]
+
+  # fixed (unescaped) size, codes moved away from 0x00 with base
+  FixedLink:
+    framing:
+      type: fixed
+      sync: [0x80]
+      escape: { char: 0x81, code: index, base: 0x10, reserved: [0x80, 0x81, 0x00] }
+    checksum: { algo: crc8, over: wire }
+    messages: [Ping]
+
+  # delimited with an explicit reserved list
+  Delimited:
+    header:
+      - { name: kind, type: u8 }
+    framing:
+      type: delimited
+      start: [0x80]
+      end: [0x0D]
+      escape: { char: 0x81, code: index, reserved: [0x80, 0x81, 0x0D] }
+    checksum: { algo: crc16_ccitt, covers: body }
+    message_type: { field: kind }
+    messages: [Data, Ping]

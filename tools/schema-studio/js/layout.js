@@ -185,12 +185,13 @@
     let maxFrameDerived = false;
     if (Number.isNaN(maxFrame)) {
       maxFrame = null;
-      if (fr.type === 'fixed' && !Number.isNaN(G.parseInt(fr.size))) { maxFrame = G.parseInt(fr.size); maxFrameDerived = true; }
+      const escaped = (n) => (fr.escape.enabled ? 2 * n - prefix.length - suffix.length : n);
+      if (fr.type === 'fixed' && !Number.isNaN(G.parseInt(fr.size))) { maxFrame = escaped(G.parseInt(fr.size)); maxFrameDerived = true; }
       else if (fr.type === 'fixed' && bodies.length && bodies.every((b) => b.layout.size != null)) {
-        maxFrame = overhead + Math.max(...bodies.map((b) => b.layout.size)); maxFrameDerived = true;
+        maxFrame = escaped(overhead + Math.max(...bodies.map((b) => b.layout.size))); maxFrameDerived = true;
       } else if (fr.type !== 'none' && !text && bodyMax != null && bodies.length) {
         let interior = headerSize + bodyMax + trailer;
-        if (fr.escape.enabled && fr.type === 'delimited') interior *= 2;
+        if (fr.escape.enabled) interior *= 2;
         maxFrame = prefix.length + interior + suffix.length;
         maxFrameDerived = true;
       }

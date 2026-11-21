@@ -519,30 +519,57 @@ private:
         if (auto v = n["max_frame"]) fr.max_frame = to_size(v);
         if (auto v = n["framer"]) fr.custom_name = to_str(v);
         if (auto v = n["length"]) {
-            check_keys(v, {"field", "covers", "adjust"}, "framing.length");
+            check_keys(v, {"field", "covers", "adjust", "counts"}, "framing.length");
             if (auto f = v["field"]) fr.length_field = to_str(f);
             else diag_.error(loc(v), "framing.length needs 'field'");
             if (auto c = v["covers"]) {
                 const auto s = to_str(c);
                 if (s == "body") fr.length_covers = ir::FramingSpec::LengthCovers::Body;
+                else if (s == "body_checksum") fr.length_covers = ir::FramingSpec::LengthCovers::BodyChecksum;
                 else if (s == "header_body") fr.length_covers = ir::FramingSpec::LengthCovers::HeaderBody;
                 else if (s == "all") fr.length_covers = ir::FramingSpec::LengthCovers::All;
-                else diag_.error(loc(c), "length.covers must be body, header_body or all");
+                else diag_.error(loc(c), "length.covers must be body, body_checksum, header_body or all");
             }
             if (auto a = v["adjust"]) fr.length_adjust = to_int(a);
+            if (auto c = v["counts"]) {
+                const auto s = to_str(c);
+                if (s == "wire") fr.length_counts_wire = true;
+                else if (s != "unescaped") diag_.error(loc(c), "length.counts must be unescaped or wire");
+            }
         }
         if (auto v = n["escape"]) {
-            check_keys(v, {"char", "xor", "map"}, "framing.escape");
-            fr.escape.enabled = true;
-            if (auto c = v["char"]) fr.escape.esc = static_cast<std::uint8_t>(to_int(c));
+            using C = ir::EscapeSpec::Code;
+            auto& e = fr.escape;
+            check_keys(v, {"char", "code", "reserved", "base", "xor", "map"}, "framing.escape");
+            e.enabled = true;
+            e.loc = loc(v);
+            if (auto c = v["char"]) e.esc = static_cast<std::uint8_t>(to_int(c));
             else diag_.error(loc(v), "escape needs 'char'");
-            if (auto x = v["xor"]) fr.escape.xor_mask = static_cast<std::uint8_t>(to_int(x));
+            if (auto x = v["xor"]) e.xor_mask = static_cast<std::uint8_t>(to_int(x));
+            if (auto b = v["base"]) e.base = static_cast<std::uint8_t>(to_int(b));
+            if (auto r = v["reserved"]) e.reserved = to_bytes(r);
             if (auto m = v["map"]) {
-                for (const auto& kv : m)
-                    fr.escape.map.emplace_back(static_cast<std::uint8_t>(to_int(kv.first)),
-                                               static_cast<std::uint8_t>(to_int(kv.second)));
-                if (fr.escape.map.size() > 4) diag_.error(loc(m), "escape map supports at most 4 entries");
+                if (!m.IsMap()) diag_.error(loc(m), "escape.map must be a mapping raw -> code");
+                else
+                    for (const auto& kv : m)
+                        e.map.emplace_back(static_cast<std::uint8_t>(to_int(kv.first)),
+                                           static_cast<std::uint8_t>(to_int(kv.second)));
             }
+            if (auto c = v["code"]) {
+                const auto s = to_str(c);
+                if (s == "xor") e.code = C::Xor;
+                else if (s == "map") e.code = C::Map;
+                else if (s == "index") e.code = C::Index;
+                else diag_.error(loc(c), "escape.code must be xor, index or map");
+            } else if (v["map"]) {
+                e.code = C::Map;
+            }
+            if (v["map"] && e.code != C::Map) diag_.error(loc(v["map"]), "escape.map needs code: map");
+            if (e.code == C::Map && !v["map"]) diag_.error(loc(v), "escape code 'map' needs 'map'");
+            if (v["xor"] && e.code != C::Xor) diag_.error(loc(v["xor"]), "escape.xor only applies to code: xor");
+            if (v["base"] && e.code != C::Index) diag_.error(loc(v["base"]), "escape.base only applies to code: index");
+            if (v["reserved"] && e.code == C::Map)
+                diag_.error(loc(v["reserved"]), "with code: map the reserved bytes are the map's keys");
         }
     }
 
@@ -571,7 +598,7 @@ private:
         c.present = true;
         c.loc = loc(n);
         c.endian = p.endian;
-        check_keys(n, {"algo", "covers", "endian", "separator", "required"}, "checksum");
+        check_keys(n, {"algo", "covers", "endian", "separator", "required", "over"}, "checksum");
         if (auto a = n["algo"]) load_algo(a, c, "checksum.algo");
         else diag_.error(c.loc, "checksum needs 'algo'");
         if (auto v = n["covers"]) {
@@ -584,6 +611,11 @@ private:
         if (auto v = n["endian"]) c.endian = to_endian(v);
         if (auto v = n["separator"]) c.separator = to_char(v);
         if (auto v = n["required"]) c.required = to_bool(v);
+        if (auto v = n["over"]) {
+            const auto s = to_str(v);
+            if (s == "wire") c.over_wire = true;
+            else if (s != "unescaped") diag_.error(loc(v), "checksum.over must be unescaped or wire");
+        }
     }
 
     void load_protocols(const YAML::Node& n, ir::Schema& s) {

@@ -571,17 +571,32 @@
     return true;
   };
 
-  function escapeCfg(p) {
-    const e = p.framing.escape;
-    if (!e || !e.enabled || p.framing.type !== 'delimited') return null;
-    const esc = G.parseInt(e.char);
-    if (e.style === 'map') {
-      const map = new Map();
-      (e.map || '').split(',').forEach((pair) => { const [a, b] = pair.split(':').map((x) => G.parseInt((x || '').trim())); if (!Number.isNaN(a) && !Number.isNaN(b)) map.set(b, a); });
-      return { esc, decode: (c) => (map.has(c) ? map.get(c) : null) };
+  function escapeCfg(s, p) {
+    if (!['delimited', 'fixed', 'length_prefixed'].includes(p.framing.type)) return null;
+    return G.escapeTable(s, p);
+  }
+
+  /**
+   * Walk escaped bytes from `at` until `n` unescaped bytes were produced (generator: walk_escaped).
+   * Returns { kind: 'done' | 'need_more' | 'bad', wire, bytes, error }.
+   */
+  function walkEscaped(buf, at, to, n, esc) {
+    let i = at;
+    const bytes = [];
+    for (let u = 0; u < n; u++) {
+      if (i >= to) return { kind: 'need_more', wire: i, bytes };
+      let b = buf[i];
+      if (b === esc.esc) {
+        if (i + 1 >= to) return { kind: 'need_more', wire: i, bytes };
+        const d = esc.decode(buf[i + 1]);
+        if (d === null) return { kind: 'bad', wire: i, bytes, error: `invalid escape code ${G.hex2(buf[i + 1])}` };
+        b = d; i += 2;
+      } else if (esc.isReserved(b)) {
+        return { kind: 'bad', wire: i, bytes, error: `reserved byte ${G.hex2(b)} inside a frame (truncated frame)` };
+      } else i++;
+      bytes.push(b);
     }
-    const x = G.parseInt(e.xor || '0x20');
-    return { esc, decode: (c) => c ^ x };
+    return { kind: 'done', wire: i, bytes };
   }
 
   function scanFrame(s, p, L, buf, from, to) {
@@ -591,9 +606,19 @@
     const sync = L.prefix;
     const r = findPatternAtStart(buf, from, to, sync);
     if (!r.matched) return r;
+    const esc = escapeCfg(s, p);
     if (fr.type === 'fixed') {
-      const size = G.parseInt(fr.size) || L.maxFrame;
+      const sizes = L.bodies.map((b) => b.layout.size);
+      const size = G.parseInt(fr.size) || (sizes.length && sizes.every((x) => x != null) ? L.overhead + Math.max(...sizes) : L.maxFrame);
       if (!size) return { kind: 'skip', size: to - from, error: 'fixed frame size unknown' };
+      if (esc) {
+        const w = walkEscaped(buf, from + sync.length, to, size - sync.length - L.suffix.length, esc);
+        if (w.kind === 'need_more') return { kind: 'need_more' };
+        if (w.kind === 'bad') return { kind: 'skip', size: Math.max(1, w.wire - from), error: w.error };
+        const n = w.wire - from + L.suffix.length;
+        if (to - from < n) return { kind: 'need_more', want: n };
+        return { kind: 'frame', size: n, consume: n, onError: sync.length ? 1 : n };
+      }
       if (to - from < size) return { kind: 'need_more' };
       return { kind: 'frame', size, consume: size, onError: sync.length ? 1 : size };
     }
@@ -604,19 +629,64 @@
       if (!row) return { kind: 'skip', size: to - from, error: 'length field not found' };
       const lsize = G.PRIM_SIZE[row.field.type] || 1;
       const loff = L.prefix.length + row.offset;
-      if (to - from < loff + lsize) return { kind: 'need_more' };
-      const value = Number(readUint(buf, from + loff, lsize, row.field.endian || G.protoEndian(s, p)));
+      let value;
+      const lend = row.field.endian || G.protoEndian(s, p);
+      if (esc) {
+        const w = walkEscaped(buf, from + L.prefix.length, to, row.offset + lsize, esc);
+        if (w.kind === 'need_more') return { kind: 'need_more' };
+        if (w.kind === 'bad') return { kind: 'skip', size: Math.max(1, w.wire - from), error: w.error };
+        value = Number(readUint(Uint8Array.from(w.bytes), row.offset, lsize, lend));
+      } else {
+        if (to - from < loff + lsize) return { kind: 'need_more' };
+        value = Number(readUint(buf, from + loff, lsize, lend));
+      }
+      if (esc && fr.counts === 'wire') {
+        // body size on the wire: walk the escaped header, take `value` wire bytes, walk the escaped checksum
+        const pre = from + L.prefix.length;
+        const hw = walkEscaped(buf, pre, to, L.headerSize, esc);
+        if (hw.kind === 'need_more') return { kind: 'need_more' };
+        if (hw.kind === 'bad') return { kind: 'skip', size: Math.max(1, hw.wire - from), error: hw.error };
+        const withTrailer = fr.covers === 'body_checksum';
+        const bodyWire = value + (G.parseInt(fr.adjust) || 0);
+        const bodyEnd = hw.wire + bodyWire;
+        if (bodyWire < 0 || bodyEnd - from + L.suffix.length > maxFrame) return { kind: 'skip', size: 1, error: `bad length (${value} wire bytes of body${withTrailer ? ' + checksum' : ''})` };
+        for (let i = hw.wire; i < bodyEnd; i++) {
+          if (i >= to) return { kind: 'need_more' };
+          if (buf[i] === esc.esc) {
+            if (i + 1 >= bodyEnd) return { kind: 'skip', size: 1, error: `bad length: ${value} wire bytes ends inside an escape pair` };
+            i++;
+          } else if (esc.isReserved(buf[i])) return { kind: 'skip', size: Math.max(1, i - from), error: `reserved byte ${G.hex2(buf[i])} inside a frame (truncated frame)` };
+        }
+        let end = bodyEnd;
+        if (!withTrailer) {
+          const tw = walkEscaped(buf, bodyEnd, to, L.trailer, esc);
+          if (tw.kind === 'need_more') return { kind: 'need_more' };
+          if (tw.kind === 'bad') return { kind: 'skip', size: Math.max(1, tw.wire - from), error: tw.error };
+          end = tw.wire;
+        }
+        const n = end - from + L.suffix.length;
+        if (to - from < n) return { kind: 'need_more', want: n };
+        return { kind: 'frame', size: n, consume: n, onError: 1 };
+      }
       let add = (G.parseInt(fr.adjust) || 0) + L.suffix.length;
       if (fr.covers === 'header_body') add += L.prefix.length + L.trailer;
+      else if (fr.covers === 'body_checksum') add += L.prefix.length + L.headerSize;
       else if (fr.covers !== 'all') add += L.prefix.length + L.headerSize + L.trailer;
       const total = value + add;
       if (total < L.overhead || total > maxFrame || total <= 0) return { kind: 'skip', size: 1, error: `bad length (${value} → frame of ${total} bytes)` };
+      if (esc) {
+        const w = walkEscaped(buf, from + L.prefix.length, to, total - L.prefix.length - L.suffix.length, esc);
+        if (w.kind === 'need_more') return w.wire - from > maxFrame ? { kind: 'skip', size: 1, error: 'frame exceeds max_frame' } : { kind: 'need_more' };
+        if (w.kind === 'bad') return { kind: 'skip', size: Math.max(1, w.wire - from), error: w.error };
+        const n = w.wire - from + L.suffix.length;
+        if (to - from < n) return { kind: 'need_more', want: n };
+        return { kind: 'frame', size: n, consume: n, onError: 1 };
+      }
       if (to - from < total) return { kind: 'need_more', want: total };
       return { kind: 'frame', size: total, consume: total, onError: 1 };
     }
     // delimited
     const end = L.suffix, start = L.prefix;
-    const esc = escapeCfg(p);
     const shared = start.length && start.length === end.length && start.every((b, i) => b === end[i]);
     const s0 = start.length;
     for (let i = from + s0; i < to; i++) {
@@ -663,7 +733,7 @@
     // interior, unescaped if needed (origin[i] = input offset of working byte i)
     let work = Array.from(input.slice(fstart + pre, fend - suf));
     let origin = work.map((_, i) => fstart + pre + i);
-    const esc = escapeCfg(p);
+    const esc = escapeCfg(s, p);
     if (esc) {
       const w2 = [], o2 = [];
       for (let i = 0; i < work.length; i++) {
@@ -739,12 +809,19 @@
       }
       if (ck.enabled) {
         let covered;
-        if (ck.covers === 'body') covered = buf.slice(hs, buf.length - tr);
+        if (esc && ck.over === 'wire') {
+          // computed over the escaped bytes as received: map working offsets back to the input
+          const at = (i) => (i >= origin.length ? fend - suf : origin[i]);
+          const ckStart = at(buf.length - tr);
+          if (ck.covers === 'body') covered = input.slice(at(hs), ckStart);
+          else if (ck.covers === 'all') covered = input.slice(fstart, ckStart);
+          else covered = input.slice(fstart + pre, ckStart);
+        } else if (ck.covers === 'body') covered = buf.slice(hs, buf.length - tr);
         else if (ck.covers === 'all') covered = Uint8Array.from([...input.slice(fstart, fstart + pre), ...buf.slice(0, buf.length - tr)]);
         else covered = buf.slice(0, buf.length - tr);
         const stored = readUint(buf, buf.length - tr, tr, ck.endian || G.protoEndian(s, p));
         const computed = D.checksum(s, ck, covered);
-        const cn = node('checksum', 'check', buf.length - tr, buf.length, { raw: D.hex(buf.slice(buf.length - tr)), type: ck.algo === '__crc' ? 'custom CRC' : ck.algo });
+        const cn = node('checksum', 'check', buf.length - tr, buf.length, { raw: D.hex(buf.slice(buf.length - tr)), type: (ck.algo === '__crc' ? 'custom CRC' : ck.algo) + (esc && ck.over === 'wire' ? ' (over wire bytes)' : '') });
         const hexw = 2 * tr;
         if (computed === null) cn.note = 'custom checksum function - not verified here';
         else if (stored !== computed) { cn.error = `mismatch: stored 0x${stored.toString(16).toUpperCase().padStart(hexw, '0')}, computed 0x${computed.toString(16).toUpperCase().padStart(hexw, '0')}`; err('bad checksum'); }
@@ -781,7 +858,10 @@
       frame.nodes.push(...inner);
     }
     if (suf) frame.nodes.push(node('end', 'frame', fend - suf, fend, { raw: D.hex(input.slice(fend - suf, fend)), value: L.text ? q(D.ascii(input.slice(fend - suf, fend))) : D.hex(input.slice(fend - suf, fend)) }));
-    if (esc) frame.notes = ['frame unescaped before decoding'];
+    if (esc) {
+      const escaped = input.slice(fstart + pre, fend - suf).length - buf.length;
+      frame.notes = [escaped ? `frame unescaped before decoding (${escaped} escape pair${escaped === 1 ? '' : 's'})` : 'frame unescaped before decoding (no escapes)'];
+    }
     return frame;
   }
   const hasError = (nodes) => nodes.some((n) => n.error || hasError(n.children));
@@ -910,6 +990,131 @@
     return null;
   }
 
+  /**
+   * Sample frames for a byte-stuffed binary protocol: a message made of fixed-size integer / bytes fields,
+   * filled with reserved byte values so every escape pair shows up. Also shows resync after a frame
+   * cut short and an unknown escape code.
+   */
+  function escapedExample(s, target) {
+    const [kind, name] = (target || '').split(/:(.*)/s);
+    if (kind !== 'protocol') return null;
+    const p = s.protocols.find((x) => x.name === name);
+    if (!p || G.protoFormat(s, p) !== 'binary' || !['delimited', 'fixed', 'length_prefixed'].includes(p.framing.type)) return null;
+    const et = G.escapeTable(s, p);
+    if (!et || et.errors.length) return null;
+    const L = G.protocolLayout(s, p);
+    const fr = p.framing, ck = p.checksum;
+    const isInt = (t) => /^[ui](8|16|32|64)$/.test(t);
+    const simple = (f) => (isInt(f.type) && !f.when && !f.crc) || (f.type === 'bytes' && f.lenMode === 'fixed' && G.isInt(f.lenValue) && !f.when);
+    const m = p.messages.map((n) => G.findMessage(s, n)).find((x) => x && x.fields.length && x.fields.every(simple));
+    if (!m) return null;
+    // bytes cycling through the reserved values, mixed with ordinary ones
+    const plain = [0x12, 0x34, 0x56, 0x78, 0x9A];
+    let k = 0;
+    const nextByte = () => { const i = k++; return i % 2 === 0 ? et.reserved[(i / 2) % et.reserved.length] : plain[(i >> 1) % plain.length]; };
+    const putUint = (out, v, n, endian) => {
+      const b = [];
+      for (let i = 0; i < n; i++) b.push(Number((BigInt(v) >> BigInt(8 * i)) & 0xFFn));
+      out.push(...(endian === 'big' ? b.reverse() : b));
+    };
+    const body = [];
+    const shown = [];
+    for (const f of m.fields) {
+      if (f.type === 'bytes') {
+        const n = G.parseInt(f.lenValue);
+        const b = Array.from({ length: n }, nextByte);
+        body.push(...b);
+        shown.push(`${f.name} ${hexLine(b)}`);
+        continue;
+      }
+      const n = G.PRIM_SIZE[f.type];
+      let b;
+      if (G.isInt(f.const)) { b = []; putUint(b, G.parseInt(f.const), n, f.endian || G.msgEndian(s, m)); }
+      else b = Array.from({ length: n }, nextByte);
+      body.push(...b);
+      if (!G.isInt(f.const)) shown.push(`${f.name} ${hexLine(b)}`);
+    }
+    if (fr.type === 'fixed') {
+      const size = G.parseInt(fr.size) || L.overhead + body.length;
+      while (body.length < size - L.overhead) body.push(0);
+    }
+    // header
+    const hdr = [];
+    let typeId = m.type_id;
+    for (const f of p.header) {
+      const n = G.PRIM_SIZE[f.type] || 1;
+      const endian = f.endian || G.protoEndian(s, p);
+      let v = 0;
+      if (G.isInt(f.const)) v = G.parseInt(f.const);
+      else if (p.message_type.kind === 'field' && f.name === p.message_type.field) {
+        if (G.isInt(typeId)) v = G.parseInt(typeId);
+        else { const e = G.findEnum(s, f.type); const x = e && e.values.find((y) => y.name === typeId); v = x ? G.parseInt(x.value) : 0; }
+      } else if (fr.type === 'length_prefixed' && f.name === fr.lengthField) {
+        const wire = fr.counts === 'wire';
+        const wireBody = wire ? body.length + body.filter((b) => et.isReserved(b)).length : body.length;
+        let trailerBytes = L.trailer;
+        if (wire && fr.covers === 'body_checksum' && ck.enabled && L.trailer) {
+          // the checksum only covers the body here, so it is known before the length
+          const eb = body.flatMap((b) => (et.isReserved(b) ? [et.esc, et.encode(b)] : [b]));
+          const sum = D.checksum(s, ck, Uint8Array.from(ck.over === 'wire' ? eb : body));
+          if (sum === null) return null;
+          const c = [];
+          putUint(c, sum, L.trailer, ck.endian || G.protoEndian(s, p));
+          trailerBytes += c.filter((b) => et.isReserved(b)).length;
+        }
+        const covered = fr.covers === 'header_body' ? L.headerSize + body.length
+          : fr.covers === 'all' ? L.prefix.length + L.headerSize + body.length + L.trailer
+            : fr.covers === 'body_checksum' ? wireBody + trailerBytes : wireBody;
+        v = covered - (G.parseInt(fr.adjust) || 0);
+      }
+      if (!isInt(f.type)) return null;
+      putUint(hdr, v, n, endian);
+    }
+    const escape = (bytes) => bytes.flatMap((b) => (et.isReserved(b) ? [et.esc, et.encode(b)] : [b]));
+    const interior = [...hdr, ...body];
+    let wire;
+    if (ck.enabled && L.trailer) {
+      const cend = ck.endian || G.protoEndian(s, p);
+      let sum;
+      if (ck.over === 'wire') {
+        const eh = escape(hdr), eb = escape(body);
+        const covered = ck.covers === 'body' ? eb : ck.covers === 'all' ? [...L.prefix, ...eh, ...eb] : [...eh, ...eb];
+        sum = D.checksum(s, ck, Uint8Array.from(covered));
+        if (sum === null) return null;
+        const c = [];
+        putUint(c, sum, L.trailer, cend);
+        wire = [...eh, ...eb, ...escape(c)];
+      } else {
+        const covered = ck.covers === 'body' ? body : ck.covers === 'all' ? [...L.prefix, ...interior] : interior;
+        sum = D.checksum(s, ck, Uint8Array.from(covered));
+        if (sum === null) return null;
+        const c = [];
+        putUint(c, sum, L.trailer, cend);
+        wire = escape([...interior, ...c]);
+      }
+    } else wire = escape(interior);
+    const frame = [...L.prefix, ...wire, ...L.suffix];
+    const pairs = et.table.map(([r, c]) => `${G.hex2(r)} -> ${G.hex2(et.esc).slice(2)} ${G.hex2(c).slice(2)}`).join(', ');
+    const lines = [
+      `# ${m.name}: ${shown.join(', ')}`,
+      `# reserved bytes are sent as escape + code: ${pairs}`,
+      hexLine(frame),
+    ];
+    const sharedFlag = fr.type === 'delimited' && L.prefix.length === L.suffix.length && L.prefix.every((b, i) => b === L.suffix[i]);
+    if (L.prefix.length && et.isReserved(L.prefix[0]) && !sharedFlag) {
+      lines.push(`# the same frame cut short: the reserved sync byte ${G.hex2(L.prefix[0])} of the next frame starts a new frame at once`,
+        hexLine(frame.slice(0, Math.max(L.prefix.length + 1, Math.floor(frame.length / 2)))) + ' ' + hexLine(frame));
+    }
+    const at = frame.findIndex((b, i) => i >= L.prefix.length && b === et.esc);
+    if (at >= 0 && et.style !== 'xor') {
+      const unused = Array.from({ length: 256 }, (_, i) => i).find((c) => !et.isReserved(c) && !et.table.some((x) => x[1] === c));
+      const bad = frame.slice();
+      bad[at + 1] = unused;
+      lines.push(`# unknown code ${G.hex2(unused)} after the escape byte`, hexLine(bad));
+    }
+    return lines.join('\n');
+  }
+
   /** A message made only of one constant byte (e.g. an SHT4x command) decodes from that byte. */
   function constByteExample(s, target) {
     const [kind, name] = (target || '').split(/:(.*)/s);
@@ -926,6 +1131,8 @@
   D.exampleInputFor = (s, target) => {
     const sht = sht4xExample(s, target);
     if (sht) return sht;
+    const stuffed = escapedExample(s, target);
+    if (stuffed) return stuffed;
     if (target === 'protocol:Nmea' && s.protocols.some((p) => p.name === 'Nmea')) {
       // One sentence per line; the tester's "Newlines" option turns each line break into \r\n.
       return [

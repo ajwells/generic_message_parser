@@ -33,8 +33,8 @@ A local web app for building GMP YAML schemas visually.
      - the byte range of each field
    - Hovering a field highlights its bytes, and hovering a byte highlights its field.
 
-The decoder (`js/decoder.js`) mirrors the C++ runtime: the same framers (fixed, length-prefixed, delimited with HDLC
-or SLIP escaping), checksums, message_type selection, and stream resynchronisation after bad frames. Frames encoded by the
+The decoder (`js/decoder.js`) mirrors the C++ runtime: the same framers (fixed, length-prefixed and delimited, each with optional byte stuffing: XOR, index or
+map escaping), checksums, message_type selection, and stream resynchronisation after bad frames. Frames encoded by the
 generated C++ code decode to the same values.
 
 Not executed in the browser:

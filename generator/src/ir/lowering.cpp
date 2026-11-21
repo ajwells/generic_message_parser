@@ -640,8 +640,23 @@ private:
         }
         const std::size_t fixed_parts = p.prefix_size + p.header_size + p.trailer_size + p.suffix_size;
 
-        if (fr.escape.enabled && fr.type != T::Delimited)
-            d_.error(fr.loc, "'escape' is only supported with delimited framing");
+        if (fr.escape.enabled) resolve_escape(p);
+        if (fr.length_counts_wire) {
+            if (!fr.escape.enabled)
+                d_.error(fr.loc, "length.counts: wire needs framing.escape (without escaping, wire and unescaped sizes are the same)");
+            else if (fr.length_covers != FramingSpec::LengthCovers::Body &&
+                     fr.length_covers != FramingSpec::LengthCovers::BodyChecksum)
+                d_.error(fr.loc, "length.counts: wire needs length.covers: body or body_checksum (a length that counts its own "
+                                 "escaped bytes, or a checksum over it, cannot always be encoded)");
+            else if (fr.length_covers == FramingSpec::LengthCovers::BodyChecksum && p.checksum.present &&
+                     p.checksum.covers != ChecksumSpec::Covers::Body)
+                d_.error(p.checksum.loc, "length.counts: wire with covers: body_checksum needs checksum.covers: body (a checksum "
+                                         "over the length field changes with the length, and so does its escaped size)");
+        }
+        if (p.checksum.over_wire && !fr.escape.enabled)
+            d_.error(p.checksum.loc, "checksum.over: wire needs framing.escape");
+        if (p.checksum.over_wire && p.format == Format::Text)
+            d_.error(p.checksum.loc, "checksum.over: wire is only supported for binary protocols");
         if (p.format == Format::Text && fr.type != T::Delimited && fr.type != T::None && fr.type != T::Custom)
             d_.error(fr.loc, "text protocols need delimited (or none/custom) framing");
 
@@ -662,7 +677,8 @@ private:
                     else fr.size = fixed_parts + *sz;
                 }
                 if (fr.size && *fr.size < fixed_parts) d_.error(fr.loc, "fixed frame size is smaller than sync + header + checksum");
-                if (!fr.max_frame && fr.size) fr.max_frame = fr.size;
+                if (!fr.max_frame && fr.size)
+                    fr.max_frame = fr.escape.enabled ? 2 * *fr.size - p.prefix_size - p.suffix_size : *fr.size;
                 break;
             case T::LengthPrefixed: {
                 if (fr.length_field.empty()) { d_.error(fr.loc, "length_prefixed framing needs length.field"); break; }
@@ -677,8 +693,6 @@ private:
             }
             case T::Delimited:
                 if (fr.end.empty()) d_.error(fr.loc, "delimited framing needs 'end'");
-                if (fr.escape.enabled && fr.escape.map.empty() && fr.sync.empty() && fr.end.empty())
-                    d_.error(fr.loc, "escape needs delimiters");
                 break;
             case T::Custom:
                 fr.custom = s_.find_custom_framer(fr.custom_name);
@@ -698,6 +712,87 @@ private:
             }
         }
         if (p.max_frame && p.max_frame < fixed_parts) d_.error(fr.loc, "max_frame is smaller than the fixed frame overhead");
+    }
+
+    static std::string hex(std::uint8_t b) {
+        static const char* digits = "0123456789ABCDEF";
+        return std::string("0x") + digits[b >> 4] + digits[b & 15];
+    }
+
+    /// Resolve the reserved bytes and their codes, and check that escaping is unambiguous.
+    void resolve_escape(Protocol& p) {
+        auto& fr = p.framing;
+        auto& e = fr.escape;
+        using T = FramingSpec::Type;
+        using C = EscapeSpec::Code;
+        if (fr.type != T::Delimited && fr.type != T::Fixed && fr.type != T::LengthPrefixed) {
+            d_.error(e.loc, "'escape' needs delimited, fixed or length_prefixed framing");
+            return;
+        }
+
+        // reserved bytes, in order
+        std::vector<std::uint8_t> reserved;
+        auto add = [&](std::uint8_t b) {
+            if (std::find(reserved.begin(), reserved.end(), b) == reserved.end()) reserved.push_back(b);
+        };
+        if (e.code == C::Map) {
+            for (const auto& [raw, code] : e.map) {
+                if (std::find(reserved.begin(), reserved.end(), raw) != reserved.end())
+                    d_.error(e.loc, "escape.map lists " + hex(raw) + " twice");
+                reserved.push_back(raw);
+            }
+            if (std::find(reserved.begin(), reserved.end(), e.esc) == reserved.end())
+                d_.error(e.loc, "escape.map must include the escape char " + hex(e.esc) + " (it has to be escaped too)");
+        } else if (!e.reserved.empty()) {
+            for (auto b : e.reserved) {
+                if (std::find(reserved.begin(), reserved.end(), b) != reserved.end())
+                    d_.error(e.loc, "escape.reserved lists " + hex(b) + " twice");
+                reserved.push_back(b);
+            }
+            if (e.code == C::Index && std::find(reserved.begin(), reserved.end(), e.esc) == reserved.end())
+                d_.error(e.loc, "escape.reserved must include the escape char " + hex(e.esc) +
+                                    " (its position gives the code used to escape it)");
+            if (e.code == C::Xor) add(e.esc);
+        } else {
+            for (auto b : fr.sync) add(b);
+            for (auto b : fr.end) add(b);
+            add(e.esc);
+        }
+        if (reserved.size() > 16) d_.error(e.loc, "escape supports at most 16 reserved bytes (escape char included)");
+
+        e.table.clear();
+        for (std::size_t i = 0; i < reserved.size(); ++i) {
+            const auto b = reserved[i];
+            std::uint8_t code = 0;
+            switch (e.code) {
+                case C::Xor: code = static_cast<std::uint8_t>(b ^ e.xor_mask); break;
+                case C::Index:
+                    if (e.base + i > 255) d_.error(e.loc, "escape.base + reserved index exceeds 0xFF");
+                    code = static_cast<std::uint8_t>(e.base + i);
+                    break;
+                case C::Map: code = e.map[i].second; break;
+            }
+            e.table.emplace_back(b, code);
+        }
+        for (std::size_t i = 0; i < e.table.size(); ++i) {
+            const auto code = e.table[i].second;
+            if (std::find(reserved.begin(), reserved.end(), code) != reserved.end())
+                d_.error(e.loc, "escape code " + hex(code) + " for " + hex(e.table[i].first) +
+                                    " is itself a reserved byte" +
+                                    (e.code == C::Index ? std::string(" (use escape.base to move the codes)") : std::string()));
+            for (std::size_t j = 0; j < i; ++j)
+                if (e.table[j].second == code)
+                    d_.error(e.loc, "escape code " + hex(code) + " is used for both " + hex(e.table[j].first) + " and " +
+                                        hex(e.table[i].first));
+        }
+        auto reserved_has = [&](std::uint8_t b) { return std::find(reserved.begin(), reserved.end(), b) != reserved.end(); };
+        if (fr.type == T::Delimited) {
+            if (!fr.end.empty() && !reserved_has(fr.end[0]))
+                d_.error(e.loc, "the end delimiter byte " + hex(fr.end[0]) + " must be reserved");
+        } else if (!fr.sync.empty() && !reserved_has(fr.sync[0])) {
+            d_.warning(e.loc, "sync byte " + hex(fr.sync[0]) +
+                                  " is not reserved, so it can appear inside frames and resynchronisation is slower");
+        }
     }
 
     Schema& s_;

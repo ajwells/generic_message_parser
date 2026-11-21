@@ -1,0 +1,60 @@
+# A serial motor-controller link where 0x80 is reserved as the sync byte.
+#
+# 0x80 marks the start of a frame and never appears anywhere else on the wire. Any 0x80 in the
+# header, payload or CRC is replaced by two bytes: the escape byte 0x81 and the index of the
+# reserved byte in the `reserved` list. The escape byte must be reserved as well:
+#
+#   0x80 -> 81 00
+#   0x81 -> 81 01
+#
+# Frame (before escaping):  80 | type len | payload (len bytes) | crc16
+#
+# Because 0x80 cannot appear inside a frame, a receiver that sees 0x80 always knows a new frame
+# starts there: a frame cut short by a dropped byte or a reset is abandoned immediately, instead
+# of swallowing part of the next frame.
+schema_version: 1
+namespace: motor
+defaults: { endian: big }
+
+enums:
+  Direction: { type: u8, strict: true, values: { forward: 0, reverse: 1 } }
+
+messages:
+  SetSpeed:
+    type_id: 0x01
+    doc: Host -> controller. Ramp to a new speed.
+    fields:
+      - { name: rpm, type: u16 }
+      - { name: direction, type: Direction }
+      - { name: ramp_ms, type: u16 }
+
+  Telemetry:
+    type_id: 0x02
+    doc: Controller -> host, sent every 10 ms.
+    fields:
+      - { name: seq, type: u16 }
+      - { name: rpm, type: u16 }
+      - { name: current, type: u16, scale: 0.01, unit: A }
+      - { name: temperature, type: i16, scale: 0.1, unit: degC }
+
+  Log:
+    type_id: 0x03
+    doc: Controller -> host. Free text diagnostics.
+    fields:
+      - { name: len, type: u8 }
+      - { name: text, type: string, length: len, max: 64 }
+
+protocols:
+  MotorLink:
+    header:
+      - { name: type, type: u8 }
+      - { name: len, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0x80]
+      length: { field: len, covers: body }          # payload bytes, counted before escaping
+                                                    # (add `counts: wire` if your link counts escaped bytes)
+      escape: { char: 0x81, code: index, reserved: [0x80, 0x81] }
+    checksum: { algo: crc16_ccitt, covers: header_body }   # computed before escaping
+    message_type: { field: type }
+    messages: [SetSpeed, Telemetry, Log]

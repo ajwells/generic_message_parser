@@ -46,7 +46,7 @@ TEST_CASE("generated C++ matches golden files") {
     const auto schemas = fs::path(GMP_SCHEMA_DIR), examples = fs::path(GMP_EXAMPLES_DIR);
     const std::pair<fs::path, const char*> cases[] = {
         {schemas, "telemetry"}, {schemas, "nmea"}, {schemas, "hdlc"}, {schemas, "can"}, {schemas, "custom"},
-        {schemas, "fieldcrc"}, {schemas, "enums"}, {schemas, "computed"}, {examples / "sensirion_sht4x", "sht4x"}, {examples / "sensirion_sht4x", "sht4x_enum"},
+        {schemas, "fieldcrc"}, {schemas, "enums"}, {schemas, "computed"}, {schemas, "stuffed"}, {examples / "sensirion_sht4x", "sht4x"}, {examples / "sensirion_sht4x", "sht4x_enum"}, {examples / "reserved_sync", "motor_link"},
     };
     for (const auto& [dir, name] : cases) {
         INFO("schema: " << name);

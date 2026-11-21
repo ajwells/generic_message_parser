@@ -153,7 +153,8 @@
     const lenCovers = fr.type === 'length_prefixed' ? fr.covers || 'body' : null;
     const g = (part) => ({
       crc: covers && (part === 'body' || (part === 'header' && covers !== 'body') || (part === 'prefix' && covers === 'all')),
-      len: lenCovers && (part === 'body' || (part === 'header' && lenCovers !== 'body') || (lenCovers === 'all' && (part === 'prefix' || part === 'check'))),
+      len: lenCovers && (part === 'body' || (part === 'header' && lenCovers !== 'body' && lenCovers !== 'body_checksum') ||
+        (part === 'check' && (lenCovers === 'all' || lenCovers === 'body_checksum')) || (lenCovers === 'all' && part === 'prefix')),
     });
     const framingLabel = { none: 'no framing', fixed: 'fixed size', length_prefixed: 'length prefixed', delimited: 'delimited', custom: 'custom framer' }[fr.type];
     const badges = [
@@ -199,7 +200,13 @@
       }
     }
     if (L.suffix.length) rows.push(frameRow('frame', 'end delimiter', patText(L.suffix, fr.endMode), L.suffix.length, L.text ? undefined : off, null));
-    if (fr.escape.enabled && fr.type === 'delimited') rows.push(`<div class="callout" style="margin-top:6px">Byte stuffing: ${fr.escape.style === 'xor' ? `${esc(fr.escape.char)} + byte ⊕ ${esc(fr.escape.xor)}` : `${esc(fr.escape.char)} + code (${esc(fr.escape.map)})`}. Escaped frames may be up to 2× longer.</div>`);
+    const et = ['delimited', 'fixed', 'length_prefixed'].includes(fr.type) ? G.escapeTable(s, p) : null;
+    if (et) {
+      const how = et.style === 'xor' ? `${G.hex2(et.esc)} + byte ⊕ ${G.hex2(et.xor)}` : et.style === 'index' ? `${G.hex2(et.esc)} + index` : `${G.hex2(et.esc)} + code`;
+      const pairs = et.errors.length ? '' : ` (${et.table.map(([r, c]) => `${G.hex2(r)} → ${G.hex2(et.esc)} ${G.hex2(c)}`).join(', ')})`;
+      const ckNote = p.checksum.enabled && L.trailer ? (p.checksum.over === 'wire' ? ' The checksum is computed over the escaped bytes.' : ' The checksum is computed before escaping.') : '';
+      rows.push(`<div class="callout" style="margin-top:6px">Byte stuffing: ${esc(how)}${esc(pairs)}. Escaped frames may be up to 2× longer; ${fr.type === 'length_prefixed' && fr.counts === 'wire' ? 'the length counts body bytes on the wire (after escaping)' : 'sizes count unescaped bytes'}.${ckNote}</div>`);
+    }
 
     const legend = (covers || lenCovers)
       ? `<div class="gutter-legend">${covers ? '<span><i style="background:var(--k-check-b);opacity:.55"></i>checksum coverage</span>' : ''}${lenCovers ? '<span><i style="background:var(--accent);opacity:.45"></i>length field coverage</span>' : ''}</div>` : '';

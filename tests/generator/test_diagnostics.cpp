@@ -252,3 +252,70 @@ TEST_CASE("computed value errors") {
     // `value` only means the input inside `set`
     expect_error(m + "      c: { type: u8, value: value }\n", "does not name an earlier field");
 }
+
+TEST_CASE("escape / byte stuffing errors") {
+    const std::string head =
+        "messages:\n  A:\n    type_id: 1\n    fields: [ { name: x, type: u8 } ]\nprotocols:\n  P:\n"
+        "    header: [ { name: kind, type: u8 }, { name: len, type: u8 } ]\n    message_type: { field: kind }\n"
+        "    messages: [A]\n";
+    const std::string lp = head + "    framing:\n      type: length_prefixed\n      sync: [0x80]\n      length: { field: len }\n";
+    auto with = [&](const std::string& escape) { return lp + "      escape: " + escape + "\n"; };
+
+    // valid: index style with the escape char reserved
+    {
+        const auto r = compile(with("{ char: 0x81, code: index, reserved: [0x80, 0x81] }"));
+        INFO(r.text);
+        CHECK(r.ok);
+        CHECK(r.text.empty());
+    }
+    expect_error(with("{ char: 0x81, code: index, reserved: [0x80] }"), "must include the escape char 0x81");
+    expect_error(with("{ char: 0x81, code: index, reserved: [0x00, 0x81] }"),
+                 "escape code 0x00 for 0x00 is itself a reserved byte (use escape.base");
+    expect_error(with("{ char: 0x81, code: index, reserved: [0x80, 0x80, 0x81] }"), "lists 0x80 twice");
+    expect_error(with("{ char: 0x81, code: index, base: 0x80, reserved: [0x80, 0x81] }"), "is itself a reserved byte");
+    expect_error(with("{ char: 0x81, code: index, base: 0xFF, reserved: [0x80, 0x81] }"), "exceeds 0xFF");
+    expect_error(with("{ char: 0x81, code: rot13 }"), "escape.code must be xor, index or map");
+    expect_error(with("{ char: 0x81, code: index, xor: 0x20 }"), "escape.xor only applies to code: xor");
+    expect_error(with("{ char: 0x81, base: 1 }"), "escape.base only applies to code: index");
+    expect_error(with("{ char: 0xDB, map: { 0xC0: 0xDC } }"), "must include the escape char 0xDB");
+    expect_error(with("{ char: 0xDB, map: { 0xC0: 0xDD, 0xDB: 0xDD } }"), "escape code 0xDD is used for both");
+    expect_error(with("{ char: 0xDB, reserved: [0x80], map: { 0xC0: 0xDC, 0xDB: 0xDD } }"), "reserved bytes are the map's keys");
+    expect_error(with("{ char: 0x81, code: map }"), "escape code 'map' needs 'map'");
+    expect_error(with("{ char: 0x7D, xor: 0x01, reserved: [0x7C] }"), "is itself a reserved byte");
+    expect_error(with("{ char: 0x81, code: index, reserved: [0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,0x81], base: 0x20 }"),
+                 "at most 16 reserved bytes");
+    // a sync byte that is not reserved only warns
+    {
+        const auto r = compile(with("{ char: 0x81, code: index, reserved: [0x7E, 0x81] }"));
+        CHECK(r.ok);
+        CHECK(r.text.find("sync byte 0x80 is not reserved") != std::string::npos);
+    }
+    // delimited: the end byte must be reserved
+    expect_error(head + "    framing: { type: delimited, start: [0x80], end: [0x0D], escape: { char: 0x81, code: index, reserved: [0x80, 0x81] } }\n",
+                 "end delimiter byte 0x0D must be reserved");
+    expect_error(head + "    framing: { type: none, escape: { char: 0x81 } }\n", "'escape' needs delimited, fixed or length_prefixed framing");
+    // length counting wire bytes
+    const std::string lpw = head + "    framing:\n      type: length_prefixed\n      sync: [0x80]\n";
+    const std::string esc = "      escape: { char: 0x81, code: index, reserved: [0x80, 0x81] }\n";
+    {
+        const auto r = compile(lpw + "      length: { field: len, counts: wire }\n" + esc);
+        INFO(r.text);
+        CHECK(r.ok);
+    }
+    expect_error(lpw + "      length: { field: len, counts: wire }\n", "length.counts: wire needs framing.escape");
+    expect_error(lpw + "      length: { field: len, covers: all, counts: wire }\n" + esc, "length.counts: wire needs length.covers: body");
+    expect_error(lpw + "      length: { field: len, counts: escaped }\n", "length.counts must be unescaped or wire");
+    {
+        const auto r = compile(lpw + "      length: { field: len, covers: body_checksum, counts: wire }\n" + esc +
+                               "    checksum: { algo: crc8, covers: body }\n");
+        INFO(r.text);
+        CHECK(r.ok);
+    }
+    expect_error(lpw + "      length: { field: len, covers: body_checksum, counts: wire }\n" + esc + "    checksum: { algo: crc8 }\n",
+                 "covers: body_checksum needs checksum.covers: body");
+    expect_error(lpw + "      length: { field: len, covers: trailer }\n", "length.covers must be body, body_checksum, header_body or all");
+    // checksum over the wire bytes
+    expect_error(lp + "    checksum: { algo: crc8, over: wire }\n", "checksum.over: wire needs framing.escape");
+    expect_error(with("{ char: 0x81, code: index, reserved: [0x80, 0x81] }") + "    checksum: { algo: crc8, over: escaped }\n",
+                 "checksum.over must be unescaped or wire");
+}

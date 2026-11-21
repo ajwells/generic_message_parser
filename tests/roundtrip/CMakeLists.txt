@@ -10,6 +10,7 @@ gmp_generate(TARGET gmp_test_schemas
         ${SCHEMA_DIR}/fieldcrc.yaml
         ${SCHEMA_DIR}/enums.yaml
         ${SCHEMA_DIR}/computed.yaml
+        ${SCHEMA_DIR}/stuffed.yaml
         ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/sensirion_sht4x/sht4x.yaml
         ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/sensirion_sht4x/sht4x_enum.yaml)
 # custom codecs referenced by hdlc.yaml
@@ -23,7 +24,8 @@ gmp_add_test(gmp_roundtrip_tests
         test_fieldcrc.cpp
         test_enums.cpp
         test_computed.cpp
-        test_sht4x.cpp)
+        test_sht4x.cpp
+        test_stuffed.cpp)
 target_link_libraries(gmp_roundtrip_tests PRIVATE gmp_test_schemas)
 
 # Embedded profile: generated code + runtime must build without exceptions / RTTI and never allocate.

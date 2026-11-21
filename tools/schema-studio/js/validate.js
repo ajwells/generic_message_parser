@@ -303,9 +303,26 @@
       const f = p.header.find((x) => x.name === fr.lengthField);
       if (!f) add('error', t, p.name, 'length_prefixed framing needs a header length field');
       else if (!['u8', 'u16', 'u32', 'u64'].includes(f.type) || f.const) add('error', t, p.name, 'length field must be an unsigned integer');
+      if (fr.counts === 'wire' && !fr.escape.enabled) add('error', t, p.name, 'a length counting wire bytes needs byte stuffing');
+      else if (fr.counts === 'wire' && fr.covers !== 'body' && fr.covers !== 'body_checksum')
+        add('error', t, p.name, 'a length counting wire bytes must cover the body (or body + checksum) only (a length that counts its own escaped bytes cannot always be encoded)');
+      else if (fr.counts === 'wire' && fr.covers === 'body_checksum' && p.checksum.enabled && p.checksum.covers !== 'body')
+        add('error', t, p.name, 'a length counting the checksum on the wire needs the checksum to cover the body only (a checksum over the length field changes with the length)');
     }
     if (fr.type === 'custom' && !s.customFramers.some((c) => c.name === fr.framer)) add('error', t, p.name, 'select a custom framer');
-    if (fr.escape.enabled && fr.type !== 'delimited') add('error', t, p.name, 'escaping is only supported with delimited framing');
+    if (fr.escape.enabled) {
+      if (!['delimited', 'fixed', 'length_prefixed'].includes(fr.type)) add('error', t, p.name, 'escaping needs delimited, fixed or length_prefixed framing');
+      else if (fmt === 'binary' || fr.type === 'delimited') {
+        const et = G.escapeTable(s, p);
+        et.errors.forEach((m) => add('error', t, p.name, `escape: ${m}`));
+        if (!et.errors.length) {
+          if (fr.type === 'delimited' && end && end.length && !et.isReserved(end[0])) add('error', t, p.name, `escape: the end delimiter byte ${G.hex2(end[0])} must be reserved`);
+          if (fr.type !== 'delimited' && sync && sync.length && !et.isReserved(sync[0]))
+            add('warning', t, p.name, `escape: sync byte ${G.hex2(sync[0])} is not reserved, so it can appear inside frames and resynchronisation is slower`);
+        }
+      }
+    }
+    if (p.checksum.enabled && p.checksum.over === 'wire' && !fr.escape.enabled) add('error', t, p.name, 'checksum over wire bytes needs byte stuffing');
     if (fmt === 'text' && !['delimited', 'none', 'custom'].includes(fr.type)) add('error', t, p.name, 'text protocols need delimited framing');
     const L = G.protocolLayout(s, p);
     if (fr.type === 'fixed' && L.maxFrame == null) add('error', t, p.name, "fixed framing needs 'size' unless all messages share one fixed size");

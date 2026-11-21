@@ -438,18 +438,33 @@
     if (ft === 'fixed') fparts.push(field('Frame size', input(`${b}.framing.size`, fr.size, { placeholder: 'derive', mono: true }), 'bytes'));
     if (ft === 'length_prefixed') {
       fparts.push(field('Length field', select(`${b}.framing.lengthField`, fr.lengthField, [['', '— header field —'], ...headerNames])));
-      fparts.push(field('Length covers', select(`${b}.framing.covers`, fr.covers, [['body', 'body'], ['header_body', 'header + body'], ['all', 'whole frame']])));
+      fparts.push(field('Length covers', select(`${b}.framing.covers`, fr.covers, [['body', 'body'], ['body_checksum', 'body + checksum'], ['header_body', 'header + body'], ['all', 'whole frame']])));
+      if (fr.escape.enabled && fmt === 'binary') {
+        fparts.push(field('Length counts', select(`${b}.framing.counts`, fr.counts || '', [['', 'unescaped bytes'], ['wire', 'wire bytes (after escaping)']]),
+          fr.counts === 'wire' ? 'body (+ checksum) only' : ''));
+      }
       fparts.push(field('Adjust', input(`${b}.framing.adjust`, fr.adjust, { placeholder: '0', mono: true }), 'covered = value + adjust'));
     }
     if (ft === 'custom') fparts.push(field('Framer', select(`${b}.framing.framer`, fr.framer, [['', '— select —'], ...s.customFramers.map((c) => c.name)])));
     if (ft !== 'none') fparts.push(field('Max frame', input(`${b}.framing.maxFrame`, fr.maxFrame, { placeholder: L.maxFrame != null ? `auto (${L.maxFrame})` : 'required', mono: true }), 'bytes'));
-    if (ft === 'delimited' && fmt === 'binary') {
-      fparts.push(`<div class="span-2">${check(`${b}.framing.escape.enabled`, fr.escape.enabled, 'Byte stuffing (escape delimiter bytes in the payload)')}</div>`);
+    if (['delimited', 'fixed', 'length_prefixed'].includes(ft) && fmt === 'binary') {
+      fparts.push(`<div class="span-2">${check(`${b}.framing.escape.enabled`, fr.escape.enabled, 'Byte stuffing (reserved bytes never appear inside a frame)')}</div>`);
       if (fr.escape.enabled) {
-        fparts.push(field('Style', select(`${b}.framing.escape.style`, fr.escape.style, [['xor', 'XOR (HDLC / PPP)'], ['map', 'Map (SLIP)']])));
+        const et = G.escapeTable(s, p);
+        fparts.push(field('Style', select(`${b}.framing.escape.style`, fr.escape.style, [['xor', 'XOR (HDLC / PPP)'], ['index', 'Index (escape + position)'], ['map', 'Map (SLIP)']])));
         fparts.push(field('Escape byte', input(`${b}.framing.escape.char`, fr.escape.char, { mono: true })));
-        if (fr.escape.style === 'xor') fparts.push(field('XOR mask', input(`${b}.framing.escape.xor`, fr.escape.xor, { mono: true })));
-        else fparts.push(field('Map', input(`${b}.framing.escape.map`, fr.escape.map, { mono: true, placeholder: '0xC0:0xDC, 0xDB:0xDD' }), 'raw:code pairs', 'span-2'));
+        if (fr.escape.style === 'map') {
+          fparts.push(field('Map', input(`${b}.framing.escape.map`, fr.escape.map, { mono: true, placeholder: '0xC0:0xDC, 0xDB:0xDD' }), 'raw:code pairs', 'span-2'));
+        } else {
+          const def = et ? et.reserved.map(G.hex2).join(', ') : '';
+          fparts.push(field('Reserved bytes', input(`${b}.framing.escape.reserved`, fr.escape.reserved, { mono: true, placeholder: `default: ${def}` }),
+            fr.escape.style === 'index' ? 'in order; include the escape byte' : 'default: sync / delimiter bytes', 'span-2'));
+          if (fr.escape.style === 'xor') fparts.push(field('XOR mask', input(`${b}.framing.escape.xor`, fr.escape.xor, { mono: true })));
+          else fparts.push(field('Base', input(`${b}.framing.escape.base`, fr.escape.base, { mono: true, placeholder: '0x00' }), 'code of the first reserved byte'));
+        }
+        if (et && !et.errors.length && et.table.length) {
+          fparts.push(`<div class="span-2 hint mono">${et.table.map(([r, c]) => `${G.hex2(r)} → ${G.hex2(et.esc)} ${G.hex2(c)}`).join(' · ')}</div>`);
+        }
       }
     }
     const framing = section('Framing', `<div class="grid">${fparts.join('')}</div>`);
@@ -464,6 +479,7 @@
       if (fmt === 'binary') {
         cparts.push(field('Covers', select(`${b}.checksum.covers`, ck.covers, [['header_body', 'header + body'], ['body', 'body'], ['all', 'prefix + header + body']])));
         cparts.push(field('Byte order', select(`${b}.checksum.endian`, ck.endian, inherit(['big', 'little'], G.protoEndian(s, p)))));
+        if (fr.escape.enabled) cparts.push(field('Computed over', select(`${b}.checksum.over`, ck.over || '', [['', 'unescaped bytes'], ['wire', 'escaped (wire) bytes']])));
       } else {
         cparts.push(field('Separator', input(`${b}.checksum.separator`, ck.separator, { mono: true }), 'before hex digits'));
         cparts.push(`<div class="span-2">${check(`${b}.checksum.required`, ck.required, 'Reject sentences without a checksum')}</div>`);
