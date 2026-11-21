@@ -804,6 +804,24 @@ examples/  bench/  docs/
 
 A more compact schema reference is in [docs/schema.md](docs/schema.md).
 
+## Using GMP with an AI assistant
+
+[`skills/gmp/`](skills/gmp) is an [Agent Skill](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview)
+that teaches an AI assistant how to use GMP. It covers modelling a datasheet or packet capture as a schema, running
+`gmpc`, wiring up CMake, using the generated structs, views and stream parser, and the common pitfalls. It is
+self-contained: the full schema reference, the C++ API and six worked recipes from `examples/` are bundled in
+`skills/gmp/references/`.
+
+- **Claude Code:** copy or symlink the folder to `~/.claude/skills/gmp` (all your projects) or to
+  `<your project>/.claude/skills/gmp` (one project, shared with your team through git). Claude then loads it whenever
+  you work on GMP schemas or generated code.
+- **Claude apps:** zip the `gmp` folder and upload it as a custom skill.
+- **Other assistants:** point their rules or context file (for example `AGENTS.md`) at `skills/gmp/SKILL.md`; it links
+  to the reference files.
+
+After changing `docs/schema.md`, the README API sections or `examples/`, run `python skills/gmp/build_references.py` to
+refresh the bundled references.
+
 ## Adding a language backend
 
 1. Implement `gmpc::Backend` (`generator/src/backend/backend.hpp`). It consumes the lowered `ir::Schema`, in which
