@@ -4,6 +4,7 @@
 #include "gmp/bits.hpp"
 #include "gmp/byte_reader.hpp"
 #include "gmp/byte_writer.hpp"
+#include "gmp/callbacks.hpp"
 #include "gmp/checksum.hpp"
 #include "gmp/concepts.hpp"
 #include "gmp/containers.hpp"

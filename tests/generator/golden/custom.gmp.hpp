@@ -178,9 +178,15 @@ struct TextPos {
     static constexpr std::array<std::uint8_t, 1> suffix{0x0A};
     using AnyView = std::variant<PosView>;
     using AnyMessage = std::variant<Pos>;
-    /// Incremental parser; Capacity must be >= max_frame.
+    /// Incremental parser; Capacity must be >= max_frame. Pass the handler on each feed()/next() call.
     template <std::size_t Capacity = max_frame>
     using Stream = gmp::StreamParser<TextPos, Capacity>;
+    /// Incremental parser that stores its handler (a named type): feed(bytes) / next() without a handler.
+    template <class Handler, std::size_t Capacity = max_frame>
+    using StreamWith = gmp::StreamParser<TextPos, Capacity, Handler>;
+    /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
+    template <std::size_t Capacity = max_frame, class Handler>
+    static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
 
     static constexpr gmp::DelimitedConfig framing_config{gmp::Pattern{{}, 0}, gmp::Pattern{{0x0A}, 1}, gmp::EscapeConfig{}, max_frame};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_delimited(b, framing_config); }
@@ -255,6 +261,60 @@ struct TextPos {
             if constexpr (std::invocable<H&, const V&>) handler(v);
         });
     }
+
+    /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
+    /// for dropped data (gmp::FrameError). on<Fn>(ctx) picks the slot from Fn's last parameter.
+    class Callbacks {
+    public:
+        /// Register Fn with context `ctx`: a member function of C, or a function taking C& / C* first.
+        template <auto Fn, class C>
+        Callbacks& on(C& ctx) noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(ctx); return *this; }
+        /// Register Fn that takes no context.
+        template <auto Fn>
+        Callbacks& on() noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(); return *this; }
+        /// Register a function pointer chosen at run time, called as fn(ctx, ...) (C-style void* or a typed pointer).
+        template <class F, class C> requires std::is_function_v<F>
+        Callbacks& on(F* fn, C* ctx) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn, ctx); return *this; }
+        template <class F> requires std::is_function_v<F>
+        Callbacks& on(F* fn) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn); return *this; }
+        /// Remove the listener of V (a message view, AnyView or gmp::FrameError).
+        template <class V>
+        Callbacks& off() noexcept { slot<V>().reset(); return *this; }
+        template <class V>
+        [[nodiscard]] bool has() const noexcept { return static_cast<bool>(const_cast<Callbacks*>(this)->slot<V>()); }
+        void clear() noexcept { *this = Callbacks{}; }
+
+        // handler interface used by the stream parser: the message listener first, then the every-frame listener
+        void operator()(const PosView& v) const { gmp_on_Pos_(v); if (gmp_on_frame_) gmp_on_frame_(AnyView(v)); }
+        void operator()(const gmp::FrameError& e) const { gmp_on_error_(e); }
+
+    private:
+        template <class V>
+        auto& slot() noexcept {
+            if constexpr (std::is_same_v<V, PosView>) return gmp_on_Pos_;
+            else if constexpr (std::is_same_v<V, AnyView>) return gmp_on_frame_;
+            else if constexpr (std::is_same_v<V, gmp::FrameError>) return gmp_on_error_;
+            else static_assert(gmp::detail::always_false<V>, "TextPos::Callbacks: the callback's last parameter must be one of this protocol's message views, AnyView or gmp::FrameError");
+        }
+
+        gmp::CallbackSlot<const PosView&> gmp_on_Pos_;
+        gmp::CallbackSlot<const AnyView&> gmp_on_frame_;
+        gmp::CallbackSlot<const gmp::FrameError&> gmp_on_error_;
+    };
+
+    /// Stream parser with runtime callbacks: register with on<&App::fn>(app), then feed(bytes).
+    template <std::size_t Capacity = max_frame>
+    class CallbackStream : private Callbacks, public gmp::StreamParser<TextPos, Capacity, Callbacks&> {
+    public:
+        CallbackStream() noexcept : Callbacks(), gmp::StreamParser<TextPos, Capacity, Callbacks&>(static_cast<Callbacks&>(*this)) {}
+        CallbackStream(const CallbackStream&) = delete;
+        CallbackStream& operator=(const CallbackStream&) = delete;
+        using Callbacks::on;
+        using Callbacks::off;
+        using Callbacks::has;
+        using Callbacks::clear;
+        [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
+    };
 
     static gmp::Result<std::size_t> encode(const Pos& m, gmp::mut_bytes out) noexcept {
         std::size_t pos = 0;
@@ -362,9 +422,15 @@ struct Custom {
     using Header = CustomHeader;
     using HeaderView = CustomHeaderView;
     using AnyView = std::variant<BlobView>;
-    /// Incremental parser; Capacity must be >= max_frame.
+    /// Incremental parser; Capacity must be >= max_frame. Pass the handler on each feed()/next() call.
     template <std::size_t Capacity = max_frame>
     using Stream = gmp::StreamParser<Custom, Capacity>;
+    /// Incremental parser that stores its handler (a named type): feed(bytes) / next() without a handler.
+    template <class Handler, std::size_t Capacity = max_frame>
+    using StreamWith = gmp::StreamParser<Custom, Capacity, Handler>;
+    /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
+    template <std::size_t Capacity = max_frame, class Handler>
+    static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
 
     static_assert(gmp::Framer<test::LengthByteFramer>, "custom framer 'len_byte' must provide static gmp::FrameScan scan(gmp::bytes_view)");
     static gmp::FrameScan scan(gmp::bytes_view b) noexcept { return test::LengthByteFramer::scan(b); }
@@ -427,6 +493,61 @@ struct Custom {
             else if constexpr (std::invocable<H&, const V&>) handler(v);
         });
     }
+
+    /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
+    /// for dropped data (gmp::FrameError). on<Fn>(ctx) picks the slot from Fn's last parameter.
+    /// Fn may take (View) or (HeaderView, View); the header is passed only when Fn asks for it.
+    class Callbacks {
+    public:
+        /// Register Fn with context `ctx`: a member function of C, or a function taking C& / C* first.
+        template <auto Fn, class C>
+        Callbacks& on(C& ctx) noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(ctx); return *this; }
+        /// Register Fn that takes no context.
+        template <auto Fn>
+        Callbacks& on() noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(); return *this; }
+        /// Register a function pointer chosen at run time, called as fn(ctx, ...) (C-style void* or a typed pointer).
+        template <class F, class C> requires std::is_function_v<F>
+        Callbacks& on(F* fn, C* ctx) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn, ctx); return *this; }
+        template <class F> requires std::is_function_v<F>
+        Callbacks& on(F* fn) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn); return *this; }
+        /// Remove the listener of V (a message view, AnyView or gmp::FrameError).
+        template <class V>
+        Callbacks& off() noexcept { slot<V>().reset(); return *this; }
+        template <class V>
+        [[nodiscard]] bool has() const noexcept { return static_cast<bool>(const_cast<Callbacks*>(this)->slot<V>()); }
+        void clear() noexcept { *this = Callbacks{}; }
+
+        // handler interface used by the stream parser: the message listener first, then the every-frame listener
+        void operator()(const HeaderView& h, const BlobView& v) const { gmp_on_Blob_(h, v); if (gmp_on_frame_) gmp_on_frame_(h, AnyView(v)); }
+        void operator()(const gmp::FrameError& e) const { gmp_on_error_(e); }
+
+    private:
+        template <class V>
+        auto& slot() noexcept {
+            if constexpr (std::is_same_v<V, BlobView>) return gmp_on_Blob_;
+            else if constexpr (std::is_same_v<V, AnyView>) return gmp_on_frame_;
+            else if constexpr (std::is_same_v<V, gmp::FrameError>) return gmp_on_error_;
+            else static_assert(gmp::detail::always_false<V>, "Custom::Callbacks: the callback's last parameter must be one of this protocol's message views, AnyView or gmp::FrameError");
+        }
+
+        gmp::CallbackSlot<const HeaderView&, const BlobView&> gmp_on_Blob_;
+        gmp::CallbackSlot<const HeaderView&, const AnyView&> gmp_on_frame_;
+        gmp::CallbackSlot<const gmp::FrameError&> gmp_on_error_;
+    };
+
+    /// Stream parser with runtime callbacks: register with on<&App::fn>(app), then feed(bytes).
+    template <std::size_t Capacity = max_frame>
+    class CallbackStream : private Callbacks, public gmp::StreamParser<Custom, Capacity, Callbacks&> {
+    public:
+        CallbackStream() noexcept : Callbacks(), gmp::StreamParser<Custom, Capacity, Callbacks&>(static_cast<Callbacks&>(*this)) {}
+        CallbackStream(const CallbackStream&) = delete;
+        CallbackStream& operator=(const CallbackStream&) = delete;
+        using Callbacks::on;
+        using Callbacks::off;
+        using Callbacks::has;
+        using Callbacks::clear;
+        [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
+    };
 
 };
 

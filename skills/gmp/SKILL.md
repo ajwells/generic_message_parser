@@ -144,6 +144,14 @@ stream.feed(chunk, gmp::overloaded{
     [](const gmp::FrameError& e) { /* optional: e.error, e.data */ },
 });
 
+// Store the handler in the parser, so the receive path (UART driver, socket loop) only passes bytes:
+auto bound = acme::link::Link::make_stream(gmp::overloaded{ /* same lambdas */ });   // compile-time, zero cost
+bound.feed(chunk);
+acme::link::Link::CallbackStream<> link;          // runtime listeners; a named type, usable as a member/global
+link.on<&App::on_status>(app)                     // slot chosen from the last parameter: a View, AnyView or FrameError
+    .on<&App::on_drop>(app);                      // (HeaderView, View) gets the header, (View) does not
+link.feed(chunk);
+
 // A message on its own, no framing
 auto st = acme::link::Status::decode(bytes);     // gmp::Result<Status>
 auto view = acme::link::StatusView::from(bytes); // gmp::Result<StatusView>
@@ -182,6 +190,12 @@ Errors are values (`gmp::Result<T>` = `std::expected<T, gmp::Error>`): `Truncate
 - **Strict enums:** by default undeclared enum values decode fine (check with `is_known()`); set `strict: true` on the
   enum or `defaults.strict_enums: true` to reject them.
 - **Per-frame I/O is the app's job.** GMP doesn't own a UART or socket; read bytes yourself and pass them to `feed()`.
+  Handlers run synchronously inside `feed()`, so feeding from an ISR runs the handlers in the ISR.
+- **Stored handlers:** `make_stream(h)` / `StreamWith<H>` keep a compile-time handler; `CallbackStream` keeps runtime
+  listeners (one per message, plus `AnyView` for every frame and `gmp::FrameError`; registering again replaces).
+  Contexts passed to `on<Fn>(ctx)` must outlive the registration. Messages and enums can't be named `Header`,
+  `HeaderView`, `AnyView`, `AnyMessage`, `Frame`, `Stream`, `StreamWith`, `Callbacks` or `CallbackStream` (the
+  names declared inside each generated protocol struct).
 
 ## When modelling a new protocol
 

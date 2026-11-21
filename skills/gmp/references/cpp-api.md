@@ -68,7 +68,9 @@ Bits groups are small structs with one member per bit field, `unpack`/`pack`/`ch
 | `static Result<size_t> encode(const M&, mut_bytes out)` | Build a complete frame: prefix, header (id and length filled in), body, padding, checksum, escaping, suffix. One overload per message. |
 | `static Result<size_t> encode(Header, const M&, mut_bytes)` | Same, with explicit values for the other header fields. |
 | `static Result<size_t> encode(const AnyMessage&, mut_bytes)` | Encode whichever message the variant holds. |
-| `template <size_t Cap = max_frame> using Stream` | The stream parser for this protocol (see [Streaming](#streaming)). |
+| `template <size_t Cap = max_frame> using Stream` | The stream parser for this protocol; the handler is passed on each call (see [Streaming](#streaming)). |
+| `StreamWith<H, Cap>`, `make_stream(handler)` | Stream parser that stores a handler: `feed(bytes)` / `next()` take no handler ([Storing the handler](#storing-the-handler)). |
+| `Callbacks`, `CallbackStream<Cap>` | Runtime callbacks: `on<&App::fn>(app)` per message, for every frame (`AnyView`) and for `gmp::FrameError`. |
 | `scan`, `open`, `visit_frame`, `select_message`, `process` | Building blocks. `scan` finds a frame boundary. `open` validates a frame and splits it into `Frame{header, body}` (binary) or `Frame{type_id, body}` (text, where `type_id` is the first token). `visit_frame`/`select_message` pick the message type. `process` is the hook used by the stream parser. |
 
 ---
@@ -99,6 +101,67 @@ parser.feed(chunk, gmp::overloaded{
   stats; `buffered()` is the number of pending bytes.
 - Views passed to the handler point into the parser's buffer and are valid only during the call. Copy what you need,
   or call `to_struct()`.
+- Handlers run synchronously inside `feed()` / `next()`. If `feed()` is called from an interrupt, the handlers run there
+  too.
+
+### Storing the handler
+
+The handler can also live in the parser, so the code that receives bytes only calls `parser.feed(bytes)` (or
+`next()`). There are two forms:
+
+**Compile-time handler** (`make_stream`, `StreamWith<H>`): no runtime cost, with the same overload rules as above.
+
+```cpp
+auto parser = demo::Link::make_stream(gmp::overloaded{
+    [&](const demo::StatusView& v) { ... },
+    [](const gmp::FrameError& e) { ... },
+});
+parser.feed(chunk);
+
+// as a class member: use a named handler type
+struct LinkHandler { App& app; void operator()(const demo::StatusView& v) const { app.on_status(v); } };
+class App { demo::Link::StreamWith<LinkHandler> parser_{LinkHandler{*this}}; /* ... */ };
+```
+
+**Runtime callbacks** (`CallbackStream`, `Callbacks`): the parser type has a name and doesn't depend on the handlers.
+It can be a global or a member, be passed to a non-template driver, and have listeners added or changed at runtime.
+
+```cpp
+demo::Link::CallbackStream<> parser;
+parser.on<&App::on_status>(app)        // void App::on_status(const StatusView&)
+      .on<&App::on_command>(app)       // void App::on_command(const Link::HeaderView&, const CommandView&)
+      .on<&App::on_frame>(app)         // void App::on_frame(const Link::AnyView&): every valid frame
+      .on<&App::on_drop>(app);         // void App::on_drop(const gmp::FrameError&)
+parser.feed(chunk);
+```
+
+- **The slot is chosen from the function's last parameter:**
+  - a message view: that message's listener
+  - `AnyView`: the every-frame listener
+  - `gmp::FrameError`: the error listener
+
+  There is one listener per slot, and registering again replaces it. If several parts of the program need the same
+  message, register one function that forwards to them.
+- **Header (protocols with a header):** a function that takes `(HeaderView, View)` gets the header, and one that takes
+  `(View)` doesn't. On a protocol without a header, only `(View)` compiles.
+- **Order:** for each frame, the message listener runs first, then the every-frame listener. Messages without a
+  listener are ignored.
+- **What you can bind:**
+
+| form | example |
+|------|---------|
+| member function | `on<&App::on_status>(app)` |
+| function with a context (`C&` or `C*`) | `on<&handle_status>(app)` for `void handle_status(App&, const StatusView&)` |
+| captureless lambda | `on<[](App& a, const StatusView& v) { ... }>(app)` |
+| function without a context | `on<&log_status>()` |
+| function pointer chosen at run time | `on(&c_callback, ctx)` for `void c_callback(void* ctx, const StatusView&)`, or a typed `App*` |
+
+- Signatures are checked when you register, so a mismatch is a compile error. There's no `std::function` and no heap.
+  Each listener is a function pointer and a context pointer, called through one indirect call.
+- `off<StatusView>()` removes a listener, `has<V>()` checks for one, and `clear()` removes all. `callbacks()` returns
+  the `Callbacks` object. A `Callbacks` object also works as a plain handler: `stream.feed(bytes, callbacks)`.
+- The context object must outlive the registration. A `CallbackStream` can't be copied.
+
 
 ## Printing
 

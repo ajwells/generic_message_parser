@@ -104,8 +104,9 @@ int main() {
     bad.fault = demo::Fault{0x0042, 875};
     append(bad);
 
-    demo::Link::Stream<> parser;
-    auto handler = gmp::overloaded{
+    // The parser stores the handler, so the receive path below only passes bytes.
+    // (Alternatives: demo::Link::Stream<> with feed(bytes, handler), or CallbackStream with on<&App::fn>(app).)
+    auto parser = demo::Link::make_stream(gmp::overloaded{
         [](const demo::StatusView& v) {
             std::printf("Status  uptime=%us voltage=%.3fV mode=%s", static_cast<unsigned>(v.uptime_s()), v.voltage_scaled(),
                         demo::to_string(v.state().mode).data());
@@ -119,11 +120,11 @@ int main() {
         [](const gmp::FrameError& e) {
             std::printf("dropped %zu byte(s): %s\n", e.data.size(), gmp::to_string(e.error).data());
         },
-    };
+    });
     // Deliver the stream in awkward 5-byte chunks, as a UART driver might.
     const gmp::bytes_view all(wire);
     for (std::size_t off = 0; off < all.size(); off += 5)
-        parser.feed(all.subspan(off, std::min<std::size_t>(5, all.size() - off)), handler);
+        parser.feed(all.subspan(off, std::min<std::size_t>(5, all.size() - off)));
 
     const auto& st = parser.stats();
     std::printf("frames=%u errors=%u skipped=%u\n", static_cast<unsigned>(st.frames),

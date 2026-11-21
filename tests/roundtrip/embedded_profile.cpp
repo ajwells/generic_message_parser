@@ -57,6 +57,17 @@ int main() {
     if (gmp::print(*any, small) || small.size() != 64) return 6;  // truncated -> BufferFull
     std::size_t chars = 0;
     if (!gmp::print(s, [&](std::string_view t) { chars += t.size(); }) || chars == 0) return 7;
+    // stored handlers: compile-time (make_stream) and runtime callbacks (CallbackStream)
+    int stored = 0;
+    auto bound = BinaryLink::make_stream([&](const StatusView&) { ++stored; });
+    if (bound.feed(gmp::bytes_view(frame.data(), *n)) != 1 || stored != 1) return 8;
+    struct Counter {
+        int frames = 0;
+        void on_status(const BinaryLink::HeaderView&, const StatusView&) { ++frames; }
+    } counter;
+    BinaryLink::CallbackStream<> cbs;
+    cbs.on<&Counter::on_status>(counter);
+    if (cbs.feed(gmp::bytes_view(frame.data(), *n)) != 1 || counter.frames != 1) return 9;
     g_armed = false;
     if (delivered != 1) return 4;
     std::puts("embedded profile OK: no exceptions, no RTTI, no heap");

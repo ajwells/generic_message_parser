@@ -5,6 +5,7 @@
 #include <sstream>
 #include <string>
 
+#include "backend/backend.hpp"
 #include "ir/lowering.hpp"
 #include "schema/loader.hpp"
 
@@ -15,10 +16,10 @@ struct Outcome {
     std::string text;
 };
 
-Outcome compile(const std::string& yaml) {
+Outcome compile(const std::string& yaml, bool backend = false) {
     gmpc::Diagnostics d;
     auto s = gmpc::load_schema_string(yaml, "test.yaml", d);
-    if (s) gmpc::lower_schema(*s, d);
+    if (s && gmpc::lower_schema(*s, d) && backend) (void)gmpc::find_backend("cpp")->generate(*s, {}, d);
     std::ostringstream os;
     d.print(os);
     return {!d.has_errors(), os.str()};
@@ -318,4 +319,24 @@ TEST_CASE("escape / byte stuffing errors") {
     expect_error(lp + "    checksum: { algo: crc8, over: wire }\n", "checksum.over: wire needs framing.escape");
     expect_error(with("{ char: 0x81, code: index, reserved: [0x80, 0x81] }") + "    checksum: { algo: crc8, over: escaped }\n",
                  "checksum.over must be unescaped or wire");
+}
+
+TEST_CASE("C++ backend: names generated inside a protocol struct are reserved") {
+    const std::string proto = R"(
+protocols:
+  P:
+    framing: { type: delimited, end: [0x0A], max_frame: 32 }
+    messages: [A]
+)";
+    const std::string base = "messages:\n  A:\n    fields:\n      - { name: x, type: u8 }\n";
+    for (const char* name : {"Callbacks", "CallbackStream", "StreamWith", "Frame", "AnyView"}) {
+        const auto r = compile(base + "  " + name + ":\n    fields:\n      - { name: y, type: u8 }\n" + proto, true);
+        INFO(r.text);
+        CHECK_FALSE(r.ok);
+        CHECK(r.text.find("message '" + std::string(name) + "' clashes with a name generated inside protocol 'P'") !=
+              std::string::npos);
+    }
+    const auto ok = compile(base + proto, true);
+    INFO(ok.text);
+    CHECK(ok.ok);
 }

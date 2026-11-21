@@ -76,6 +76,7 @@ public:
             for (const auto* m : p.messages)
                 if (m->separator != p.separator)
                     c.diag.error(m->loc, "message '" + m->name + "' separator differs from protocol '" + p.name + "'");
+        if (!c.schema.protocols.empty() && c.schema.protocols.front().get() == &p) check_reserved_names();  // once per schema
     }
 
     void emit() {
@@ -88,12 +89,29 @@ public:
         emit_visit();
         emit_parse();
         emit_process();
+        if (stream_) emit_callbacks();
         emit_encode();
         w_.close("};");
         w_.line();
     }
 
 private:
+    /// Names declared inside every protocol struct. A schema message or enum with one of these names would be
+    /// shadowed inside the struct (e.g. `encode(const Callbacks&)` would refer to the nested type).
+    void check_reserved_names() {
+        static const std::set<std::string> reserved = {"Header", "HeaderView", "AnyView", "AnyMessage", "Frame", "Stream",
+                                                       "StreamWith", "Callbacks", "CallbackStream"};
+        auto check = [&](const std::string& name, const SourceLoc& loc, const char* what) {
+            if (reserved.contains(name))
+                c_.diag.error(loc, std::string(what) + " '" + name + "' clashes with a name generated inside protocol '" +
+                                       p_.name + "' (reserved: Header, HeaderView, AnyView, AnyMessage, Frame, Stream, "
+                                       "StreamWith, Callbacks, CallbackStream); rename it");
+        };
+        for (const auto& m : c_.schema.messages)
+            if (!m->is_header) check(m->name, m->loc, "message");
+        for (const auto& e : c_.schema.enums) check(e->name, e->loc, "enum");
+    }
+
     // -------------------------------------------------------------------------------------------------
     void emit_constants() {
         w_.line("static constexpr std::size_t max_frame = " + sz(p_.max_frame) + ";");
@@ -119,9 +137,15 @@ private:
         w_.line("using AnyView = std::variant<" + views + ">;");
         if (all_struct_) w_.line("using AnyMessage = std::variant<" + structs + ">;");
         if (stream_) {
-            w_.line("/// Incremental parser; Capacity must be >= max_frame.");
+            w_.line("/// Incremental parser; Capacity must be >= max_frame. Pass the handler on each feed()/next() call.");
             w_.line("template <std::size_t Capacity = max_frame>");
             w_.line("using Stream = gmp::StreamParser<" + p_.name + ", Capacity>;");
+            w_.line("/// Incremental parser that stores its handler (a named type): feed(bytes) / next() without a handler.");
+            w_.line("template <class Handler, std::size_t Capacity = max_frame>");
+            w_.line("using StreamWith = gmp::StreamParser<" + p_.name + ", Capacity, Handler>;");
+            w_.line("/// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).");
+            w_.line("template <std::size_t Capacity = max_frame, class Handler>");
+            w_.line("static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }");
         }
         w_.line();
     }
@@ -396,6 +420,85 @@ private:
         }
         w_.close("});");
         w_.close();
+        w_.line();
+    }
+
+    /// Runtime callbacks (one listener per message, every frame, errors) and CallbackStream.
+    void emit_callbacks() {
+        const std::string hdr = has_header_ ? "const HeaderView& h, " : "";
+        const std::string hdr_arg = has_header_ ? "h, " : "";
+        const std::string hdr_type = has_header_ ? "const HeaderView&, " : "";
+        auto slot_name = [](const Message& m) { return "gmp_on_" + m.name + "_"; };
+
+        w_.line("/// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one");
+        w_.line("/// for dropped data (gmp::FrameError). on<Fn>(ctx) picks the slot from Fn's last parameter.");
+        if (has_header_)
+            w_.line("/// Fn may take (View) or (HeaderView, View); the header is passed only when Fn asks for it.");
+        w_.open("class Callbacks {");
+        w_.label("public:");
+        w_.line("/// Register Fn with context `ctx`: a member function of C, or a function taking C& / C* first.");
+        w_.line("template <auto Fn, class C>");
+        w_.line("Callbacks& on(C& ctx) noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(ctx); return *this; }");
+        w_.line("/// Register Fn that takes no context.");
+        w_.line("template <auto Fn>");
+        w_.line("Callbacks& on() noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(); return *this; }");
+        w_.line("/// Register a function pointer chosen at run time, called as fn(ctx, ...) (C-style void* or a typed pointer).");
+        w_.line("template <class F, class C> requires std::is_function_v<F>");
+        w_.line("Callbacks& on(F* fn, C* ctx) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn, ctx); return *this; }");
+        w_.line("template <class F> requires std::is_function_v<F>");
+        w_.line("Callbacks& on(F* fn) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn); return *this; }");
+        w_.line("/// Remove the listener of V (a message view, AnyView or gmp::FrameError).");
+        w_.line("template <class V>");
+        w_.line("Callbacks& off() noexcept { slot<V>().reset(); return *this; }");
+        w_.line("template <class V>");
+        w_.line("[[nodiscard]] bool has() const noexcept { return static_cast<bool>(const_cast<Callbacks*>(this)->slot<V>()); }");
+        w_.line("void clear() noexcept { *this = Callbacks{}; }");
+        w_.line();
+        w_.line("// handler interface used by the stream parser: the message listener first, then the every-frame listener");
+        for (const auto* m : p_.messages) {
+            const auto v = view_name(*m);
+            w_.line("void operator()(" + hdr + "const " + v + "& v) const { " + slot_name(*m) + "(" + hdr_arg +
+                    "v); if (gmp_on_frame_) gmp_on_frame_(" + hdr_arg + "AnyView(v)); }");
+        }
+        w_.line("void operator()(const gmp::FrameError& e) const { gmp_on_error_(e); }");
+        w_.line();
+        w_.label("private:");
+        w_.line("template <class V>");
+        w_.open("auto& slot() noexcept {");
+        bool first = true;
+        auto branch = [&](const std::string& type, const std::string& member) {
+            w_.line(std::string(first ? "if" : "else if") + " constexpr (std::is_same_v<V, " + type + ">) return " + member + ";");
+            first = false;
+        };
+        for (const auto* m : p_.messages) branch(view_name(*m), slot_name(*m));
+        branch("AnyView", "gmp_on_frame_");
+        branch("gmp::FrameError", "gmp_on_error_");
+        w_.line("else static_assert(gmp::detail::always_false<V>, \"" + p_.name +
+                "::Callbacks: the callback's last parameter must be one of this protocol's message views, AnyView or "
+                "gmp::FrameError\");");
+        w_.close();
+        w_.line();
+        for (const auto* m : p_.messages)
+            w_.line("gmp::CallbackSlot<" + hdr_type + "const " + view_name(*m) + "&> " + slot_name(*m) + ";");
+        w_.line("gmp::CallbackSlot<" + hdr_type + "const AnyView&> gmp_on_frame_;");
+        w_.line("gmp::CallbackSlot<const gmp::FrameError&> gmp_on_error_;");
+        w_.close("};");
+        w_.line();
+
+        const auto base = "gmp::StreamParser<" + p_.name + ", Capacity, Callbacks&>";
+        w_.line("/// Stream parser with runtime callbacks: register with on<&App::fn>(app), then feed(bytes).");
+        w_.line("template <std::size_t Capacity = max_frame>");
+        w_.open("class CallbackStream : private Callbacks, public " + base + " {");
+        w_.label("public:");
+        w_.line("CallbackStream() noexcept : Callbacks(), " + base + "(static_cast<Callbacks&>(*this)) {}");
+        w_.line("CallbackStream(const CallbackStream&) = delete;");
+        w_.line("CallbackStream& operator=(const CallbackStream&) = delete;");
+        w_.line("using Callbacks::on;");
+        w_.line("using Callbacks::off;");
+        w_.line("using Callbacks::has;");
+        w_.line("using Callbacks::clear;");
+        w_.line("[[nodiscard]] Callbacks& callbacks() noexcept { return *this; }");
+        w_.close("};");
         w_.line();
     }
 

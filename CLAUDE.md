@@ -9,4 +9,4 @@ Essentials:
 - After an intentional generator change: `GMP_UPDATE_GOLDEN=1 ctest --test-dir build -R golden`.
 - A feature is complete when generator, runtime, Studio (`tools/schema-studio`), docs (`README.md`, `docs/schema.md`)
   and tests all cover it; refresh the AI skill with `py skills/gmp/build_references.py`.
-- This directory is not a git repository.
+- This directory is a git repository (branch `master`). Commit only when asked.

@@ -8,6 +8,10 @@
 // The parser owns a fixed buffer of `Capacity` bytes (no heap). Data can be pushed in chunks of any
 // size; complete frames are validated, matched to a message type and passed to the handler. Garbage and corrupt frames are
 // skipped and reported through `handler(gmp::FrameError{...})` when the handler accepts it.
+//
+// The handler is either passed on every call (`feed(bytes, handler)`, Handler = void) or stored in the parser
+// (`Handler` = its type, or a reference to it): then `feed(bytes)` / `next()` take no handler. Generated protocols
+// add `make_stream(handler)`, `StreamWith<H>` and `CallbackStream` (runtime callbacks, see gmp/callbacks.hpp).
 
 #include <algorithm>
 #include <array>
@@ -15,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <type_traits>
 #include <utility>
 
 #include "gmp/framing/frame.hpp"
@@ -49,12 +54,34 @@ struct StreamStats {
     std::uint32_t overflows = 0;     // times the buffer filled without a complete frame
 };
 
-template <class Protocol, std::size_t Capacity>
+namespace detail {
+struct NoHandler {};
+} // namespace detail
+
+/// Handler = void: pass the handler on every feed()/next() call. Otherwise the parser stores a Handler (by value,
+/// or by reference when Handler is a reference type) and feed(bytes) / next() use it.
+template <class Protocol, std::size_t Capacity, class Handler = void>
 class StreamParser {
     static_assert(Capacity > 0);
+    using Storage = std::conditional_t<std::is_void_v<Handler>, detail::NoHandler, Handler>;
 
 public:
     static constexpr std::size_t capacity() noexcept { return Capacity; }
+
+    StreamParser() requires std::default_initializable<Storage> = default;
+    /// Store `h` as the handler used by feed(bytes) and next().
+    template <class H>
+        requires(!std::is_void_v<Handler> && std::constructible_from<Storage, H &&>)
+    explicit StreamParser(H&& h) : handler_(std::forward<H>(h)) {}
+
+    /// The stored handler (only when Handler is not void).
+    auto& handler() noexcept requires(!std::is_void_v<Handler>) { return handler_; }
+    const auto& handler() const noexcept requires(!std::is_void_v<Handler>) { return handler_; }
+
+    /// Push `in` and deliver every complete frame to the stored handler. Returns the number of frames delivered.
+    std::size_t feed(bytes_view in) requires(!std::is_void_v<Handler>) { return feed(in, handler_); }
+    /// Process at most one scan step with the stored handler. Returns false when more input is required.
+    bool next() requires(!std::is_void_v<Handler>) { return next(handler_); }
 
     /// Copy as much of `in` as fits into the internal buffer. Returns bytes accepted.
     std::size_t push(bytes_view in) noexcept {
@@ -141,6 +168,7 @@ private:
     std::size_t head_ = 0;
     std::size_t tail_ = 0;
     StreamStats stats_{};
+    [[no_unique_address]] Storage handler_{};
 };
 
 } // namespace gmp

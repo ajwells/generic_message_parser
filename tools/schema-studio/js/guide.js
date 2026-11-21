@@ -608,6 +608,23 @@ parser.feed(chunk, gmp::overloaded{
     [](const gmp::FrameError& e) { /* optional: e.error, e.data */ },
 });
 auto& st = parser.stats();   // frames, frame_errors, bytes_skipped, overflows`)}
+      <h3>Storing the handler</h3>
+      <p>The parser can keep the handler, so the code that receives bytes (a UART driver, a socket loop) only calls
+      <code>parser.feed(bytes)</code>. <code>make_stream</code> stores an overload set with no runtime cost.
+      <code>CallbackStream</code> holds runtime listeners. Its type doesn't depend on the handlers, so it can be a
+      global or a class member, and listeners can be changed while running.</p>
+      ${code(`auto parser = demo::Link::make_stream(gmp::overloaded{   // compile-time handler
+    [&](const demo::StatusView& v) { app.on_status(v); },
+});
+parser.feed(chunk);
+
+demo::Link::CallbackStream<> link;                        // runtime callbacks
+link.on<&App::on_status>(app)      // (StatusView): one listener per message
+    .on<&App::on_command>(app)     // (Link::HeaderView, CommandView): header only when asked for
+    .on<&App::on_frame>(app)       // (Link::AnyView): every valid frame, after the message listener
+    .on<&App::on_drop>(app);       // (gmp::FrameError): garbage, bad checksums, unknown ids
+link.feed(chunk);`)}
+      ${note('The listener is chosen from the function\'s last parameter. Free functions taking <code>(App&amp;, View)</code>, captureless lambdas, and C-style <code>void cb(void* ctx, const View&amp;)</code> pointers work too. Registering again replaces the listener; <code>off&lt;View&gt;()</code> removes it.')}
       ${demo('stream')}`;
   }
 
@@ -651,7 +668,7 @@ stream.feed(chunk, [](const demo::StatusView& v) { gmp::println(v, stdout); });`
         ['<code>class MView</code>', '<code>from(bytes)</code> validates once; accessors read from the buffer. <code>to_struct()</code> copies out.'],
         ['<code>enum class E</code>', '<code>to_string()</code>, <code>is_known()</code>.'],
         ['<code>print_to()</code>', 'On structs, views and bit groups: drives <code>gmp::print(msg, sink)</code> (see Printing for logs).'],
-        ['<code>struct P</code>', '<code>parse()</code> → <code>AnyView</code>, <code>decode()</code> → <code>AnyMessage</code>, <code>encode(msg, out)</code>, <code>Stream&lt;&gt;</code>, layout constants.'],
+        ['<code>struct P</code>', '<code>parse()</code> → <code>AnyView</code>, <code>decode()</code> → <code>AnyMessage</code>, <code>encode(msg, out)</code>, <code>Stream&lt;&gt;</code>, <code>make_stream()</code> / <code>StreamWith</code>, <code>Callbacks</code> / <code>CallbackStream</code>, layout constants.'],
       ])}
       <h3>Errors</h3>
       <p>Every fallible call returns <code>gmp::Result&lt;T&gt;</code> (<code>std::expected&lt;T, gmp::Error&gt;</code>).</p>

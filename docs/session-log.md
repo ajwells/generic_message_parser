@@ -22,7 +22,7 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 - Toolchain PATH (Git Bash):
   `export PATH="/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/mingw/bin:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/ninja/win/x64:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin:$PATH"`
   (MinGW GCC 15, Ninja, CMake; yaml-cpp and Catch2 via FetchContent).
-- Debug build + tests: `cmake --build build && ctest --test-dir build` (125 tests, all passing).
+- Debug build + tests: `cmake --build build && ctest --test-dir build` (131 tests, all passing).
 - Release build: `cmake --build build-release` (Release, bench ON, tests and examples OFF; it is a compile check only).
 - Regenerate golden files after an intentional generator change:
   `GMP_UPDATE_GOLDEN=1 ctest --test-dir build -R golden`, then check that only the expected files changed.
@@ -67,6 +67,10 @@ Schema / generator:
 - Protocols: framing `none` / `fixed` / `length_prefixed` / `delimited` / `custom`; checksum `covers`;
   `message_type` by header field or first token (renamed from dispatch/id: see decisions).
 - Length coverage: `body`, `body_checksum`, `header_body`, `all`; `adjust`.
+- Stored stream handlers. Per protocol: `StreamWith<H, Cap>` / `make_stream(h)` (compile-time handler), plus
+  `Callbacks` and `CallbackStream<Cap>` (runtime listeners, `on<Fn>(ctx)`). Names declared inside protocol structs
+  (`Header`, `HeaderView`, `AnyView`, `AnyMessage`, `Frame`, `Stream`, `StreamWith`, `Callbacks`, `CallbackStream`)
+  are reserved for messages and enums; this is checked by the C++ backend.
 - Byte stuffing `escape:` on delimited, fixed and length_prefixed framing: styles `xor` / `index` (with `base`) / `map`,
   up to 16 reserved bytes, `checksum.over: wire`, `length.counts: wire` (only with `covers: body | body_checksum`, and
   `body_checksum` then needs `checksum.covers: body`).
@@ -74,7 +78,12 @@ Schema / generator:
 - `print_to(gmp::Printer&)` on every struct, view and bits group (binary and text). Same text from a struct and its view.
 
 Runtime:
-- `StreamParser` with resync, stats, `feed` / `push` + `next`; table-driven `EscapeConfig`
+- `StreamParser<Protocol, Cap, Handler = void>` with resync, stats, `feed` / `push` + `next`. A non-void Handler
+  (a value, or a reference such as `Callbacks&`) is stored, and then `feed(bytes)` / `next()` take no handler.
+- `gmp/callbacks.hpp`: `CallbackSlot<Args...>` (function pointer + context + trampoline, no heap) and
+  `callback_traits` / `callback_message_t`. A bound function may take all the slot's arguments or only the last one,
+  so the header is passed only when asked for.
+- Table-driven `EscapeConfig`
   (`make_xor_escape` / `make_index_escape` / `make_map_escape`, `walk_escaped`, `escape_overhead`).
 - CRC presets incl. `crc8_nrsc5`; inline CRC parameters.
 - `gmp/print.hpp`: `gmp::print` / `gmp::println(value, sink, PrintOptions)`. Multi-line (default) or single-line
@@ -124,6 +133,15 @@ AI skill: `skills/gmp/` (see section 7).
   place (the runtime), and the free `gmp::print` template picks the sink adapter. Field names print as written in
   the schema, not as the C++ identifier. `const` and `pad` fields are not printed, which matches the struct members.
   Floats print as the shortest text of their own type, so an f32 is not widened to double first.
+- **Stored handlers use a combined design.** `StreamParser` stores any handler (Option 1, zero cost). The generated
+  `Callbacks` is just one concrete handler type with runtime slots (Option 2), so there is a single dispatch path.
+  `CallbackStream` privately inherits `Callbacks` and passes itself to the parser as `Callbacks&`.
+  - **Slot choice:** taken from the function's last parameter, so there are no per-message setter names that could
+    collide, and wrong types fail at registration with a clear `static_assert`.
+  - **Header (H3):** the slot always receives `(HeaderView, View)` and its adapter drops the header when the function
+    takes only `(View)`. Headerless and text protocols only have `(View)`.
+  - **Order:** the message listener runs first, then `AnyView` (every frame). There is one listener per slot;
+    registering again replaces it, and users forward to more if needed.
 - **The AI skill bundles its references** (generated from docs/README/examples by a script) so it works when copied
   outside the repo.
 
@@ -148,7 +166,7 @@ AI skill: `skills/gmp/` (see section 7).
 | ASCII numeric fields in binary messages | `{ type: u16, encoding: ascii, size: 4 }`, usable as length/count sources |
 | Field value ranges | min/max *value* limits (not `max`, which is capacity): reject or clamp, raw or scaled, encode too |
 | Bad length handling | per-message size check from the type id; `flush_partial()` for idle links; optional header checksum |
-| Stream I/O + callbacks | investigate source/sink adapters (UART, sockets, ring buffers, ISR push), `on_frame_received`, `send(msg)` |
+| Stream I/O + callbacks | decided: do all four, one at a time. **A** stored handler / callbacks: **done**. Next: **C** ISR-safe ring buffer → **B** `poll()` pull API (views and/or structs, `wait_for<Reply>`) → **D** endpoint with source/sink adapters and `send(msg)` |
 | Studio test suite | commit the headless-Edge harnesses (see known issues), including the print cross-check |
 | Guide language selector | the guide is C++-specific today; when other target languages get backends, add a language picker to `guide.html` so code, API names and notes match the chosen language (schema content stays shared) |
 
@@ -156,6 +174,17 @@ Each planned task has a detailed note (with open questions to ask the user) in t
 project.
 
 ## 8. Session history
+
+### 2026-11-21 (stream I/O, part A: stored handlers)
+- Discussed stream I/O directions A–D; the user chose to do all of them, one at a time.
+- Implemented A as the combined design with H3 header delivery:
+  - runtime: stored `Handler` in `StreamParser`, and `gmp/callbacks.hpp`
+  - generated per protocol: `StreamWith` / `make_stream`, `Callbacks`, `CallbackStream`
+  - generator: reserved-name check
+  - tests: `test_stream_callbacks.cpp` (5 cases), a backend diagnostics case, and the embedded profile
+  - docs: README "Storing the handler", a Guide streaming subsection and the skill
+  - the `binary_telemetry` example now uses `make_stream`
+- Goldens regenerated (additions, plus a reworded `Stream` comment).
 
 ### 2026-11-21 (pretty printing)
 - Noted a future task: a language selector on the guide page once non-C++ backends exist.

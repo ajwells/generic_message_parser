@@ -463,9 +463,15 @@ struct FixedLink {
     using HeaderView = FixedLinkHeaderView;
     using AnyView = std::variant<SensorView>;
     using AnyMessage = std::variant<Sensor>;
-    /// Incremental parser; Capacity must be >= max_frame.
+    /// Incremental parser; Capacity must be >= max_frame. Pass the handler on each feed()/next() call.
     template <std::size_t Capacity = max_frame>
     using Stream = gmp::StreamParser<FixedLink, Capacity>;
+    /// Incremental parser that stores its handler (a named type): feed(bytes) / next() without a handler.
+    template <class Handler, std::size_t Capacity = max_frame>
+    using StreamWith = gmp::StreamParser<FixedLink, Capacity, Handler>;
+    /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
+    template <std::size_t Capacity = max_frame, class Handler>
+    static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
 
     static constexpr gmp::FixedFrameConfig framing_config{gmp::Pattern{{0xA5, 0xA5}, 2}, 10};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_fixed(b, framing_config); }
@@ -548,6 +554,61 @@ struct FixedLink {
             else if constexpr (std::invocable<H&, const V&>) handler(v);
         });
     }
+
+    /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
+    /// for dropped data (gmp::FrameError). on<Fn>(ctx) picks the slot from Fn's last parameter.
+    /// Fn may take (View) or (HeaderView, View); the header is passed only when Fn asks for it.
+    class Callbacks {
+    public:
+        /// Register Fn with context `ctx`: a member function of C, or a function taking C& / C* first.
+        template <auto Fn, class C>
+        Callbacks& on(C& ctx) noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(ctx); return *this; }
+        /// Register Fn that takes no context.
+        template <auto Fn>
+        Callbacks& on() noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(); return *this; }
+        /// Register a function pointer chosen at run time, called as fn(ctx, ...) (C-style void* or a typed pointer).
+        template <class F, class C> requires std::is_function_v<F>
+        Callbacks& on(F* fn, C* ctx) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn, ctx); return *this; }
+        template <class F> requires std::is_function_v<F>
+        Callbacks& on(F* fn) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn); return *this; }
+        /// Remove the listener of V (a message view, AnyView or gmp::FrameError).
+        template <class V>
+        Callbacks& off() noexcept { slot<V>().reset(); return *this; }
+        template <class V>
+        [[nodiscard]] bool has() const noexcept { return static_cast<bool>(const_cast<Callbacks*>(this)->slot<V>()); }
+        void clear() noexcept { *this = Callbacks{}; }
+
+        // handler interface used by the stream parser: the message listener first, then the every-frame listener
+        void operator()(const HeaderView& h, const SensorView& v) const { gmp_on_Sensor_(h, v); if (gmp_on_frame_) gmp_on_frame_(h, AnyView(v)); }
+        void operator()(const gmp::FrameError& e) const { gmp_on_error_(e); }
+
+    private:
+        template <class V>
+        auto& slot() noexcept {
+            if constexpr (std::is_same_v<V, SensorView>) return gmp_on_Sensor_;
+            else if constexpr (std::is_same_v<V, AnyView>) return gmp_on_frame_;
+            else if constexpr (std::is_same_v<V, gmp::FrameError>) return gmp_on_error_;
+            else static_assert(gmp::detail::always_false<V>, "FixedLink::Callbacks: the callback's last parameter must be one of this protocol's message views, AnyView or gmp::FrameError");
+        }
+
+        gmp::CallbackSlot<const HeaderView&, const SensorView&> gmp_on_Sensor_;
+        gmp::CallbackSlot<const HeaderView&, const AnyView&> gmp_on_frame_;
+        gmp::CallbackSlot<const gmp::FrameError&> gmp_on_error_;
+    };
+
+    /// Stream parser with runtime callbacks: register with on<&App::fn>(app), then feed(bytes).
+    template <std::size_t Capacity = max_frame>
+    class CallbackStream : private Callbacks, public gmp::StreamParser<FixedLink, Capacity, Callbacks&> {
+    public:
+        CallbackStream() noexcept : Callbacks(), gmp::StreamParser<FixedLink, Capacity, Callbacks&>(static_cast<Callbacks&>(*this)) {}
+        CallbackStream(const CallbackStream&) = delete;
+        CallbackStream& operator=(const CallbackStream&) = delete;
+        using Callbacks::on;
+        using Callbacks::off;
+        using Callbacks::has;
+        using Callbacks::clear;
+        [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
+    };
 
     static gmp::Result<std::size_t> encode(const Sensor& m, gmp::mut_bytes out) noexcept { return encode(Header{}, m, out); }
     /// Encode with explicit header values (id/length fields are filled in automatically).
