@@ -58,6 +58,36 @@ std::string write_call(const Field& f, const std::string& v) {
     }
 }
 
+/// print_to for a text struct (view = false) or view (view = true).
+void emit_print(CodeWriter& w, const Message& m, bool view) {
+    w.line(view ? "/// Human readable dump (see gmp/print.hpp); same output as the struct."
+                : "/// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).");
+    w.open("void print_to(gmp::Printer& gmp_p) const noexcept {");
+    w.line("gmp_p.begin(" + string_literal(m.name) + ");");
+    for (const auto& fp : m.fields) {
+        const auto& f = *fp;
+        if (!f.has_member()) continue;
+        const auto acc = "this->" + ident(f.name) + (view ? "()" : "");
+        w.line("gmp_p.field(" + string_literal(f.name) + ", " + acc + ");");
+        if (!has_print_extras(f)) continue;
+        // unit / conversions only for a value that is present (and, for views, parsed)
+        if (view) {
+            w.open(f.optional ? "if (const auto gmp_v = " + acc + "; gmp_v && *gmp_v) {"
+                              : "if (const auto gmp_v = " + acc + ") {");
+            emit_print_extras(w, f, f.optional ? "(**gmp_v)" : "(*gmp_v)");
+            w.close();
+        } else if (f.optional) {
+            w.open("if (" + acc + ") {");
+            emit_print_extras(w, f, "(*" + acc + ")");
+            w.close();
+        } else {
+            emit_print_extras(w, f, acc);
+        }
+    }
+    w.line("gmp_p.end();");
+    w.close();
+}
+
 void emit_struct(Ctx& c, const Message& m) {
     auto& w = c.w;
     const auto sep = sep_literal(m.separator);
@@ -143,6 +173,7 @@ void emit_struct(Ctx& c, const Message& m) {
     w.line("if (auto e = write_text(w); !e) return gmp::fail(e.error());");
     w.line("return w.position();");
     w.close();
+    emit_print(w, m, false);
     w.line("bool operator==(const " + m.name + "&) const = default;");
     w.close("};");
     w.line();
@@ -207,6 +238,8 @@ void emit_view(Ctx& c, const Message& m) {
             for (const auto& cv : f.conversions) emit_conv(cv.name, cv.scale.value_or(1.0), cv.offset_value.value_or(0.0));
         }
     }
+    w.line();
+    emit_print(w, m, true);
     if (m.want_struct) {
         w.line();
         w.line("[[nodiscard]] gmp::Result<" + m.name + "> to_struct() const noexcept { return " + m.name +

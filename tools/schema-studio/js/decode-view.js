@@ -34,6 +34,13 @@
             <option value="crlf"${dui.newline === 'crlf' ? ' selected' : ''}>as \\r\\n</option>
             <option value="lf"${dui.newline === 'lf' ? ' selected' : ''}>as \\n</option>
             <option value="ignore"${dui.newline === 'ignore' ? ' selected' : ''}>ignore</option></select></label>` : ''}
+        <div class="field-label"><span class="lbl">View</span>
+          <div class="seg" id="decode-view">
+            <button data-view="fields" class="${dui.view !== 'print' && dui.view !== 'line' ? 'on' : ''}">Fields</button>
+            <button data-view="print" class="${dui.view === 'print' ? 'on' : ''}">Print</button>
+            <button data-view="line" class="${dui.view === 'line' ? 'on' : ''}">One line</button>
+          </div>
+        </div>
         <div class="decode-actions">
           ${D.exampleInput(s, dui.target) ? '<button class="btn small" data-action="decodeExample">Example input</button>' : ''}
           <button class="btn small" data-action="decodeClear">Clear</button>
@@ -157,11 +164,16 @@
           <div class="frame-errs">${esc(it.error)}: <span class="mono">${esc(D.hex(bytes.slice(it.start, it.end), 24))}</span></div></div>`;
       }
       const ok = !it.errors.length;
+      const printing = dui.view === 'print' || dui.view === 'line';
+      const printed = printing ? G.printer.frame(s, it, dui.view === 'line' ? 'single' : 'multi') : null;
+      const body = !printing ? '' : printed !== null
+        ? `<pre class="print-out">${esc(printed)}</pre>`
+        : '<div class="frame-note">Nothing to print: decoding this frame fails, so the C++ code never gets a message.</div>';
       return `<div class="frame-card ${ok ? 'ok' : 'bad'}" data-item="${k}">
         <div class="frame-title"><span>${ok ? '✓' : '✗'} ${esc(it.message || 'Frame')}</span><span class="mono">${it.end - it.start} bytes @ ${it.start}</span></div>
         ${it.errors.length ? `<div class="frame-errs">${it.errors.map(esc).join(' · ')}</div>` : ''}
         ${it.notes ? `<div class="frame-note">${it.notes.map(esc).join(' · ')}</div>` : ''}
-        <table class="dtable"><thead><tr><th>Field</th><th>Value</th><th>Raw</th><th>Type</th><th>Bytes</th></tr></thead><tbody>${rows(it.nodes)}</tbody></table>
+        ${printing ? body : `<table class="dtable"><thead><tr><th>Field</th><th>Value</th><th>Raw</th><th>Type</th><th>Bytes</th></tr></thead><tbody>${rows(it.nodes)}</tbody></table>`}
       </div>`;
     }).join('');
 

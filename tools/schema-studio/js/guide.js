@@ -294,6 +294,13 @@ protocols:
         { target: 'message:Report', label: 'wrong magic → BadConst', input: '5B 01 00 00' },
       ],
     },
+    printing: {
+      title: 'Printing decoded messages', yaml: Y.structure, cards: ['message:Report'],
+      decode: [
+        { target: 'message:Report', label: 'gmp::println(report, stdout): enum names with their value, units, nested blocks', input: '5A 02 00 00 00 42 01 6B', view: 'print' },
+        { target: 'message:Report', label: 'single_line style; the conditional Fault block is <absent>', input: '5A 01 00 00', view: 'line' },
+      ],
+    },
     values: {
       title: 'Scaling, conversions, field CRCs and computed values', yaml: Y.values, cards: ['message:Measurement', 'message:SerialNumber'],
       decode: (s) => [
@@ -604,12 +611,46 @@ auto& st = parser.stats();   // frames, frame_errors, bytes_skipped, overflows`)
       ${demo('stream')}`;
   }
 
+  function printing() {
+    return `
+      <p>Every generated struct, view and bit group has <code>print_to()</code>, so <code>gmp::print</code> can dump it
+      for a console or a debug log. Enums print as <code>name (0xNN)</code> and undeclared values as
+      <code>&lt;unknown&gt; (0x07)</code>, so the raw value is always visible. Scaled fields show the raw value followed
+      by the engineering value and unit. Bytes print as hex, strings are quoted and escaped, and missing conditional fields
+      print as <code>&lt;absent&gt;</code>. A view prints exactly like its struct.</p>
+      ${code(`gmp::println(status, stdout);                       // FILE*: console or fopen'ed log
+gmp::print(status, std::cout);                         // anything with write(): std::ostream
+char line[256];  gmp::print(status, line);            // char buffer, NUL terminated
+gmp::static_string<256> s;  gmp::print(status, s);    // appends; std::string works too
+gmp::print(status, [](std::string_view t) { uart_log(t); });   // callback
+
+gmp::print(status, stdout, {.style = gmp::PrintStyle::single_line});
+// options: style, indent, max_items, max_bytes (0 = all), precision (significant digits of scaled values)
+
+// Stream handlers can print the view directly, and Protocol::parse() results print whichever message matched
+stream.feed(chunk, [](const demo::StatusView& v) { gmp::println(v, stdout); });`)}
+      ${table(['field', 'printed as'], [
+        ['integer, float, bool, char', '<code>42</code>, <code>1.5</code>, <code>true</code>, <code>\'N\'</code>'],
+        ['enum', '<code>run (0x01)</code>, <code>&lt;unknown&gt; (0x07)</code>'],
+        ['scale / unit / conversions', '<code>1234 (12.34 V)</code>, <code>26214 (25 degC, 77 degF)</code>, <code>12 mA</code> (unit, no scale)'],
+        ['bits group, nested message', 'an indented <code>{ … }</code> block'],
+        ['bytes, string', '<code>[0A 1B 2C]</code>, <code>"text\\r\\n"</code>'],
+        ['array', '<code>[1, 2, 3]</code>; messages one per line; <code>... (+N more)</code> past <code>max_items</code>'],
+        ['conditional field', 'its value, or <code>&lt;absent&gt;</code>'],
+        ['computed value', '<code>serial: 305419896 (computed)</code>'],
+        ['custom type', 'your <code>gmp_print(gmp::Printer&amp;, const T&amp;)</code> next to the type, else <code>&lt;?&gt;</code>'],
+      ])}
+      ${note('Bounded sinks (char buffers, static_string, or a callback that returns false) keep what fits and return <code>BufferFull</code>. Printing never allocates. In the Studio decode tester, the <b>View</b> switch shows the same text for every decoded frame.')}
+      ${demo('printing')}`;
+  }
+
   function cpp() {
     return `
       ${table(['generated', 'what it is'], [
         ['<code>struct M</code>', 'Members per field (std::optional when conditional), <code>decode()</code>, <code>encode()</code>, scaled / conversion / computed accessors, <code>operator==</code>.'],
         ['<code>class MView</code>', '<code>from(bytes)</code> validates once; accessors read from the buffer. <code>to_struct()</code> copies out.'],
         ['<code>enum class E</code>', '<code>to_string()</code>, <code>is_known()</code>.'],
+        ['<code>print_to()</code>', 'On structs, views and bit groups: drives <code>gmp::print(msg, sink)</code> (see Printing for logs).'],
         ['<code>struct P</code>', '<code>parse()</code> → <code>AnyView</code>, <code>decode()</code> → <code>AnyMessage</code>, <code>encode(msg, out)</code>, <code>Stream&lt;&gt;</code>, layout constants.'],
       ])}
       <h3>Errors</h3>
@@ -656,6 +697,7 @@ auto& st = parser.stats();   // frames, frame_errors, bytes_skipped, overflows`)
     ['escaping', 'Reserved bytes and escaping', escaping],
     ['text', 'Text protocols', text],
     ['streaming', 'Streaming and resync', streaming],
+    ['printing', 'Printing for logs', printing],
     ['cpp', 'Generated C++ and errors', cpp],
     ['studio', 'Using the Studio', studio],
   ];
@@ -679,7 +721,7 @@ auto& st = parser.stats();   // frames, frame_errors, bytes_skipped, overflows`)
     const yaml = d.yaml || G.toYaml(s);
     const cards = d.cards.map((c) => { const [k, n] = c.split(':'); return G.renderCard(s, k, n); }).join('');
     const runs = (typeof d.decode === 'function' ? d.decode(s) : d.decode).map((r) => {
-      const dui = { target: r.target, format: r.format || 'hex', input: r.input || '', newline: r.newline || 'lf' };
+      const dui = { target: r.target, format: r.format || 'hex', input: r.input || '', newline: r.newline || 'lf', view: r.view || 'fields' };
       return `<div class="g-run">
         <div class="g-run-head"><span class="g-label">Decode ${esc(r.target.split(':')[1])}</span><span>${esc(r.label)}</span></div>
         <pre class="g-input">${esc(dui.input)}</pre>

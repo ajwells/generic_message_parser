@@ -90,6 +90,14 @@ struct SetSpeed {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SetSpeed");
+        gmp_p.field("rpm", this->rpm);
+        gmp_p.field("direction", this->direction);
+        gmp_p.field("ramp_ms", this->ramp_ms);
+        gmp_p.end();
+    }
     bool operator==(const SetSpeed&) const = default;
 };
 
@@ -120,6 +128,15 @@ public:
     [[nodiscard]] std::uint16_t rpm() const noexcept { return gmp::load<std::uint16_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] Direction direction() const noexcept { return gmp::load<Direction>(gmp_data_.data() + 2, gmp::Endian::big); }
     [[nodiscard]] std::uint16_t ramp_ms() const noexcept { return gmp::load<std::uint16_t>(gmp_data_.data() + 3, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SetSpeed");
+        gmp_p.field("rpm", this->rpm());
+        gmp_p.field("direction", this->direction());
+        gmp_p.field("ramp_ms", this->ramp_ms());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<SetSpeed> to_struct() const noexcept { return SetSpeed::decode(gmp_data_); }
@@ -185,6 +202,17 @@ struct Telemetry {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Telemetry");
+        gmp_p.field("seq", this->seq);
+        gmp_p.field("rpm", this->rpm);
+        gmp_p.field("current", this->current);
+        gmp_p.conversion(static_cast<double>(this->current) * 0.01 + 0.0, "A");
+        gmp_p.field("temperature", this->temperature);
+        gmp_p.conversion(static_cast<double>(this->temperature) * 0.10000000000000001 + 0.0, "degC");
+        gmp_p.end();
+    }
     bool operator==(const Telemetry&) const = default;
 };
 
@@ -219,6 +247,18 @@ public:
     /// [degC]
     [[nodiscard]] std::int16_t temperature() const noexcept { return gmp::load<std::int16_t>(gmp_data_.data() + 6, gmp::Endian::big); }
     [[nodiscard]] double temperature_scaled() const noexcept { return static_cast<double>(temperature()) * 0.10000000000000001 + 0.0; }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Telemetry");
+        gmp_p.field("seq", this->seq());
+        gmp_p.field("rpm", this->rpm());
+        gmp_p.field("current", this->current());
+        gmp_p.conversion(static_cast<double>(this->current()) * 0.01 + 0.0, "A");
+        gmp_p.field("temperature", this->temperature());
+        gmp_p.conversion(static_cast<double>(this->temperature()) * 0.10000000000000001 + 0.0, "degC");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Telemetry> to_struct() const noexcept { return Telemetry::decode(gmp_data_); }
@@ -271,6 +311,13 @@ struct Log {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Log");
+        gmp_p.field("len", this->len);
+        gmp_p.field("text", this->text);
+        gmp_p.end();
+    }
     bool operator==(const Log&) const = default;
 };
 
@@ -307,6 +354,14 @@ public:
 
     [[nodiscard]] std::uint8_t len() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::string_view text() const noexcept { return gmp::as_string_view(gmp_data_.subspan(1, (gmp_off_[2] - gmp_off_[1]))); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Log");
+        gmp_p.field("len", this->len());
+        gmp_p.field("text", this->text());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Log> to_struct() const noexcept { return Log::decode(gmp_data_); }
@@ -353,6 +408,13 @@ struct MotorLinkHeader {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("MotorLinkHeader");
+        gmp_p.field("type", this->type);
+        gmp_p.field("len", this->len);
+        gmp_p.end();
+    }
     bool operator==(const MotorLinkHeader&) const = default;
 };
 
@@ -381,6 +443,14 @@ public:
 
     [[nodiscard]] std::uint8_t type() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::uint8_t len() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 1, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("MotorLinkHeader");
+        gmp_p.field("type", this->type());
+        gmp_p.field("len", this->len());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<MotorLinkHeader> to_struct() const noexcept { return MotorLinkHeader::decode(gmp_data_); }

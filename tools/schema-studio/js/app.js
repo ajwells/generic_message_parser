@@ -92,7 +92,7 @@
   // dui = the active target's input; `saved` remembers the input of every other target.
   const DECODE_KEY = 'gmp-schema-studio-decoder-v2';
   const dui = (() => {
-    const base = { target: '', format: 'hex', input: '', newline: 'lf', saved: {} };
+    const base = { target: '', format: 'hex', input: '', newline: 'lf', view: 'fields', saved: {} };
     try { return { ...base, ...JSON.parse(localStorage.getItem(DECODE_KEY) || '{}') }; } catch (_) { return base; }
   })();
   const saveDecode = () => { try { localStorage.setItem(DECODE_KEY, JSON.stringify(dui)); } catch (_) { /* ignore */ } };
@@ -166,6 +166,13 @@
     }
   });
   tabs.decode.addEventListener('click', (e) => {
+    const vb = e.target.closest('#decode-view button');
+    if (vb) {
+      dui.view = vb.dataset.view;
+      saveDecode();
+      renderDecode(true);
+      return;
+    }
     const b = e.target.closest('#decode-format button');
     if (!b) return;
     dui.format = b.dataset.format;

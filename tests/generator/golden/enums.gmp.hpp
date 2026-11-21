@@ -147,6 +147,12 @@ struct Inner {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Inner");
+        gmp_p.field("color", this->color);
+        gmp_p.end();
+    }
     bool operator==(const Inner&) const = default;
 };
 
@@ -176,6 +182,13 @@ public:
 
     [[nodiscard]] Color color() const noexcept { return gmp::load<Color>(gmp_data_.data() + 0, gmp::Endian::big); }
 
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Inner");
+        gmp_p.field("color", this->color());
+        gmp_p.end();
+    }
+
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Inner> to_struct() const noexcept { return Inner::decode(gmp_data_); }
 
@@ -201,6 +214,12 @@ struct Sample_flags {
     static constexpr gmp::VoidResult check([[maybe_unused]] const std::uint8_t* p) noexcept {
         if (!is_known(gmp::get_bits<Mode>(p, 0, 2, gmp::BitOrder::msb_first))) return gmp::fail(gmp::Error::UnknownEnum);
         return {};
+    }
+    /// Human readable dump (see gmp/print.hpp).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin({});
+        gmp_p.field("mode", this->mode);
+        gmp_p.end();
     }
     bool operator==(const Sample_flags&) const = default;
 };
@@ -298,6 +317,18 @@ struct Sample {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Sample");
+        gmp_p.field("color", this->color);
+        gmp_p.field("open", this->open);
+        gmp_p.field("flags", this->flags);
+        gmp_p.field("levels", this->levels);
+        gmp_p.field("inner", this->inner);
+        gmp_p.field("n", this->n);
+        gmp_p.field("more", this->more);
+        gmp_p.end();
+    }
     bool operator==(const Sample&) const = default;
 };
 
@@ -365,6 +396,19 @@ public:
     [[nodiscard]] std::uint8_t n() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 8, gmp::Endian::big); }
     [[nodiscard]] gmp::ScalarArrayView<Color> more() const noexcept { return gmp::ScalarArrayView<Color>(gmp_data_.subspan(9, (gmp_off_[7] - gmp_off_[6])), (gmp_off_[7] - gmp_off_[6]) / 1, gmp::Endian::big); }
 
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Sample");
+        gmp_p.field("color", this->color());
+        gmp_p.field("open", this->open());
+        gmp_p.field("flags", this->flags());
+        gmp_p.field("levels", this->levels());
+        gmp_p.field("inner", this->inner());
+        gmp_p.field("n", this->n());
+        gmp_p.field("more", this->more());
+        gmp_p.end();
+    }
+
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Sample> to_struct() const noexcept { return Sample::decode(gmp_data_); }
 
@@ -411,6 +455,12 @@ struct Tail {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Tail");
+        gmp_p.field("rest", this->rest);
+        gmp_p.end();
+    }
     bool operator==(const Tail&) const = default;
 };
 
@@ -445,6 +495,13 @@ public:
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
     [[nodiscard]] gmp::ScalarArrayView<Color> rest() const noexcept { return gmp::ScalarArrayView<Color>(gmp_data_.subspan(0, (gmp_off_[1] - gmp_off_[0])), (gmp_off_[1] - gmp_off_[0]) / 1, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Tail");
+        gmp_p.field("rest", this->rest());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Tail> to_struct() const noexcept { return Tail::decode(gmp_data_); }
@@ -495,6 +552,13 @@ struct Line {
         if (auto e = write_text(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Line");
+        gmp_p.field("color", this->color);
+        gmp_p.field("open", this->open);
+        gmp_p.end();
+    }
     bool operator==(const Line&) const = default;
 };
 
@@ -520,6 +584,14 @@ public:
 
     [[nodiscard]] gmp::Result<Color> color() const noexcept { return gmp::text::parse_int<std::uint8_t>(gmp_tok_[0], 10).transform([](auto x) { return static_cast<Color>(x); }).and_then([](Color v) -> gmp::Result<Color> { if (!is_known(v)) return gmp::fail(gmp::Error::UnknownEnum); return v; }); }
     [[nodiscard]] gmp::Result<Open> open() const noexcept { return gmp::text::parse_int<std::uint8_t>(gmp_tok_[1], 10).transform([](auto x) { return static_cast<Open>(x); }); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Line");
+        gmp_p.field("color", this->color());
+        gmp_p.field("open", this->open());
+        gmp_p.end();
+    }
 
     [[nodiscard]] gmp::Result<Line> to_struct() const noexcept { return Line::decode_text(gmp_text_); }
 

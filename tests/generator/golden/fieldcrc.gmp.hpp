@@ -148,6 +148,23 @@ struct Mixed {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Mixed");
+        gmp_p.field("state", this->state);
+        gmp_p.field("count", this->count);
+        gmp_p.field("items", this->items);
+        gmp_p.field("level", this->level);
+        gmp_p.conversion(static_cast<double>(this->level) * 0.5 + 0.0);
+        gmp_p.conversion(static_cast<double>(this->level) * 0.25 + 0.0, "%");
+        gmp_p.conversion(static_cast<double>(this->level) * 50.0 + 1.0);
+        if (this->extra) {
+            gmp_p.field("extra", (*this->extra));
+        } else {
+            gmp_p.absent("extra");
+        }
+        gmp_p.end();
+    }
     bool operator==(const Mixed&) const = default;
 };
 
@@ -213,6 +230,24 @@ public:
     [[nodiscard]] double level_centi() const noexcept { return static_cast<double>(level()) * 50.0 + 1.0; }
     [[nodiscard]] std::optional<std::uint16_t> extra() const noexcept { if (!((gmp_present_ >> 0) & 1u)) return std::nullopt; return gmp::load<std::uint16_t>(gmp_data_.data() + gmp_off_[4], gmp::Endian::big); }
 
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Mixed");
+        gmp_p.field("state", this->state());
+        gmp_p.field("count", this->count());
+        gmp_p.field("items", this->items());
+        gmp_p.field("level", this->level());
+        gmp_p.conversion(static_cast<double>(this->level()) * 0.5 + 0.0);
+        gmp_p.conversion(static_cast<double>(this->level()) * 0.25 + 0.0, "%");
+        gmp_p.conversion(static_cast<double>(this->level()) * 50.0 + 1.0);
+        if (const auto gmp_v = this->extra()) {
+            gmp_p.field("extra", (*gmp_v));
+        } else {
+            gmp_p.absent("extra");
+        }
+        gmp_p.end();
+    }
+
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Mixed> to_struct() const noexcept { return Mixed::decode(gmp_data_); }
 
@@ -254,6 +289,14 @@ struct Reading {
         if (auto e = write_text(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Reading");
+        gmp_p.field("raw", this->raw_);
+        gmp_p.conversion(static_cast<double>(this->raw_) * 0.10000000000000001 + 0.0);
+        gmp_p.conversion(static_cast<double>(this->raw_) * 100.0 + 0.0);
+        gmp_p.end();
+    }
     bool operator==(const Reading&) const = default;
 };
 
@@ -280,6 +323,17 @@ public:
     [[nodiscard]] gmp::Result<std::int32_t> raw_() const noexcept { return gmp::text::parse_int<std::int32_t>(gmp_tok_[0], 10); }
     [[nodiscard]] gmp::Result<double> raw_scaled() const noexcept { return raw_().transform([](auto x) { return static_cast<double>(x) * 0.10000000000000001 + 0.0; }); }
     [[nodiscard]] gmp::Result<double> raw_millis() const noexcept { return raw_().transform([](auto x) { return static_cast<double>(x) * 100.0 + 0.0; }); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Reading");
+        gmp_p.field("raw", this->raw_());
+        if (const auto gmp_v = this->raw_()) {
+            gmp_p.conversion(static_cast<double>((*gmp_v)) * 0.10000000000000001 + 0.0);
+            gmp_p.conversion(static_cast<double>((*gmp_v)) * 100.0 + 0.0);
+        }
+        gmp_p.end();
+    }
 
     [[nodiscard]] gmp::Result<Reading> to_struct() const noexcept { return Reading::decode_text(gmp_text_); }
 

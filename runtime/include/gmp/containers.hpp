@@ -100,6 +100,13 @@ public:
         size_ = n;
         return n == s.size();
     }
+    /// Appends as much of s as fits; returns false when s was truncated.
+    constexpr bool append(std::string_view s) noexcept {
+        const auto n = std::min(s.size(), N - size_);
+        std::copy_n(s.begin(), n, data_.begin() + size_);
+        size_ += n;
+        return n == s.size();
+    }
     constexpr void clear() noexcept { size_ = 0; }
 
     friend constexpr bool operator==(const static_string& a, const static_string& b) noexcept {

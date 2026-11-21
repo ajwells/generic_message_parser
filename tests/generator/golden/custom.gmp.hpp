@@ -72,6 +72,13 @@ struct Pos {
         if (auto e = write_text(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Pos");
+        gmp_p.field("lat", this->lat);
+        gmp_p.field("lon", this->lon);
+        gmp_p.end();
+    }
     bool operator==(const Pos&) const = default;
 };
 
@@ -101,6 +108,14 @@ public:
         auto v = test::decode_coord(gmp_tok_[1]);
         if (!v) return gmp::fail(v.error());
         return std::optional<double>(std::move(*v));
+    }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Pos");
+        gmp_p.field("lat", this->lat());
+        gmp_p.field("lon", this->lon());
+        gmp_p.end();
     }
 
     [[nodiscard]] gmp::Result<Pos> to_struct() const noexcept { return Pos::decode_text(gmp_text_); }
@@ -140,6 +155,14 @@ public:
 
     [[nodiscard]] std::uint8_t kind() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] gmp::bytes_view data_() const noexcept { return gmp_data_.subspan(1, (gmp_off_[2] - gmp_off_[1])); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Blob");
+        gmp_p.field("kind", this->kind());
+        gmp_p.field("data", gmp::hex(this->data_()));
+        gmp_p.end();
+    }
 
 private:
     gmp::bytes_view gmp_data_{};
@@ -282,6 +305,12 @@ struct CustomHeader {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("CustomHeader");
+        gmp_p.field("n", this->n);
+        gmp_p.end();
+    }
     bool operator==(const CustomHeader&) const = default;
 };
 
@@ -309,6 +338,13 @@ public:
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
     [[nodiscard]] std::uint8_t n() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("CustomHeader");
+        gmp_p.field("n", this->n());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<CustomHeader> to_struct() const noexcept { return CustomHeader::decode(gmp_data_); }

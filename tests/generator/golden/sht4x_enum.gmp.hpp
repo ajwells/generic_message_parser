@@ -109,6 +109,12 @@ struct CommandFrame {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("CommandFrame");
+        gmp_p.field("command", this->command);
+        gmp_p.end();
+    }
     bool operator==(const CommandFrame&) const = default;
 };
 
@@ -137,6 +143,13 @@ public:
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
     [[nodiscard]] Command command() const noexcept { return gmp::load<Command>(gmp_data_.data() + 0, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("CommandFrame");
+        gmp_p.field("command", this->command());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<CommandFrame> to_struct() const noexcept { return CommandFrame::decode(gmp_data_); }
@@ -198,6 +211,16 @@ struct Measurement {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Measurement");
+        gmp_p.field("temperature", this->temperature);
+        gmp_p.conversion(static_cast<double>(this->temperature) * 0.0026703288319218739 + -45.0, "degC");
+        gmp_p.conversion(static_cast<double>(this->temperature) * 0.0048065918974593731 + -49.0, "degF");
+        gmp_p.field("humidity", this->humidity);
+        gmp_p.conversion(static_cast<double>(this->humidity) * 0.0019073777370870527 + -6.0, "%RH");
+        gmp_p.end();
+    }
     bool operator==(const Measurement&) const = default;
 };
 
@@ -234,6 +257,17 @@ public:
     /// [%RH]
     [[nodiscard]] std::uint16_t humidity() const noexcept { return gmp::load<std::uint16_t>(gmp_data_.data() + 3, gmp::Endian::big); }
     [[nodiscard]] double humidity_scaled() const noexcept { return static_cast<double>(humidity()) * 0.0019073777370870527 + -6.0; }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Measurement");
+        gmp_p.field("temperature", this->temperature());
+        gmp_p.conversion(static_cast<double>(this->temperature()) * 0.0026703288319218739 + -45.0, "degC");
+        gmp_p.conversion(static_cast<double>(this->temperature()) * 0.0048065918974593731 + -49.0, "degF");
+        gmp_p.field("humidity", this->humidity());
+        gmp_p.conversion(static_cast<double>(this->humidity()) * 0.0019073777370870527 + -6.0, "%RH");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Measurement> to_struct() const noexcept { return Measurement::decode(gmp_data_); }
@@ -295,6 +329,14 @@ struct SerialNumber {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SerialNumber");
+        gmp_p.field("serial_high", this->serial_high);
+        gmp_p.field("serial_low", this->serial_low);
+        gmp_p.computed("serial", this->serial());
+        gmp_p.end();
+    }
     bool operator==(const SerialNumber&) const = default;
 };
 
@@ -327,6 +369,15 @@ public:
     [[nodiscard]] std::uint16_t serial_low() const noexcept { return gmp::load<std::uint16_t>(gmp_data_.data() + 3, gmp::Endian::big); }
     /// = ((serial_high << 16) | serial_low)
     [[nodiscard]] std::uint32_t serial() const noexcept { return static_cast<std::uint32_t>(((gmp::to_int(serial_high()) << std::int64_t(16)) | gmp::to_int(serial_low()))); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SerialNumber");
+        gmp_p.field("serial_high", this->serial_high());
+        gmp_p.field("serial_low", this->serial_low());
+        gmp_p.computed("serial", this->serial());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<SerialNumber> to_struct() const noexcept { return SerialNumber::decode(gmp_data_); }

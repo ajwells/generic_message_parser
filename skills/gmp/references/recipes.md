@@ -113,9 +113,8 @@ int main() {
             std::printf("\n");
         },
         [](const demo::SamplesView& v) {
-            std::printf("Samples channel=%u values=", v.channel());
-            for (auto x : v.values()) std::printf("%d ", x);
-            std::printf("\n");
+            // gmp::println dumps every field (enum names, units, nested messages); see README "Printing"
+            gmp::println(v, stdout, {.style = gmp::PrintStyle::single_line});
         },
         [](const gmp::FrameError& e) {
             std::printf("dropped %zu byte(s): %s\n", e.data.size(), gmp::to_string(e.error).data());

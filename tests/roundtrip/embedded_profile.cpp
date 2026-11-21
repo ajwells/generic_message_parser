@@ -49,6 +49,14 @@ int main() {
     auto any = BinaryLink::decode(gmp::bytes_view(frame.data(), *n));
     if (!any || !std::holds_alternative<Status>(*any)) return 2;
     if (std::get<Status>(*any).samples.size() != 4) return 3;
+    // pretty printing into fixed buffers and a callback
+    char text[256];
+    auto printed = gmp::print(s, text, {.style = gmp::PrintStyle::single_line});
+    if (!printed || std::string_view(text).find("mode: fault (0x02)") == std::string_view::npos) return 5;
+    gmp::static_string<64> small;
+    if (gmp::print(*any, small) || small.size() != 64) return 6;  // truncated -> BufferFull
+    std::size_t chars = 0;
+    if (!gmp::print(s, [&](std::string_view t) { chars += t.size(); }) || chars == 0) return 7;
     g_armed = false;
     if (delivered != 1) return 4;
     std::puts("embedded profile OK: no exceptions, no RTTI, no heap");

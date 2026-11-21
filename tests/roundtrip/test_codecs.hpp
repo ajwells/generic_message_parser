@@ -3,6 +3,7 @@
 
 #include <gmp/byte_reader.hpp>
 #include <gmp/byte_writer.hpp>
+#include <gmp/print.hpp>
 
 namespace test {
 
@@ -35,6 +36,14 @@ inline gmp::VoidResult encode_bcd_time(gmp::ByteWriter& w, const Time& t) {
         if (auto e = w.write<std::uint8_t>(static_cast<std::uint8_t>(((v / 10) << 4) | (v % 10))); !e) return e;
     }
     return {};
+}
+
+/// Pretty-print hook for gmp::print (found by ADL): HH:MM:SS.
+inline void gmp_print(gmp::Printer& p, const Time& t) noexcept {
+    const char b[8] = {static_cast<char>('0' + t.h / 10 % 10), static_cast<char>('0' + t.h % 10), ':',
+                       static_cast<char>('0' + t.m / 10 % 10), static_cast<char>('0' + t.m % 10), ':',
+                       static_cast<char>('0' + t.s / 10 % 10), static_cast<char>('0' + t.s % 10)};
+    p.text(std::string_view(b, sizeof b));
 }
 
 /// Custom checksum: 16-bit sum of all bytes.

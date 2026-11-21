@@ -22,7 +22,7 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 - Toolchain PATH (Git Bash):
   `export PATH="/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/mingw/bin:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/ninja/win/x64:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin:$PATH"`
   (MinGW GCC 15, Ninja, CMake; yaml-cpp and Catch2 via FetchContent).
-- Debug build + tests: `cmake --build build && ctest --test-dir build` (115 tests, all passing).
+- Debug build + tests: `cmake --build build && ctest --test-dir build` (125 tests, all passing).
 - Release build: `cmake --build build-release` (Release, bench ON, tests and examples OFF; it is a compile check only).
 - Regenerate golden files after an intentional generator change:
   `GMP_UPDATE_GOLDEN=1 ctest --test-dir build -R golden`, then check that only the expected files changed.
@@ -37,13 +37,14 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
   `index.html` / `guide.html` in an iframe and print PASS/FAIL into a `<pre>`.
 - Tooling quirk: in this environment, bash heredocs mangle backslash escapes (`\n`, `\\n`) and some quoting. For
   multi-line edits containing backslashes, write a Python script with the Write tool and run it with `py`, or use Edit.
-- The directory is **not a git repository**. There is no history to diff against; be careful with bulk edits.
+- The directory is a **git repository** (branch `master`). `git diff -- tests/generator/golden` is the quickest way to
+  check that a golden update only changed what was intended. Commit only when asked.
 
 ## 3. Repository map
 
 | path | what |
 |------|------|
-| `runtime/include/gmp/` | header-only runtime: endian, byte/bit readers and writers, checksums, text codec, containers, framing (`framing/fixed.hpp`, `length_prefixed.hpp`, `delimited.hpp`, `escape.hpp`, `frame.hpp`), `stream_parser.hpp`, `error.hpp` |
+| `runtime/include/gmp/` | header-only runtime: endian, byte/bit readers and writers, checksums, text codec, containers, framing (`framing/fixed.hpp`, `length_prefixed.hpp`, `delimited.hpp`, `escape.hpp`, `frame.hpp`), `stream_parser.hpp`, `error.hpp`, `print.hpp` |
 | `generator/src/schema/` | `loader.cpp` (YAML → IR, key checks, renamed-key hints), `expr.cpp`, `validator.cpp` |
 | `generator/src/ir/` | `ir.hpp` (language-neutral IR), `lowering.cpp` (resolution, sizes, offsets, escape tables, all semantic checks) |
 | `generator/src/backend/cpp/` | C++ emitters: `emit_binary_message.cpp`, `emit_text_message.cpp`, `emit_protocol.cpp`, `cpp_backend.cpp`, `cpp_common.cpp` |
@@ -70,18 +71,31 @@ Schema / generator:
   up to 16 reserved bytes, `checksum.over: wire`, `length.counts: wire` (only with `covers: body | body_checksum`, and
   `body_checksum` then needs `checksum.covers: body`).
 - Strict schema loading: unknown keys are errors, renamed keys report their new name.
+- `print_to(gmp::Printer&)` on every struct, view and bits group (binary and text). Same text from a struct and its view.
 
 Runtime:
 - `StreamParser` with resync, stats, `feed` / `push` + `next`; table-driven `EscapeConfig`
   (`make_xor_escape` / `make_index_escape` / `make_map_escape`, `walk_escaped`, `escape_overhead`).
 - CRC presets incl. `crc8_nrsc5`; inline CRC parameters.
+- `gmp/print.hpp`: `gmp::print` / `gmp::println(value, sink, PrintOptions)`. Multi-line (default) or single-line
+  output. Enums print as `name (0xNN)`, or `<unknown> (0xNN)` for undeclared values. Scaled values print as
+  `raw (value unit, ...)`. Bytes print as hex, strings are escaped, and missing optional fields print `<absent>`.
+  Text parse failures print `<error: ...>`, computed values are marked `(computed)`, and custom types use an ADL
+  hook `gmp_print(Printer&, const T&)` or print `<?>`.
+  - Sinks: `FILE*`, `char[N]` / `std::span<char>` (NUL terminated), anything with `append(string_view)`
+    (`static_string` gained `append`; `std::string`), anything with `write(const char*, n)` (`std::ostream`), and a
+    callable taking `string_view` (it may return `false` to stop).
+  - Bounded sinks return `BufferFull`. It never allocates (checked in `embedded_profile`).
 
 Studio (`tools/schema-studio`):
 - Editor for every option, live layout cards, YAML export/import (import uses js-yaml from cdnjs), validation
   mirroring gmpc, decode tester mirroring the runtime (including escaping and wire-count lengths).
 - Hover tooltips for every editor control (`js/tips.js`, keyed by normalised `data-path`).
-- Guide page `guide.html` (`js/guide.js`): 13 sections, 9 live demos built from real schemas, "Open in Studio".
+- Guide page `guide.html` (`js/guide.js`): 14 sections (incl. "Printing for logs"), 10 live demos built from real
+  schemas, "Open in Studio". Demo runs accept `view: 'print' | 'line'`.
 - Example inputs for the decode tester (SHT4x, NMEA, Link, any escaped protocol).
+- Decode tester **View** switch: Fields / Print / One line. `js/print.js` mirrors `gmp::print` exactly; the decoder
+  now keeps raw values on its nodes (`v`, `field`, `bit`, `content`, `absent`, `msg`, `top`) for it.
 
 AI skill: `skills/gmp/` (see section 7).
 
@@ -105,13 +119,19 @@ AI skill: `skills/gmp/` (see section 7).
 - **Studio is dependency-free static HTML/JS** (no build step); it mirrors generator/runtime logic in JS, and
   round-trip tests check that Studio-exported YAML generates byte-identical C++.
 - **Guide examples are real schemas** rendered by the same code as Studio, so docs cannot drift from behaviour.
+- **Printing is a runtime `Printer` driven by generated `print_to`**. The type-erased sink (function pointer and
+  context) keeps `print_to` a plain non-template member, so generated code stays small. Formatting lives in one
+  place (the runtime), and the free `gmp::print` template picks the sink adapter. Field names print as written in
+  the schema, not as the C++ identifier. `const` and `pad` fields are not printed, which matches the struct members.
+  Floats print as the shortest text of their own type, so an f32 is not widened to double first.
 - **The AI skill bundles its references** (generated from docs/README/examples by a script) so it works when copied
   outside the repo.
 
 ## 6. Known issues and gaps
 
 - **Studio has no committed automated tests.** The Edge harnesses used so far (ui, position, rename, escape UI,
-  tooltip coverage, guide, decode cross-checks against C++ frames, YAML round-trip) lived in a temporary scratchpad.
+  tooltip coverage, guide, decode cross-checks against C++ frames, YAML round-trip, and the print cross-check that
+  compares `js/print.js` with C++ `gmp::print` on 16 frames) lived in a temporary scratchpad.
   Recreate them under `tools/schema-studio/tests/` if Studio keeps growing.
 - **Corrupted length below max_frame** delays good frames on an idle link (no timeout / per-type size check). See
   future task "bad length handling".
@@ -129,12 +149,27 @@ AI skill: `skills/gmp/` (see section 7).
 | Field value ranges | min/max *value* limits (not `max`, which is capacity): reject or clamp, raw or scaled, encode too |
 | Bad length handling | per-message size check from the type id; `flush_partial()` for idle links; optional header checksum |
 | Stream I/O + callbacks | investigate source/sink adapters (UART, sockets, ring buffers, ISR push), `on_frame_received`, `send(msg)` |
-| Studio test suite | commit the headless-Edge harnesses (see known issues) |
+| Studio test suite | commit the headless-Edge harnesses (see known issues), including the print cross-check |
+| Guide language selector | the guide is C++-specific today; when other target languages get backends, add a language picker to `guide.html` so code, API names and notes match the chosen language (schema content stays shared) |
 
 Each planned task has a detailed note (with open questions to ask the user) in the Claude memory directory for this
 project.
 
 ## 8. Session history
+
+### 2026-11-21 (pretty printing)
+- Noted a future task: a language selector on the guide page once non-C++ backends exist.
+- Added pretty printing:
+  - runtime `gmp/print.hpp`
+  - generated `print_to` on structs, views and bits groups (binary and text), with `print_to` reserved as a member name
+  - `static_string::append`
+  - tests `test_print.cpp` (10 cases) and the embedded profile
+  - Studio View switch and `js/print.js`, cross-checked against C++
+  - a Guide "Printing for logs" section
+  - README "Printing", plus a `gmp_print` row in the custom-extension tables
+  - skill note, and the `binary_telemetry` example now uses `gmp::println`
+- The cross-check found that f32 values printed widened to double (`0.8999999761581421`). Fixed with a regression test.
+- Goldens regenerated (additions only).
 
 ### 2026-11-20 → 2026-11-21
 - Renamed dispatch/id → message_type/type_id across YAML, C++, IR and Studio; removed aliases and migration.

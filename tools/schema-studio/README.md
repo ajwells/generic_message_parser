@@ -37,6 +37,9 @@ A local web app for building GMP YAML schemas visually.
      - extra `conversions` next to the scaled value (e.g. `25 degC · 77 degF`)
      - the byte range of each field
    - Hovering a field highlights its bytes, and hovering a byte highlights its field.
+4. **View** switches the right column between the field table (**Fields**) and the text `gmp::print` produces for
+   each decoded message (**Print**, or **One line** for `PrintStyle::single_line`). `js/print.js` mirrors the C++
+   printer, so the text matches what the generated code logs. Frames that fail to decode have nothing to print.
 
 The decoder (`js/decoder.js`) mirrors the C++ runtime: the same framers (fixed, length-prefixed and delimited, each with optional byte stuffing: XOR, index or
 map escaping), checksums, message_type selection, and stream resynchronisation after bad frames. Frames encoded by the
@@ -73,6 +76,7 @@ them.
 | `js/layout.js` | size / offset computation (mirrors `generator/src/ir/lowering.cpp`) |
 | `js/decoder.js` | DOM-free decoder: framers, escaping, checksums, message_type, binary + text fields (mirrors `runtime/include/gmp`) |
 | `js/decode-view.js` | decode tester tab rendering |
+| `js/print.js` | mirror of `gmp::print` (the decode tester's Print / One line view and the guide demos) |
 | `js/validate.js` | client-side diagnostics |
 | `js/yaml.js` | YAML emitter (no dependency) and importer (js-yaml) |
 | `js/editor.js` | left pane rendering |

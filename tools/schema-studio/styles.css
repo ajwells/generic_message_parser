@@ -385,6 +385,7 @@ pre.yaml {
 .frame-errs { padding: 6px 12px; color: var(--danger); background: var(--danger-soft); font-size: 12.5px; }
 .frame-card.skip .frame-errs { color: var(--muted); background: transparent; }
 .frame-note { padding: 5px 12px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+.print-out { margin: 0; padding: 10px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; overflow-x: auto; }
 .dtable { width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: fixed; }
 .dtable th { text-align: left; font-size: 11px; color: var(--faint); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--border); }
 .dtable th:nth-child(1) { width: 26%; } .dtable th:nth-child(2) { width: 34%; } .dtable th:nth-child(3) { width: 18%; }

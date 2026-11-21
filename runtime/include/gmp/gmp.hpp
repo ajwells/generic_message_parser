@@ -14,6 +14,7 @@
 #include "gmp/framing/fixed.hpp"
 #include "gmp/framing/frame.hpp"
 #include "gmp/framing/length_prefixed.hpp"
+#include "gmp/print.hpp"
 #include "gmp/result.hpp"
 #include "gmp/stream_parser.hpp"
 #include "gmp/text.hpp"

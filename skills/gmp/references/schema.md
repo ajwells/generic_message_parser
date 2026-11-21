@@ -280,6 +280,7 @@ Required C++ signatures. The generated code checks them with `static_assert`:
 | text encoder | `gmp::VoidResult encode(gmp::text::TextWriter&, const T&)`. Write the token content with `w.raw(...)`; the separator is already handled. |
 | checksum | `<unsigned integer> fn(gmp::bytes_view covered)` |
 | framer | `struct F { static gmp::FrameScan scan(gmp::bytes_view); };` |
+| printing (optional) | `void gmp_print(gmp::Printer&, const T&)` next to `T`, used by `gmp::print`; without it the value prints as `<?>` |
 
 A `FrameScan` is one of three results:
 - `need_more(hint)`

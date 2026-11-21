@@ -51,6 +51,11 @@ struct MeasureHighPrecision {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("MeasureHighPrecision");
+        gmp_p.end();
+    }
     bool operator==(const MeasureHighPrecision&) const = default;
 };
 
@@ -78,6 +83,12 @@ public:
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("MeasureHighPrecision");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<MeasureHighPrecision> to_struct() const noexcept { return MeasureHighPrecision::decode(gmp_data_); }
@@ -117,6 +128,11 @@ struct MeasureMediumPrecision {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("MeasureMediumPrecision");
+        gmp_p.end();
+    }
     bool operator==(const MeasureMediumPrecision&) const = default;
 };
 
@@ -144,6 +160,12 @@ public:
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("MeasureMediumPrecision");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<MeasureMediumPrecision> to_struct() const noexcept { return MeasureMediumPrecision::decode(gmp_data_); }
@@ -183,6 +205,11 @@ struct MeasureLowPrecision {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("MeasureLowPrecision");
+        gmp_p.end();
+    }
     bool operator==(const MeasureLowPrecision&) const = default;
 };
 
@@ -210,6 +237,12 @@ public:
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("MeasureLowPrecision");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<MeasureLowPrecision> to_struct() const noexcept { return MeasureLowPrecision::decode(gmp_data_); }
@@ -249,6 +282,11 @@ struct ReadSerialNumber {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("ReadSerialNumber");
+        gmp_p.end();
+    }
     bool operator==(const ReadSerialNumber&) const = default;
 };
 
@@ -276,6 +314,12 @@ public:
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("ReadSerialNumber");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<ReadSerialNumber> to_struct() const noexcept { return ReadSerialNumber::decode(gmp_data_); }
@@ -315,6 +359,11 @@ struct SoftReset {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SoftReset");
+        gmp_p.end();
+    }
     bool operator==(const SoftReset&) const = default;
 };
 
@@ -342,6 +391,12 @@ public:
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SoftReset");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<SoftReset> to_struct() const noexcept { return SoftReset::decode(gmp_data_); }
@@ -381,6 +436,11 @@ struct Heater200mW1s {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater200mW1s");
+        gmp_p.end();
+    }
     bool operator==(const Heater200mW1s&) const = default;
 };
 
@@ -408,6 +468,12 @@ public:
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater200mW1s");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Heater200mW1s> to_struct() const noexcept { return Heater200mW1s::decode(gmp_data_); }
@@ -447,6 +513,11 @@ struct Heater200mW100ms {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater200mW100ms");
+        gmp_p.end();
+    }
     bool operator==(const Heater200mW100ms&) const = default;
 };
 
@@ -474,6 +545,12 @@ public:
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater200mW100ms");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Heater200mW100ms> to_struct() const noexcept { return Heater200mW100ms::decode(gmp_data_); }
@@ -513,6 +590,11 @@ struct Heater110mW1s {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater110mW1s");
+        gmp_p.end();
+    }
     bool operator==(const Heater110mW1s&) const = default;
 };
 
@@ -540,6 +622,12 @@ public:
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater110mW1s");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Heater110mW1s> to_struct() const noexcept { return Heater110mW1s::decode(gmp_data_); }
@@ -579,6 +667,11 @@ struct Heater110mW100ms {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater110mW100ms");
+        gmp_p.end();
+    }
     bool operator==(const Heater110mW100ms&) const = default;
 };
 
@@ -606,6 +699,12 @@ public:
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater110mW100ms");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Heater110mW100ms> to_struct() const noexcept { return Heater110mW100ms::decode(gmp_data_); }
@@ -645,6 +744,11 @@ struct Heater20mW1s {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater20mW1s");
+        gmp_p.end();
+    }
     bool operator==(const Heater20mW1s&) const = default;
 };
 
@@ -672,6 +776,12 @@ public:
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater20mW1s");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Heater20mW1s> to_struct() const noexcept { return Heater20mW1s::decode(gmp_data_); }
@@ -711,6 +821,11 @@ struct Heater20mW100ms {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater20mW100ms");
+        gmp_p.end();
+    }
     bool operator==(const Heater20mW100ms&) const = default;
 };
 
@@ -738,6 +853,12 @@ public:
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Heater20mW100ms");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Heater20mW100ms> to_struct() const noexcept { return Heater20mW100ms::decode(gmp_data_); }
@@ -799,6 +920,16 @@ struct Measurement {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Measurement");
+        gmp_p.field("temperature", this->temperature);
+        gmp_p.conversion(static_cast<double>(this->temperature) * 0.0026703288319218739 + -45.0, "degC");
+        gmp_p.conversion(static_cast<double>(this->temperature) * 0.0048065918974593731 + -49.0, "degF");
+        gmp_p.field("humidity", this->humidity);
+        gmp_p.conversion(static_cast<double>(this->humidity) * 0.0019073777370870527 + -6.0, "%RH");
+        gmp_p.end();
+    }
     bool operator==(const Measurement&) const = default;
 };
 
@@ -835,6 +966,17 @@ public:
     /// [%RH]
     [[nodiscard]] std::uint16_t humidity() const noexcept { return gmp::load<std::uint16_t>(gmp_data_.data() + 3, gmp::Endian::big); }
     [[nodiscard]] double humidity_scaled() const noexcept { return static_cast<double>(humidity()) * 0.0019073777370870527 + -6.0; }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Measurement");
+        gmp_p.field("temperature", this->temperature());
+        gmp_p.conversion(static_cast<double>(this->temperature()) * 0.0026703288319218739 + -45.0, "degC");
+        gmp_p.conversion(static_cast<double>(this->temperature()) * 0.0048065918974593731 + -49.0, "degF");
+        gmp_p.field("humidity", this->humidity());
+        gmp_p.conversion(static_cast<double>(this->humidity()) * 0.0019073777370870527 + -6.0, "%RH");
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Measurement> to_struct() const noexcept { return Measurement::decode(gmp_data_); }
@@ -896,6 +1038,14 @@ struct SerialNumber {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SerialNumber");
+        gmp_p.field("serial_high", this->serial_high);
+        gmp_p.field("serial_low", this->serial_low);
+        gmp_p.computed("serial", this->serial());
+        gmp_p.end();
+    }
     bool operator==(const SerialNumber&) const = default;
 };
 
@@ -928,6 +1078,15 @@ public:
     [[nodiscard]] std::uint16_t serial_low() const noexcept { return gmp::load<std::uint16_t>(gmp_data_.data() + 3, gmp::Endian::big); }
     /// = ((serial_high << 16) | serial_low)
     [[nodiscard]] std::uint32_t serial() const noexcept { return static_cast<std::uint32_t>(((gmp::to_int(serial_high()) << std::int64_t(16)) | gmp::to_int(serial_low()))); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SerialNumber");
+        gmp_p.field("serial_high", this->serial_high());
+        gmp_p.field("serial_low", this->serial_low());
+        gmp_p.computed("serial", this->serial());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<SerialNumber> to_struct() const noexcept { return SerialNumber::decode(gmp_data_); }

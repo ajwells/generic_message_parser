@@ -25,7 +25,7 @@ std::string ident(const std::string& name) {
         // names used by generated members
         "read", "write", "decode", "encode", "from", "unchecked", "data", "wire_size", "min_wire_size",
         "max_wire_size", "to_struct", "token", "pack", "unpack", "check", "read_text", "write_text",
-        "decode_text", "encode_text", "raw", "present_tokens",
+        "decode_text", "encode_text", "raw", "present_tokens", "print_to",
     };
     return reserved.contains(name) ? name + "_" : name;
 }
@@ -183,6 +183,26 @@ bool is_derived_length(const Field& f) {
     if (f.len.kind != LenKind::Expr || !f.len.expr) return false;
     const auto& e = *f.len.expr;
     return e.kind == Expr::Kind::Ref && e.field && !e.bitfield && e.field->derived_from == &f;
+}
+
+} // namespace gmpc::cpp
+
+namespace gmpc::cpp {
+
+void emit_print_extras(CodeWriter& w, const Field& f, const std::string& value) {
+    if (f.kind != FieldKind::Scalar) return;
+    const bool scaled = f.scale || f.offset_value;
+    if (!f.unit.empty() && !scaled) w.line("gmp_p.unit(" + string_literal(f.unit) + ");");
+    auto conv = [&](double sc, double of, const std::string& unit) {
+        w.line("gmp_p.conversion(static_cast<double>(" + value + ") * " + double_literal(sc) + " + " + double_literal(of) +
+               (unit.empty() ? "" : ", " + string_literal(unit)) + ");");
+    };
+    if (scaled) conv(f.scale.value_or(1.0), f.offset_value.value_or(0.0), f.unit);
+    for (const auto& c : f.conversions) conv(c.scale.value_or(1.0), c.offset_value.value_or(0.0), c.unit);
+}
+
+bool has_print_extras(const Field& f) {
+    return f.kind == FieldKind::Scalar && (!f.unit.empty() || f.scale || f.offset_value || !f.conversions.empty());
 }
 
 } // namespace gmpc::cpp

@@ -269,9 +269,10 @@
         if (f.when && f.when.trim()) {
           let present;
           try { present = !!D.evalExpr(f.when, lookup); } catch (e) { throw new Stop(`${f.name}: cannot evaluate "${f.when}": ${e.message}`); }
-          if (!present) { nodes.push(node(label, kind, pos, pos, { note: `absent (${f.when} is false)`, type: G.typeLabel(s, f) })); continue; }
+          if (!present) { nodes.push(node(label, kind, pos, pos, { note: `absent (${f.when} is false)`, type: G.typeLabel(s, f), field: f, absent: true })); continue; }
         }
         const n = decodeField(s, m, f, kind, label, buf, () => pos, (p) => { pos = p; }, limit, env, lookup, endian(f), bitOrder(f), need, depth);
+        n.field = f;
         nodes.push(n);
         if (n.fatal) { error = n.error; break; }
       }
@@ -288,6 +289,8 @@
         try {
           const v = D.evalExpr(c.value, lookup);
           const isFloat = c.type === 'f32' || c.type === 'f64';
+          cn.computed = c;
+          cn.v = v;
           cn.value = isFloat ? String(v) : fmtNum(BigInt(Math.trunc(v)));
           if (c.unit) cn.value += ' ' + c.unit;
         } catch (e) { cn.error = e.message; }
@@ -301,7 +304,7 @@
     const t = kind === 'enum' ? (G.findEnum(s, typeName).type || 'u8') : typeName;
     const n = G.PRIM_SIZE[t];
     const v = readPrim(buf, at, t, endian);
-    const nd = node(label, kind, at, at + n, { raw: D.hex(buf.slice(at, at + n)), type: typeName });
+    const nd = node(label, kind, at, at + n, { raw: D.hex(buf.slice(at, at + n)), type: typeName, v });
     if (kind === 'enum') { nd.value = enumName(s, typeName, v); nd.error = strictEnumError(s, typeName, v); }
     else if (t === 'char') nd.value = `'${printable(Number(v))}'`;
     else nd.value = fmtNum(v);
@@ -392,6 +395,9 @@
           }
           if (b.const && G.isInt(b.const) && toNum(v) !== G.parseInt(b.const)) child.error = `expected const ${b.const}`;
           if (!b.pad) members[b.name] = toNum(val);
+          child.bit = b;
+          child.bitType = t;
+          child.v = val;
           nd.children.push(child);
         }
         env.set(f.name, members);
@@ -418,9 +424,10 @@
             let e = content.length;
             while (e > 0 && content[e - 1] === pad) e--;
             txt = D.ascii(content.slice(0, e));
-          }
+            nd.content = content.slice(0, e);
+          } else nd.content = content;
           nd.value = q(txt);
-        } else nd.value = `${n} byte${n === 1 ? '' : 's'}`;
+        } else { nd.value = `${n} byte${n === 1 ? '' : 's'}`; nd.content = content; }
         if ((f.lenMode !== 'fixed') && G.isInt(f.max) && content.length > G.parseInt(f.max)) nd.note = `exceeds max ${f.max} (struct decode would fail)`;
         setPos(pos + n);
         return nd;
@@ -438,6 +445,7 @@
         let i = 0;
         while (count === null ? pos < limit : i < count) {
           const sub = decodeField(s, m, elemField, ek, `[${i}]`, buf, () => pos, (p) => { pos = p; }, limit, new Map(), lookup, f.ofEndian || endian, bitOrder, need, depth + 1);
+          sub.field = elemField;
           nd.children.push(sub);
           if (sub.fatal) { nd.error = sub.error; nd.fatal = true; break; }
           i++;
@@ -453,7 +461,7 @@
         const child = G.findMessage(s, f.type);
         if (depth > 16) throw new Stop('nesting too deep');
         const r = decodeBinary(s, child, buf, pos, limit, depth + 1);
-        const nd = node(label, 'message', pos, r.pos, { type: f.type, children: r.nodes, value: child.name });
+        const nd = node(label, 'message', pos, r.pos, { type: f.type, children: r.nodes, value: child.name, msg: child });
         if (r.error) { nd.error = r.error; nd.fatal = true; }
         setPos(r.pos);
         return nd;
@@ -502,10 +510,10 @@
         continue;
       }
       const tok = toks[ti] || { start: end, end, text: '' };
-      const nd = node(f.name, kind, tok.start, tok.end, { raw: q(tok.text), type: f.type + (f.optional ? ' (optional)' : '') });
+      const nd = node(f.name, kind, tok.start, tok.end, { raw: q(tok.text), type: f.type + (f.optional ? ' (optional)' : ''), field: f, token: tok.text });
       ti++;
       if (tok.text === '') {
-        if (f.optional) nd.value = '— (empty, optional)';
+        if (f.optional) { nd.value = '— (empty, optional)'; nd.absent = true; }
         else if (kind === 'string') nd.value = '""';
         else nd.error = 'missing (empty token)';
         nodes.push(nd);
@@ -518,6 +526,7 @@
         if (!ok) nd.error = `not a base-${base} integer`;
         else {
           const v = BigInt(base === 16 ? (t.startsWith('-') ? '-0x' + t.slice(1) : '0x' + t) : t);
+          nd.v = v;
           nd.value = kind === 'enum' ? enumName(s, f.type, v) : fmtNum(v);
           if (kind === 'enum') nd.error = strictEnumError(s, f.type, v);
           const sc = scaled(f, v);
@@ -531,11 +540,11 @@
         }
       } else if (kind === 'float') {
         if (!/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t)) nd.error = 'not a number';
-        else { const v = parseFloat(t); nd.value = String(v); const sc = scaled(f, v); if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`; nd.value += conversionsText(f, v); }
+        else { const v = parseFloat(t); nd.v = v; nd.value = String(v); const sc = scaled(f, v); if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`; nd.value += conversionsText(f, v); }
       } else if (kind === 'char') {
-        if (tok.text.length !== 1) nd.error = 'expected a single character'; else nd.value = `'${tok.text}'`;
+        if (tok.text.length !== 1) nd.error = 'expected a single character'; else { nd.value = `'${tok.text}'`; nd.v = tok.text.charCodeAt(0); }
       } else if (kind === 'bool') {
-        if (!/^-?\d+$/.test(t)) nd.error = 'expected an integer'; else nd.value = Number(t) ? 'true' : 'false';
+        if (!/^-?\d+$/.test(t)) nd.error = 'expected an integer'; else { nd.value = Number(t) ? 'true' : 'false'; nd.v = Number(t) !== 0; }
       } else if (kind === 'string') {
         nd.value = q(tok.text);
         if (G.isInt(f.max) && tok.text.length > G.parseInt(f.max)) nd.note = `exceeds max ${f.max} (struct decode would fail)`;
@@ -788,7 +797,7 @@
       if (msg) {
         frame.message = msg.name;
         const r = decodeText(s, msg, buf, bodyStart, bodyEnd);
-        const mn = node(msg.name, 'message', bodyStart, bodyEnd, { children: r.nodes, value: `type_id ${q(id)}`, type: 'message' });
+        const mn = node(msg.name, 'message', bodyStart, bodyEnd, { children: r.nodes, value: `type_id ${q(id)}`, type: 'message', msg, top: true });
         frame.nodes.push(mn);
         if (r.nodes.some((n) => n.error)) err(fieldErrors(r.nodes));
       }
@@ -846,7 +855,7 @@
       if (msg) {
         frame.message = msg.name;
         const r = decodeBinary(s, msg, buf, hs, buf.length - tr);
-        const mn = node(msg.name, 'message', hs, r.pos, { children: r.nodes, type: 'message', value: msg.type_id ? `type_id ${msg.type_id}` : '' });
+        const mn = node(msg.name, 'message', hs, r.pos, { children: r.nodes, type: 'message', value: msg.type_id ? `type_id ${msg.type_id}` : '', msg, top: true });
         const trailing = r.pos < buf.length - tr
           ? node(`+${buf.length - tr - r.pos} trailing`, 'pad', r.pos, buf.length - tr, { note: fr.type === 'fixed' ? 'fixed-frame padding' : 'bytes after the message (ignored)', raw: D.hex(buf.slice(r.pos, buf.length - tr)) })
           : null;
@@ -919,11 +928,11 @@
       let end = input.length;
       while (end > 0 && (input[end - 1] === 10 || input[end - 1] === 13)) end--;
       const r = decodeText(s, m, input, 0, end);
-      return { items: [{ type: 'frame', start: 0, end, message: m.name, errors: hasError(r.nodes) ? [fieldErrors(r.nodes)] : [], nodes: [node(m.name, 'message', 0, end, { children: r.nodes, type: 'message' })] }] };
+      return { items: [{ type: 'frame', start: 0, end, message: m.name, errors: hasError(r.nodes) ? [fieldErrors(r.nodes)] : [], nodes: [node(m.name, 'message', 0, end, { children: r.nodes, type: 'message', msg: m, top: true })] }] };
     }
     const r = decodeBinary(s, m, input, 0, input.length);
     const errors = r.error ? [r.error] : hasError(r.nodes) ? [fieldErrors(r.nodes)] : [];
-    const items = [{ type: 'frame', start: 0, end: r.pos, message: m.name, errors, nodes: [node(m.name, 'message', 0, r.pos, { children: r.nodes, type: 'message' })] }];
+    const items = [{ type: 'frame', start: 0, end: r.pos, message: m.name, errors, nodes: [node(m.name, 'message', 0, r.pos, { children: r.nodes, type: 'message', msg: m, top: true })] }];
     if (r.pos < input.length && !r.error) items.push({ type: 'garbage', start: r.pos, end: input.length, error: 'trailing bytes (ignored by decode)' });
     return { items };
   };

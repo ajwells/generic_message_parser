@@ -63,6 +63,13 @@ struct Packed_flags {
     static constexpr gmp::VoidResult check([[maybe_unused]] const std::uint8_t* p) noexcept {
         return {};
     }
+    /// Human readable dump (see gmp/print.hpp).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin({});
+        gmp_p.field("ready", this->ready);
+        gmp_p.field("level", this->level);
+        gmp_p.end();
+    }
     bool operator==(const Packed_flags&) const = default;
 };
 
@@ -209,6 +216,28 @@ struct Packed {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Packed");
+        gmp_p.field("b0", this->b0);
+        gmp_p.field("b1", this->b1);
+        gmp_p.field("b2", this->b2);
+        gmp_p.field("wide", this->wide);
+        gmp_p.field("lo", this->lo);
+        gmp_p.field("flags", this->flags);
+        gmp_p.field("unit", this->unit);
+        gmp_p.field("n", this->n);
+        gmp_p.field("items", this->items);
+        gmp_p.computed("rgb", this->rgb(), "color");
+        gmp_p.computed("big", this->big());
+        gmp_p.computed("sum", this->sum());
+        gmp_p.computed("level_x2", this->level_x2());
+        gmp_p.computed("length_mm", this->length_mm());
+        gmp_p.computed("ratio", this->ratio());
+        gmp_p.computed("first_two", this->first_two());
+        gmp_p.computed("overlapping", this->overlapping());
+        gmp_p.end();
+    }
     bool operator==(const Packed&) const = default;
 };
 
@@ -291,6 +320,29 @@ public:
     [[nodiscard]] std::uint16_t first_two() const noexcept { return static_cast<std::uint16_t>(((gmp::to_int(b0()) << std::int64_t(8)) | gmp::to_int(b1()))); }
     /// = ((b0 << 4) | b1)
     [[nodiscard]] std::uint16_t overlapping() const noexcept { return static_cast<std::uint16_t>(((gmp::to_int(b0()) << std::int64_t(4)) | gmp::to_int(b1()))); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Packed");
+        gmp_p.field("b0", this->b0());
+        gmp_p.field("b1", this->b1());
+        gmp_p.field("b2", this->b2());
+        gmp_p.field("wide", this->wide());
+        gmp_p.field("lo", this->lo());
+        gmp_p.field("flags", this->flags());
+        gmp_p.field("unit", this->unit());
+        gmp_p.field("n", this->n());
+        gmp_p.field("items", this->items());
+        gmp_p.computed("rgb", this->rgb(), "color");
+        gmp_p.computed("big", this->big());
+        gmp_p.computed("sum", this->sum());
+        gmp_p.computed("level_x2", this->level_x2());
+        gmp_p.computed("length_mm", this->length_mm());
+        gmp_p.computed("ratio", this->ratio());
+        gmp_p.computed("first_two", this->first_two());
+        gmp_p.computed("overlapping", this->overlapping());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Packed> to_struct() const noexcept { return Packed::decode(gmp_data_); }

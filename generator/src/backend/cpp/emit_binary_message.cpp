@@ -58,6 +58,38 @@ std::vector<ConvAccessor> conversions_of(const Field& f) {
     return out;
 }
 
+/// Statements printing field `f` whose (non-optional) value expression is `v`.
+void print_field_value(CodeWriter& w, const Field& f, const std::string& v, bool view) {
+    const auto name = string_literal(f.name);
+    if (f.kind == FieldKind::Bytes)
+        w.line("gmp_p.field(" + name + ", gmp::hex(" + (view ? v : "gmp::bytes_view(" + v + ".data(), " + v + ".size())") + "));");
+    else
+        w.line("gmp_p.field(" + name + ", " + v + ");");
+    emit_print_extras(w, f, v);
+}
+
+/// Statements printing field `f` read through `access` (a member or accessor call); conditional fields print
+/// `<absent>` when missing.
+void print_field(CodeWriter& w, const Field& f, const std::string& access, bool view) {
+    if (!f.has_member()) return;
+    if (!f.when) {
+        print_field_value(w, f, access, view);
+        return;
+    }
+    w.open(view ? "if (const auto gmp_v = " + access + ") {" : "if (" + access + ") {");
+    print_field_value(w, f, view ? "(*gmp_v)" : "(*" + access + ")", view);
+    w.dedent();
+    w.open("} else {");
+    w.line("gmp_p.absent(" + string_literal(f.name) + ");");
+    w.close();
+}
+
+void print_computed(CodeWriter& w, const Message& m) {
+    for (const auto& c : m.computed)
+        w.line("gmp_p.computed(" + string_literal(c.name) + ", this->" + ident(c.name) + "()" +
+               (c.unit.empty() ? "" : ", " + string_literal(c.unit)) + ");");
+}
+
 // -------------------------------------------------------------------------------------------------
 // bits groups
 // -------------------------------------------------------------------------------------------------
@@ -117,6 +149,18 @@ void emit_bits_type(Ctx& c, const Message& m, const Field& f) {
     }
     w.line("return {};");
     w.close();
+    w.line("/// Human readable dump (see gmp/print.hpp).");
+    w.open("void print_to(gmp::Printer& gmp_p) const noexcept {");
+    w.line("gmp_p.begin({});");
+    for (const auto& b : f.bits) {
+        if (b.pad || b.const_value) continue;
+        w.line("gmp_p.field(" + string_literal(b.name) + ", this->" + ident(b.name) + ");");
+        if (b.scale || b.offset_value)
+            w.line("gmp_p.conversion(static_cast<double>(this->" + ident(b.name) + ") * " +
+                   double_literal(b.scale.value_or(1.0)) + " + " + double_literal(b.offset_value.value_or(0.0)) + ");");
+    }
+    w.line("gmp_p.end();");
+    w.close();
     w.line("bool operator==(const " + name + "&) const = default;");
     w.close("};");
     w.line();
@@ -166,6 +210,7 @@ public:
         emit_read();
         emit_write();
         emit_wrappers();
+        emit_print();
         w_.line("bool operator==(const " + m_.name + "&) const = default;");
         w_.close("};");
         w_.line();
@@ -515,6 +560,16 @@ private:
         w_.close();
     }
 
+    void emit_print() {
+        w_.line("/// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).");
+        w_.open("void print_to(gmp::Printer& gmp_p) const noexcept {");
+        w_.line("gmp_p.begin(" + string_literal(m_.name) + ");");
+        for (const auto& f : m_.fields) print_field(w_, *f, "this->" + ident(f->name), false);
+        print_computed(w_, m_);
+        w_.line("gmp_p.end();");
+        w_.close();
+    }
+
     Ctx& c_;
     CodeWriter& w_;
     const Message& m_;
@@ -560,6 +615,14 @@ public:
         w_.line();
         for (const auto& f : m_.fields) emit_accessor(*f);
         emit_computed_accessors();
+        w_.line();
+        w_.line("/// Human readable dump (see gmp/print.hpp); same output as the struct.");
+        w_.open("void print_to(gmp::Printer& gmp_p) const noexcept {");
+        w_.line("gmp_p.begin(" + string_literal(m_.name) + ");");
+        for (const auto& f : m_.fields) print_field(w_, *f, "this->" + ident(f->name) + "()", true);
+        print_computed(w_, m_);
+        w_.line("gmp_p.end();");
+        w_.close();
         if (m_.want_struct) {
             w_.line();
             w_.line("/// Decode into the eager struct.");

@@ -182,6 +182,21 @@ struct GGA {
         if (auto e = write_text(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("GGA");
+        gmp_p.field("utc_time", this->utc_time);
+        gmp_p.field("latitude", this->latitude);
+        gmp_p.field("lat_hemi", this->lat_hemi);
+        gmp_p.field("longitude", this->longitude);
+        gmp_p.field("lon_hemi", this->lon_hemi);
+        gmp_p.field("quality", this->quality);
+        gmp_p.field("satellites", this->satellites);
+        gmp_p.field("hdop", this->hdop);
+        gmp_p.field("altitude", this->altitude);
+        gmp_p.field("altitude_unit", this->altitude_unit);
+        gmp_p.end();
+    }
     bool operator==(const GGA&) const = default;
 };
 
@@ -251,6 +266,22 @@ public:
         return std::optional<char>(std::move(*v));
     }
 
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("GGA");
+        gmp_p.field("utc_time", this->utc_time());
+        gmp_p.field("latitude", this->latitude());
+        gmp_p.field("lat_hemi", this->lat_hemi());
+        gmp_p.field("longitude", this->longitude());
+        gmp_p.field("lon_hemi", this->lon_hemi());
+        gmp_p.field("quality", this->quality());
+        gmp_p.field("satellites", this->satellites());
+        gmp_p.field("hdop", this->hdop());
+        gmp_p.field("altitude", this->altitude());
+        gmp_p.field("altitude_unit", this->altitude_unit());
+        gmp_p.end();
+    }
+
     [[nodiscard]] gmp::Result<GGA> to_struct() const noexcept { return GGA::decode_text(gmp_text_); }
 
 private:
@@ -313,6 +344,15 @@ struct TXT {
         if (auto e = write_text(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("TXT");
+        gmp_p.field("total", this->total);
+        gmp_p.field("number", this->number);
+        gmp_p.field("severity", this->severity);
+        gmp_p.field("text", this->text);
+        gmp_p.end();
+    }
     bool operator==(const TXT&) const = default;
 };
 
@@ -340,6 +380,16 @@ public:
     [[nodiscard]] gmp::Result<std::uint8_t> number() const noexcept { return gmp::text::parse_int<std::uint8_t>(gmp_tok_[1], 10); }
     [[nodiscard]] gmp::Result<std::uint8_t> severity() const noexcept { return gmp::text::parse_int<std::uint8_t>(gmp_tok_[2], 10); }
     [[nodiscard]] std::string_view text() const noexcept { return gmp_tok_[3]; }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("TXT");
+        gmp_p.field("total", this->total());
+        gmp_p.field("number", this->number());
+        gmp_p.field("severity", this->severity());
+        gmp_p.field("text", this->text());
+        gmp_p.end();
+    }
 
     [[nodiscard]] gmp::Result<TXT> to_struct() const noexcept { return TXT::decode_text(gmp_text_); }
 

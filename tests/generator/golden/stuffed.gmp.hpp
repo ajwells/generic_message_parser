@@ -62,6 +62,13 @@ struct Data {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Data");
+        gmp_p.field("n", this->n);
+        gmp_p.field("data", gmp::hex(gmp::bytes_view(this->data_.data(), this->data_.size())));
+        gmp_p.end();
+    }
     bool operator==(const Data&) const = default;
 };
 
@@ -98,6 +105,14 @@ public:
 
     [[nodiscard]] std::uint8_t n() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] gmp::bytes_view data_() const noexcept { return gmp_data_.subspan(1, (gmp_off_[2] - gmp_off_[1])); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Data");
+        gmp_p.field("n", this->n());
+        gmp_p.field("data", gmp::hex(this->data_()));
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Data> to_struct() const noexcept { return Data::decode(gmp_data_); }
@@ -137,6 +152,12 @@ struct Ping {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Ping");
+        gmp_p.field("seq", this->seq);
+        gmp_p.end();
+    }
     bool operator==(const Ping&) const = default;
 };
 
@@ -164,6 +185,13 @@ public:
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
     [[nodiscard]] std::uint32_t seq() const noexcept { return gmp::load<std::uint32_t>(gmp_data_.data() + 0, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Ping");
+        gmp_p.field("seq", this->seq());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Ping> to_struct() const noexcept { return Ping::decode(gmp_data_); }
@@ -209,6 +237,13 @@ struct SyncLinkHeader {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SyncLinkHeader");
+        gmp_p.field("kind", this->kind);
+        gmp_p.field("len", this->len);
+        gmp_p.end();
+    }
     bool operator==(const SyncLinkHeader&) const = default;
 };
 
@@ -237,6 +272,14 @@ public:
 
     [[nodiscard]] std::uint8_t kind() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::uint8_t len() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 1, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SyncLinkHeader");
+        gmp_p.field("kind", this->kind());
+        gmp_p.field("len", this->len());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<SyncLinkHeader> to_struct() const noexcept { return SyncLinkHeader::decode(gmp_data_); }
@@ -442,6 +485,13 @@ struct WireChecksumHeader {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("WireChecksumHeader");
+        gmp_p.field("kind", this->kind);
+        gmp_p.field("len", this->len);
+        gmp_p.end();
+    }
     bool operator==(const WireChecksumHeader&) const = default;
 };
 
@@ -470,6 +520,14 @@ public:
 
     [[nodiscard]] std::uint8_t kind() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::uint8_t len() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 1, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("WireChecksumHeader");
+        gmp_p.field("kind", this->kind());
+        gmp_p.field("len", this->len());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<WireChecksumHeader> to_struct() const noexcept { return WireChecksumHeader::decode(gmp_data_); }
@@ -692,6 +750,13 @@ struct WireLengthHeader {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("WireLengthHeader");
+        gmp_p.field("kind", this->kind);
+        gmp_p.field("len", this->len);
+        gmp_p.end();
+    }
     bool operator==(const WireLengthHeader&) const = default;
 };
 
@@ -720,6 +785,14 @@ public:
 
     [[nodiscard]] std::uint8_t kind() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::uint8_t len() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 1, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("WireLengthHeader");
+        gmp_p.field("kind", this->kind());
+        gmp_p.field("len", this->len());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<WireLengthHeader> to_struct() const noexcept { return WireLengthHeader::decode(gmp_data_); }
@@ -925,6 +998,13 @@ struct CrcLengthHeader {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("CrcLengthHeader");
+        gmp_p.field("kind", this->kind);
+        gmp_p.field("len", this->len);
+        gmp_p.end();
+    }
     bool operator==(const CrcLengthHeader&) const = default;
 };
 
@@ -953,6 +1033,14 @@ public:
 
     [[nodiscard]] std::uint8_t kind() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::uint8_t len() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 1, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("CrcLengthHeader");
+        gmp_p.field("kind", this->kind());
+        gmp_p.field("len", this->len());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<CrcLengthHeader> to_struct() const noexcept { return CrcLengthHeader::decode(gmp_data_); }
@@ -1158,6 +1246,13 @@ struct WireCrcLengthHeader {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("WireCrcLengthHeader");
+        gmp_p.field("kind", this->kind);
+        gmp_p.field("len", this->len);
+        gmp_p.end();
+    }
     bool operator==(const WireCrcLengthHeader&) const = default;
 };
 
@@ -1186,6 +1281,14 @@ public:
 
     [[nodiscard]] std::uint8_t kind() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::uint8_t len() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 1, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("WireCrcLengthHeader");
+        gmp_p.field("kind", this->kind());
+        gmp_p.field("len", this->len());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<WireCrcLengthHeader> to_struct() const noexcept { return WireCrcLengthHeader::decode(gmp_data_); }
@@ -1403,6 +1506,13 @@ struct WireCrcOverWireHeader {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("WireCrcOverWireHeader");
+        gmp_p.field("kind", this->kind);
+        gmp_p.field("len", this->len);
+        gmp_p.end();
+    }
     bool operator==(const WireCrcOverWireHeader&) const = default;
 };
 
@@ -1431,6 +1541,14 @@ public:
 
     [[nodiscard]] std::uint8_t kind() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::uint8_t len() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 1, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("WireCrcOverWireHeader");
+        gmp_p.field("kind", this->kind());
+        gmp_p.field("len", this->len());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<WireCrcOverWireHeader> to_struct() const noexcept { return WireCrcOverWireHeader::decode(gmp_data_); }
@@ -1799,6 +1917,12 @@ struct DelimitedHeader {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("DelimitedHeader");
+        gmp_p.field("kind", this->kind);
+        gmp_p.end();
+    }
     bool operator==(const DelimitedHeader&) const = default;
 };
 
@@ -1826,6 +1950,13 @@ public:
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
     [[nodiscard]] std::uint8_t kind() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("DelimitedHeader");
+        gmp_p.field("kind", this->kind());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<DelimitedHeader> to_struct() const noexcept { return DelimitedHeader::decode(gmp_data_); }

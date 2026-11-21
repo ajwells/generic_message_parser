@@ -55,6 +55,11 @@ void doc(CodeWriter& w, const std::string& text);
 /// True if expression `e` (a length/count) is a bare reference whose field is derived from `f`.
 bool is_derived_length(const ir::Field& f);
 
+/// `print_to` support: unit and engineering conversions printed after scalar value expression `value`
+/// (statements use the printer parameter `gmp_p`).
+void emit_print_extras(CodeWriter& w, const ir::Field& f, const std::string& value);
+bool has_print_extras(const ir::Field& f);
+
 // Emitters (implemented in emit_*.cpp)
 void emit_binary_message(Ctx& c, const ir::Message& m);
 void emit_text_message(Ctx& c, const ir::Message& m);

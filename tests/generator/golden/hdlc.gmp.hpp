@@ -84,6 +84,15 @@ struct Reading {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Reading");
+        gmp_p.field("channel", this->channel);
+        gmp_p.field("name_len", this->name_len);
+        gmp_p.field("name", this->name);
+        gmp_p.field("value", this->value);
+        gmp_p.end();
+    }
     bool operator==(const Reading&) const = default;
 };
 
@@ -128,6 +137,16 @@ public:
     [[nodiscard]] std::uint8_t name_len() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 1, gmp::Endian::little); }
     [[nodiscard]] std::string_view name() const noexcept { return gmp::as_string_view(gmp_data_.subspan(2, (gmp_off_[3] - gmp_off_[2]))); }
     [[nodiscard]] float value() const noexcept { return gmp::load<float>(gmp_data_.data() + gmp_off_[3], gmp::Endian::little); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Reading");
+        gmp_p.field("channel", this->channel());
+        gmp_p.field("name_len", this->name_len());
+        gmp_p.field("name", this->name());
+        gmp_p.field("value", this->value());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Reading> to_struct() const noexcept { return Reading::decode(gmp_data_); }
@@ -208,6 +227,19 @@ struct Batch {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Batch");
+        gmp_p.field("when", this->when);
+        gmp_p.field("n", this->n);
+        gmp_p.field("readings", this->readings);
+        if (this->crc_in_payload) {
+            gmp_p.field("crc_in_payload", (*this->crc_in_payload));
+        } else {
+            gmp_p.absent("crc_in_payload");
+        }
+        gmp_p.end();
+    }
     bool operator==(const Batch&) const = default;
 };
 
@@ -260,6 +292,20 @@ public:
     [[nodiscard]] gmp::SeqArrayView<ReadingView> readings() const noexcept { return gmp::SeqArrayView<ReadingView>(gmp_data_.subspan(4, (gmp_off_[3] - gmp_off_[2]))); }
     [[nodiscard]] std::optional<std::uint32_t> crc_in_payload() const noexcept { if (!((gmp_present_ >> 0) & 1u)) return std::nullopt; return gmp::load<std::uint32_t>(gmp_data_.data() + gmp_off_[3], gmp::Endian::little); }
 
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Batch");
+        gmp_p.field("when", this->when());
+        gmp_p.field("n", this->n());
+        gmp_p.field("readings", this->readings());
+        if (const auto gmp_v = this->crc_in_payload()) {
+            gmp_p.field("crc_in_payload", (*gmp_v));
+        } else {
+            gmp_p.absent("crc_in_payload");
+        }
+        gmp_p.end();
+    }
+
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Batch> to_struct() const noexcept { return Batch::decode(gmp_data_); }
 
@@ -309,6 +355,13 @@ struct Ping {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Ping");
+        gmp_p.field("seq", this->seq);
+        gmp_p.field("payload", gmp::hex(gmp::bytes_view(this->payload.data(), this->payload.size())));
+        gmp_p.end();
+    }
     bool operator==(const Ping&) const = default;
 };
 
@@ -337,6 +390,14 @@ public:
 
     [[nodiscard]] std::uint32_t seq() const noexcept { return gmp::load<std::uint32_t>(gmp_data_.data() + 0, gmp::Endian::little); }
     [[nodiscard]] gmp::bytes_view payload() const noexcept { return gmp_data_.subspan(4, 4); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("Ping");
+        gmp_p.field("seq", this->seq());
+        gmp_p.field("payload", gmp::hex(this->payload()));
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<Ping> to_struct() const noexcept { return Ping::decode(gmp_data_); }
@@ -382,6 +443,12 @@ struct HdlcHeader {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("HdlcHeader");
+        gmp_p.field("kind", this->kind);
+        gmp_p.end();
+    }
     bool operator==(const HdlcHeader&) const = default;
 };
 
@@ -410,6 +477,13 @@ public:
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
     [[nodiscard]] std::uint8_t kind() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 1, gmp::Endian::little); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("HdlcHeader");
+        gmp_p.field("kind", this->kind());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<HdlcHeader> to_struct() const noexcept { return HdlcHeader::decode(gmp_data_); }
@@ -605,6 +679,12 @@ struct SummedHeader {
         if (auto e = write(w); !e) return gmp::fail(e.error());
         return w.position();
     }
+    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SummedHeader");
+        gmp_p.field("kind", this->kind);
+        gmp_p.end();
+    }
     bool operator==(const SummedHeader&) const = default;
 };
 
@@ -632,6 +712,13 @@ public:
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
 
     [[nodiscard]] std::uint8_t kind() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::little); }
+
+    /// Human readable dump (see gmp/print.hpp); same output as the struct.
+    void print_to(gmp::Printer& gmp_p) const noexcept {
+        gmp_p.begin("SummedHeader");
+        gmp_p.field("kind", this->kind());
+        gmp_p.end();
+    }
 
     /// Decode into the eager struct.
     [[nodiscard]] gmp::Result<SummedHeader> to_struct() const noexcept { return SummedHeader::decode(gmp_data_); }

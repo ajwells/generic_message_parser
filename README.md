@@ -10,6 +10,8 @@ describes **existing** protocols: binary or ASCII, any framing, any bit layout. 
 - **Two access styles** per message:
   - lazy zero-copy **views** that decode fields straight from the bytes on access
   - eager **structs** with fixed-capacity storage
+- **Printing** for logs: `gmp::println(msg, stdout)` shows every field, with enum names and values (`run (0x01)`) and
+  engineering units.
 
 **Contents:**
 - [Quick start](#quick-start)
@@ -19,7 +21,7 @@ describes **existing** protocols: binary or ASCII, any framing, any bit layout. 
   - [bit fields](#bit-fields) · [lengths and counts](#lengths-and-counts) · [expressions](#expressions)
   - [text messages](#text-messages) · [protocols](#protocols) · [framing](#framing) · [checksum](#checksum)
   - [message_type](#message_type) · [custom extensions](#custom-extensions)
-- [Generated C++ API](#generated-c-api) · [Streaming](#streaming) · [Errors](#errors)
+- [Generated C++ API](#generated-c-api) · [Streaming](#streaming) · [Printing](#printing) · [Errors](#errors)
 - [Building](#building) · [CMake integration](#cmake-integration) · [gmpc command line](#gmpc-command-line)
 - [Project layout](#project-layout) · [Adding a language backend](#adding-a-language-backend)
 
@@ -617,6 +619,7 @@ Required C++ signatures. The generated header checks them with `static_assert`, 
 | text encoder | `gmp::VoidResult encode(gmp::text::TextWriter&, const T&)`. Write the token content with `w.raw(...)`; separators are handled for you. |
 | checksum | `<unsigned integer> fn(gmp::bytes_view covered)` |
 | framer | `struct F { static gmp::FrameScan scan(gmp::bytes_view); };` |
+| printing (optional) | `void gmp_print(gmp::Printer&, const T&)` in `T`'s namespace; see [Printing](#printing). |
 
 A framer's `scan` receives the unconsumed bytes at the current stream position and returns one of:
 - `FrameScan::need_more(hint)`: not enough data yet.
@@ -645,6 +648,7 @@ and the headers of your custom extensions.
 | `static Result<M> decode(bytes_view)` | Decode from the start of a buffer. Trailing bytes are ignored. |
 | `Result<size_t> encode(mut_bytes out) const` | Encode into `out`. Returns bytes written, or `BufferFull`. |
 | `read(ByteReader&)` / `write(ByteWriter&)` | Lower-level building blocks (used for nesting). |
+| `print_to(gmp::Printer&) const` | Used by [`gmp::print`](#printing). |
 | `operator==` | Member-wise comparison. |
 
 ### `class MView` (binary message)
@@ -657,6 +661,7 @@ and the headers of your custom extensions.
 | `<name>_scaled()`, `<name>_<conversion>()` | Engineering values. |
 | `<computed>()` | [Computed values](#computed-values) (read only). |
 | `data()`, `wire_size()` | The exact bytes of this message. |
+| `print_to(gmp::Printer&) const` | Used by [`gmp::print`](#printing); prints the same text as the struct. |
 | `to_struct()` | Eager decode (when the struct is generated). |
 
 Fixed-layout messages use compile-time offsets. Messages with variable fields compute their field offsets once in
@@ -665,12 +670,16 @@ Fixed-layout messages use compile-time offsets. Messages with variable fields co
 ### Text messages
 
 - **`struct M`**: members (`optional` fields are `std::optional`), `token_count`, `separator`,
-  `static decode(bytes_view)`, `static decode_text(std::string_view)`, `encode(mut_bytes)`, and `read_text`/`write_text`.
+  `static decode(bytes_view)`, `static decode_text(std::string_view)`, `encode(mut_bytes)`, `read_text`/`write_text`,
+  and `print_to`.
 - **`class MView`**:
   - `from(std::string_view)` / `from(bytes_view)` tokenise once
   - field accessors parse on demand and return `Result<T>`
   - `token(i)` gives a raw token, `present_tokens()` the number of tokens found, `raw()` the whole record
-  - `to_struct()`
+  - `to_struct()` and `print_to`
+
+Bits groups are small structs with one member per bit field, `unpack`/`pack`/`check`, `<name>_scaled()` and
+`print_to`.
 
 ### `struct P` (protocol)
 
@@ -717,6 +726,79 @@ parser.feed(chunk, gmp::overloaded{
 - Views passed to the handler point into the parser's buffer and are valid only during the call. Copy what you need,
   or call `to_struct()`.
 
+## Printing
+
+Every generated struct, view and bits group has `print_to(gmp::Printer&)`. `gmp::print` and `gmp::println`
+(`<gmp/print.hpp>`, included by every generated header) use it to dump a message for a console or a debug log:
+
+```cpp
+gmp::println(status, stdout);                          // std::FILE*: console, or a log opened with fopen
+gmp::print(status, std::cout);                         // anything with write(const char*, n), e.g. std::ostream
+char line[256];  gmp::print(status, line);             // char array or std::span<char>, always NUL terminated
+gmp::static_string<256> s;  gmp::print(status, s);     // appends; also std::string or anything with append()
+gmp::print(status, [](std::string_view t) { uart_log(t); });   // callback; return false from it to stop
+
+gmp::print(status, stdout, {.style = gmp::PrintStyle::single_line});
+```
+
+```
+Status {
+  voltage: 1234 (12.34 V)
+  flags: {
+    armed: true
+    mode: run (0x01)
+    level: -3
+  }
+  count: 3
+  samples: [10, -20, 30]
+  ext: <absent>
+  label: "abc"
+}
+```
+
+Single line: `Status { voltage: 1234 (12.34 V), flags: { armed: true, mode: run (0x01), level: -3 }, count: 3, ... }`.
+
+| value | printed as |
+|-------|------------|
+| integer, float, bool, char | `42`, `1.5` (shortest text of the field's own type), `true`, `'N'` |
+| enum | Name and value in hex, sized to the enum's type: `run (0x01)`. An undeclared value prints as `<unknown> (0x07)`. |
+| `scale` / `offset`, `conversions` | The raw value, then each engineering value with its unit: `26214 (25 degC, 77 degF)`. A `unit` without scaling follows the value: `3600 s`. |
+| bits group, nested message | An indented `{ ... }` block (`Name { ... }` for messages). |
+| `bytes` | Hex: `[0A 1B 2C]`. |
+| `string` | Quoted, with `\r \n \t \" \\ \xHH` escapes. |
+| array | `[1, 2, 3]`. Arrays of messages print one element per line. |
+| conditional field | Its value, or `<absent>`. Text `optional` fields that are empty also print `<absent>`. |
+| text view field that fails to parse | `<error: parse error>`. |
+| computed value | `serial: 305419896 (computed)`. |
+| `const` and `pad` fields | Not printed (they have no member). |
+| custom type | `gmp_print(gmp::Printer&, const T&)` declared next to `T` (found by ADL), otherwise `<?>`. |
+
+A view prints exactly the same text as its struct. A `std::variant` (for example the result of `Protocol::parse()`) prints
+the message it holds, and a lone enum or number prints too: `gmp::print(Mode::run, stdout)` → `run (0x01)`.
+
+| `gmp::PrintOptions` | default | |
+|---------------------|---------|-|
+| `style` | `multi_line` | or `single_line` |
+| `indent` | `2` | spaces per level (`multi_line`) |
+| `max_items` | `64` | array elements shown before `... (+N more)`; `0` shows all |
+| `max_bytes` | `64` | bytes shown for a `bytes` field; `0` shows all |
+| `precision` | `9` | significant digits of scaled and converted values |
+
+`print` returns `Result<size_t>`, the number of characters written. Bounded sinks (char buffers, `static_string`, a
+callback that returns `false`) keep what fits and return `BufferFull`. Printing never allocates. Output for an
+unbounded sink such as `std::string` grows that string as usual. A custom type's hook writes with `p.text(...)`
+or `p.value(member)`:
+
+```cpp
+inline void gmp_print(gmp::Printer& p, const my::Time& t) noexcept {   // 12:34:56
+    char b[9];
+    std::snprintf(b, sizeof b, "%02d:%02d:%02d", t.h, t.m, t.s);
+    p.text(b);
+}
+```
+
+The Studio's decode tester shows the same text for each decoded frame (**View: Print / One line**).
+
 ## Errors
 
 Every fallible operation returns `gmp::Result<T>` (`std::expected<T, gmp::Error>`). `gmp::to_string(Error)` gives a
@@ -732,7 +814,7 @@ readable name.
 | `BadConst` | A `const` field or bit field did not match. |
 | `OutOfRange` | Data exceeds a container's `max`, or a value does not fit. |
 | `UnknownType` | No message has the frame's `type_id`. |
-| `BufferFull` | Output buffer too small, or stream buffer full without a frame. |
+| `BufferFull` | Output buffer too small, stream buffer full without a frame, or a bounded print sink was full. |
 | `ParseError` | A text token is not a valid number/character. |
 | `MissingField` | A required text token is empty, or a conditional field's optional is empty on encode. |
 | `UnknownEnum` | A field of a `strict` enum holds a value that is not declared (on decode, or in a struct being encoded). |
@@ -795,7 +877,7 @@ gmpc [options] schema.yaml...
 ## Project layout
 
 ```
-runtime/include/gmp/     header-only runtime: framing, stream parser, checksums, bit/byte codecs, text, containers
+runtime/include/gmp/     header-only runtime: framing, stream parser, checksums, bit/byte codecs, text, containers, print
 generator/src/           schema loader, expression parser, IR + lowering, validator, backends
 cmake/GmpGenerate.cmake  gmp_generate() build integration
 tests/                   runtime unit tests, generator golden + diagnostics tests, round-trip tests

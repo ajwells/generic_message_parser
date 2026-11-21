@@ -149,6 +149,14 @@ auto st = acme::link::Status::decode(bytes);     // gmp::Result<Status>
 auto view = acme::link::StatusView::from(bytes); // gmp::Result<StatusView>
 ```
 
+**Printing for logs and debugging:** don't hand-write printf chains for every field. Every struct, view and bits group
+has `print_to()`, so `gmp::println(msg, stdout)` dumps all fields, with enums as `run (0x01)` (undeclared values:
+`<unknown> (0x07)`), scaled values as `1234 (12.34 V)`, bytes as hex and absent conditional fields as `<absent>`.
+Sinks are `FILE*`, a `char[N]` / `std::span<char>` buffer, `gmp::static_string<N>` or `std::string` (appends), any
+`std::ostream`, or a callable taking `std::string_view`. Use `{.style = gmp::PrintStyle::single_line}` for one line
+per message. It never allocates. Bounded sinks keep what fits and return `BufferFull`. Custom types print through
+`void gmp_print(gmp::Printer&, const T&)` next to the type. Details: "Printing" in `references/cpp-api.md`.
+
 Errors are values (`gmp::Result<T>` = `std::expected<T, gmp::Error>`): `Truncated`, `BadSync`, `BadChecksum`,
 `BadLength`, `BadDelimiter`, `BadConst`, `OutOfRange`, `UnknownType`, `UnknownEnum`, `BufferFull`, `ParseError`,
 `MissingField`. Full API and streaming details: `references/cpp-api.md`.
