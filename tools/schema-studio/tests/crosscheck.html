@@ -1,0 +1,92 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Studio cross-check against C++</title></head>
+<body>
+<pre id="result">running</pre>
+<textarea id="output"></textarea>
+<script src="lib.js"></script>
+<script src="../js/state.js"></script>
+<script src="../js/layout.js"></script>
+<script src="../js/validate.js"></script>
+<script src="../js/yaml.js"></script>
+<script src="../js/decoder.js"></script>
+<script src="../js/print.js"></script>
+<script>
+// Data written by run_tests.py (loaded from ?data=<file URL>):
+//   schemas:   { name: yaml }               schemas used by the C++ reference program
+//   crossref:  output of gmp_studio_crossref (checksums, messages, streams)
+//   roundtrip: [{ path, yaml }]             every schema in the repository, for YAML import/export
+(async () => {
+  const G = window.GMP, D = G.decoder;
+  const dataUrl = new URLSearchParams(location.search).get('data');
+  if (!dataUrl) {
+    T.test('load data', () => T.skip('no ?data= given (run through run_tests.py)'));
+    return T.run();
+  }
+  await T.loadScript(dataUrl);
+  const data = window.GMP_TEST_DATA;
+  let yamlOk = true;
+  try { await G.loadJsYaml(); } catch (_) { yamlOk = false; }
+  const needYaml = () => { if (!yamlOk) T.skip('js-yaml could not be loaded from cdnjs (offline?)'); };
+  const states = {};
+  const state = (name) => (states[name] = states[name] || G.fromYaml(data.schemas[name]));
+  const bytes = (hex) => D.parseHex(hex).bytes;
+
+  // ---- checksums: Studio vs gmp::checksum ---------------------------------------------------------
+  const inputs = [new TextEncoder().encode('123456789'), Uint8Array.from({ length: 256 }, (_, i) => (i * 7 + 3) & 0xFF)];
+  for (const c of data.crossref.checksums) {
+    T.test(`checksum ${c.algo} (input ${c.input})`, () => {
+      const v = D.checksum(G.emptyState(), { algo: c.algo }, inputs[c.input]);
+      T.ok(v !== null && v !== undefined, `Studio cannot compute ${c.algo}`);
+      T.eq(BigInt(v).toString(16).toUpperCase(), c.value);
+    });
+  }
+
+  // ---- single messages: decode + gmp::print text ----------------------------------------------------
+  data.crossref.messages.forEach((c, i) => {
+    T.test(`message ${c.schema} ${c.target} #${i}`, () => {
+      needYaml();
+      const s = state(c.schema);
+      const m = s.messages.find((x) => 'message:' + x.name === c.target);
+      T.ok(m, 'message not found in the imported schema');
+      const r = D.decodeMessage(s, m, bytes(c.hex));
+      const fr = r.items.find((x) => x.type === 'frame');
+      T.ok(fr && !fr.errors.length, 'decode errors: ' + (fr ? fr.errors.join('; ') : 'no frame'));
+      T.eq(G.printer.frame(s, fr, 'multi'), c.multi, 'multi-line print');
+      T.eq(G.printer.frame(s, fr, 'single'), c.single, 'single-line print');
+    });
+  });
+
+  // ---- noisy streams: the same valid frames, in order, with the same values --------------------------
+  data.crossref.streams.forEach((c, i) => {
+    T.test(`stream ${c.schema} ${c.target} #${i}`, () => {
+      needYaml();
+      const s = state(c.schema);
+      const p = s.protocols.find((x) => 'protocol:' + x.name === c.target);
+      T.ok(p, 'protocol not found in the imported schema');
+      const r = D.decodeProtocol(s, p, bytes(c.hex));
+      const valid = r.items.filter((x) => x.type === 'frame' && !x.errors.length);
+      T.eqList(valid.map((f) => G.printer.frame(s, f, 'multi')), c.frames, 'valid frames (gmp::print text)');
+    });
+  });
+
+  // ---- every schema: validation and YAML import -> export ---------------------------------------------
+  const exported = {};
+  for (const r of data.roundtrip) {
+    T.test(`validate ${r.path}`, () => {
+      needYaml();
+      const errors = G.validate(G.fromYaml(r.yaml)).filter((x) => x.level === 'error');
+      T.eq(errors.map((e) => `${e.where}: ${e.msg}`).join('; '), '', 'Studio reports errors for a schema gmpc accepts');
+    });
+    T.test(`yaml export ${r.path}`, () => {
+      needYaml();
+      const once = G.toYaml(G.fromYaml(r.yaml));
+      const twice = G.toYaml(G.fromYaml(once));
+      T.eq(twice, once, 'export is not stable (import of the export changes it)');
+      exported[r.path] = once;
+    });
+  }
+  T.output('roundtrip', exported);
+  T.run();
+})();
+</script>
+</body></html>

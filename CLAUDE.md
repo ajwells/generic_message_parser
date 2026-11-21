@@ -7,6 +7,7 @@ sections that changed.
 Essentials:
 - Build and test: `cmake --build build && ctest --test-dir build` (with the CLion MinGW/Ninja/CMake on PATH; see the log).
 - After an intentional generator change: `GMP_UPDATE_GOLDEN=1 ctest --test-dir build -R golden`.
+- Studio changes are covered by `ctest --test-dir build -R studio` (headless Edge; see `tools/schema-studio/tests/README.md`).
 - A feature is complete when generator, runtime, Studio (`tools/schema-studio`), docs (`README.md`, `docs/schema.md`)
   and tests all cover it; refresh the AI skill with `py skills/gmp/build_references.py`.
 - This directory is a git repository (branch `master`). Commit only when asked.

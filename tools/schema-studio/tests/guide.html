@@ -1,0 +1,42 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Studio guide test</title></head>
+<body style="margin:0">
+<pre id="result">running</pre>
+<iframe id="guide" style="width:1400px;height:1000px;border:0"></iframe>
+<script src="lib.js"></script>
+<script>
+// Renders guide.html in a frame: every section, every live demo (real schemas decoded by the Studio code).
+(async () => {
+  const frame = document.getElementById('guide');
+  await new Promise((resolve) => {
+    frame.onload = resolve;
+    frame.src = '../guide.html';
+  });
+  const d = frame.contentDocument, w = frame.contentWindow;
+  const errors = [];
+  w.addEventListener('error', (e) => errors.push(e.message));
+
+  T.test('sections render', async () => {
+    await T.until(() => d.querySelectorAll('section').length > 0, 5000, 'sections');
+    const ids = Array.from(d.querySelectorAll('section[id]')).map((s) => s.id);
+    T.ok(ids.length >= 14, `${ids.length} sections: ${ids.join(', ')}`);
+    for (const id of ['overview', 'types', 'values', 'framing', 'escaping', 'text', 'streaming', 'printing', 'cpp'])
+      T.ok(ids.includes(id), `section ${id}`);
+  });
+
+  T.test('live demos load and decode', async () => {
+    const demos = () => Array.from(d.querySelectorAll('[data-demo]'));
+    await T.until(() => demos().length && demos().every((el) => el.querySelector('.g-demo-head, .callout')), 10000, 'demos');
+    const failed = demos().filter((el) => el.querySelector('.callout.bad'));
+    if (failed.length && failed.every((el) => /YAML parser|internet/i.test(el.textContent))) T.skip('js-yaml could not be loaded from cdnjs (offline?)');
+    T.eq(failed.map((el) => `${el.dataset.demo}: ${el.textContent.trim().slice(0, 120)}`).join('\n'), '', 'demos that failed');
+    T.ok(demos().length >= 10, `${demos().length} demos`);
+    T.ok(d.querySelectorAll('.frame-card').length >= 10, 'decoded frames');
+    T.ok(d.querySelectorAll('.print-out').length >= 2, 'printing demo output');
+    T.eq(errors.join('\n'), '', 'JavaScript errors');
+  });
+
+  T.run();
+})();
+</script>
+</body></html>

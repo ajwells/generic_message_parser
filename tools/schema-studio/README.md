@@ -88,3 +88,15 @@ them.
 Inputs carry `data-path` attributes pointing into the state object, and `app.js` applies edits generically. To expose
 a new schema option, add it to the constructor in `state.js`, a control in `editor.js`, and emit/import logic in
 `yaml.js`. Add its tooltip to `js/tips.js` too.
+
+## Tests
+
+`tests/` holds headless browser tests:
+- unit checks of the decoder and printer
+- a cross-check against the generated C++ (checksums, decoded values as `gmp::print` text, noisy streams)
+- validation and YAML export of every schema in the repository; with `gmpc`, each export must generate identical C++
+- a UI smoke test (every outline item, field editor and tab, and a tooltip on every control)
+- the Guide
+
+They run in `ctest` as `gmp_studio_tests`. See [tests/README.md](tests/README.md). Run them after changing any
+Studio file: a new editor control without a tooltip, or a YAML option that doesn't round-trip, fails the suite.

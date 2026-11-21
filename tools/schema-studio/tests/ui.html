@@ -1,0 +1,115 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Studio UI smoke test</title></head>
+<body style="margin:0">
+<pre id="result">running</pre>
+<iframe id="app" style="width:1500px;height:1000px;border:0"></iframe>
+<script src="lib.js"></script>
+<script>
+// Drives index.html in a frame: example schema, outline, field editors, tooltips, tabs, decode tester, print view.
+// Run with a fresh browser profile (run_tests.py does this) so no saved state interferes.
+(async () => {
+  const frame = document.getElementById('app');
+  const errors = [];
+  let w, d, G;
+  const left = () => d.getElementById('left-pane');
+  const click = async (el) => { el.click(); await T.sleep(30); };
+  const noErrors = (what) => T.eq(errors.join('\n'), '', `JavaScript errors ${what}`);
+
+  try { localStorage.clear(); } catch (_) { /* file:// storage may be unavailable */ }
+  await new Promise((resolve) => {
+    frame.onload = resolve;
+    frame.src = '../index.html?example';
+  });
+  w = frame.contentWindow;
+  d = frame.contentDocument;
+  G = w.GMP;
+  w.addEventListener('error', (e) => errors.push(e.message));
+  w.addEventListener('unhandledrejection', (e) => errors.push(String(e.reason)));
+
+  T.test('example schema loads without issues', async () => {
+    await T.until(() => d.getElementById('issues').textContent.trim(), 5000, 'issues bar');
+    T.ok(d.getElementById('issues').textContent.includes('No problems found'), d.getElementById('issues').textContent);
+    T.ok(left().querySelectorAll('[data-action=select][data-uid]').length >= 5, 'outline items');
+  });
+
+  T.test('every outline item and field editor renders; every control has a tooltip', async () => {
+    const missing = new Set();
+    let controls = 0, items = 0, fields = 0;
+    const checkControls = () => {
+      for (const el of left().querySelectorAll('input[data-path], select[data-path], textarea[data-path]')) {
+        controls++;
+        if (!G.tipFor(el)) missing.add(G.tipKey(el.dataset.path));
+      }
+    };
+    const chips = () => Array.from(left().querySelectorAll('[data-action=select]'));
+    const n = chips().length;
+    for (let i = 0; i < n; i++) {
+      await click(chips()[i]);
+      items++;
+      T.ok(left().textContent.trim().length > 0, `editor empty after selecting item ${i}`);
+      checkControls();
+      const heads = () => Array.from(left().querySelectorAll('[data-action=toggleField]'));
+      const nf = heads().length;
+      for (let k = 0; k < nf; k++) {
+        const h = heads()[k];
+        if (!h.closest('.frow').classList.contains('open')) await click(h);
+        fields++;
+        checkControls();
+      }
+    }
+    noErrors('while selecting items');
+    T.ok(items >= 5 && fields >= 5 && controls > 50, `visited ${items} items, ${fields} fields, ${controls} controls`);
+    T.eq([...missing].sort().join(', '), '', 'controls without a tooltip');
+  });
+
+  T.test('tabs render: layout cards, YAML, decode tester', async () => {
+    const tab = (name) => d.querySelector(`.tab[data-tab="${name}"]`);
+    await click(tab('layout'));
+    T.ok(d.querySelectorAll('#tab-layout .card, #tab-layout [class*=card]').length > 0, 'layout cards');
+    await click(tab('yaml'));
+    T.ok(d.getElementById('tab-yaml').textContent.includes('schema_version: 1'), 'YAML text');
+    await click(tab('decode'));
+    T.ok(d.getElementById('decode-input'), 'decode input');
+    noErrors('while switching tabs');
+  });
+
+  T.test('decode tester: example input, Fields / Print / One line views', async () => {
+    const ex = d.querySelector('[data-action=decodeExample]');
+    T.ok(ex, 'Example input button');
+    await click(ex);
+    await T.until(() => d.querySelectorAll('.frame-card').length > 0, 3000, 'frame cards');
+    T.ok(d.querySelector('.frame-card.bad'), 'the example has a corrupted frame');
+    T.ok(d.querySelector('.dtable'), 'field table');
+    const view = (v) => d.querySelector(`#decode-view button[data-view="${v}"]`);
+    await click(view('print'));
+    const multi = Array.from(d.querySelectorAll('.print-out')).map((p) => p.textContent);
+    T.ok(multi.length >= 2 && multi[0].includes('\n  '), 'multi-line print output');
+    T.ok(d.querySelector('.frame-card.bad .frame-note'), 'a corrupted frame explains why nothing is printed');
+    await click(view('line'));
+    const single = Array.from(d.querySelectorAll('.print-out')).map((p) => p.textContent);
+    T.eq(single.length, multi.length, 'same frames in both styles');
+    T.ok(single.every((t) => !t.includes('\n')), 'single-line output');
+    await click(view('fields'));
+    T.ok(d.querySelector('.dtable') && !d.querySelector('.print-out'), 'back to the field table');
+    noErrors('in the decode tester');
+  });
+
+  T.test('every decode target renders', async () => {
+    const sel = d.getElementById('decode-target');
+    T.ok(sel, 'target select');
+    const values = Array.from(sel.options).map((o) => o.value);
+    for (const v of values) {
+      const s = d.getElementById('decode-target');
+      s.value = v;
+      s.dispatchEvent(new w.Event('change', { bubbles: true }));
+      await T.sleep(30);
+      T.ok(!d.querySelector('#decode-results .callout.bad') || !/Decoder error/.test(d.getElementById('decode-results').textContent),
+           `decoder error for ${v}`);
+    }
+    noErrors('while switching decode targets');
+  });
+
+  T.run();
+})();
+</script>
+</body></html>

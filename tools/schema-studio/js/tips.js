@@ -94,7 +94,7 @@
     'field.crc': { t: 'Field CRC', k: 'crc', d: 'A checksum stored right after this value (e.g. Sensirion word CRCs). Verified on decode (BadChecksum) and written on encode.' },
     'field.scale': { t: 'Scale', k: 'scale', d: 'Engineering value = raw × scale + offset. Generates <name>_scaled() and set_<name>_scaled(); the raw value is still available.' },
     'field.offset': { t: 'Offset', k: 'offset', d: 'Added after scaling: value = raw × scale + offset.' },
-    'field.unit': { t: 'Unit', k: 'unit', d: 'Documentation only: shown in comments and in the decode tester.' },
+    'field.unit': { t: 'Unit', k: 'unit', d: 'Label for the value: shown in comments, the decode tester and gmp::print output (after the scaled value, or after the raw value when there is no scale). Does not change decoding.' },
     'field.base': { t: 'Number base', k: 'base', d: 'Text integers: decimal or hexadecimal digits.', v: { '': 'Decimal digits.', 16: 'Hexadecimal digits (A–F, either case on decode).' } },
     'field.width': { t: 'Width', k: 'width', d: 'Text: minimum digits on encode, zero padded (e.g. 2 → "07").' },
     'field.precision': { t: 'Precision', k: 'precision', d: 'Text floats: decimals written on encode. Empty = shortest exact form.' },
@@ -113,7 +113,7 @@
     'conv.name': { t: 'Conversion name', k: 'conversions.<name>', d: 'Adds <field>_<name>() and set_<field>_<name>(), e.g. temperature_degf().' },
     'conv.scale': { t: 'Scale', k: 'scale', d: 'value = raw × scale + offset, applied to the raw field value.' },
     'conv.offset': { t: 'Offset', k: 'offset', d: 'Added after scaling.' },
-    'conv.unit': { t: 'Unit', k: 'unit', d: 'Documentation only.' },
+    'conv.unit': { t: 'Unit', k: 'unit', d: 'Label for the converted value: shown in comments, the decode tester and gmp::print output.' },
 
     'bit.name': { t: 'Bit field name', k: 'bits[].name', d: 'Accessor / member name of this bit field.' },
     'bit.bits': { t: 'Bits', k: 'bits', d: 'Width in bits. The whole group must add up to whole bytes.' },
@@ -125,7 +125,7 @@
     'computed.type': { t: 'Type', k: 'type', d: 'C++ type of the computed value.' },
     'computed.value': { t: 'Value', k: 'value', d: 'Expression over fields, e.g. (serial_high << 16) | serial_low.' },
     'computed.set': { t: 'Setter', k: 'set', d: 'Optional "field = expr over value; …". Without it, a setter is derived automatically for shift / | / + packing of unsigned fields.' },
-    'computed.unit': { t: 'Unit', k: 'unit', d: 'Documentation only.' },
+    'computed.unit': { t: 'Unit', k: 'unit', d: 'Label for the computed value: shown in comments, the decode tester and gmp::print output.' },
 
     // ---------------------------------------------------------------- protocols
     'protocol.name': { t: 'Protocol name', k: 'protocols.<Name>', d: 'Generates struct <Name> with parse(), decode(), encode() and a Stream<> parser for byte streams.' },

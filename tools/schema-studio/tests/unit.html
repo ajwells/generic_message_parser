@@ -1,0 +1,74 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Studio unit tests</title></head>
+<body>
+<pre id="result">running</pre>
+<script src="lib.js"></script>
+<script src="../js/state.js"></script>
+<script src="../js/layout.js"></script>
+<script src="../js/validate.js"></script>
+<script src="../js/yaml.js"></script>
+<script src="../js/decoder.js"></script>
+<script src="../js/print.js"></script>
+<script>
+// Pure JS checks: no schema import (no network needed).
+const G = window.GMP, D = G.decoder;
+const arr = (u8) => Array.from(u8);
+
+T.test('parseHex: separators, 0x prefixes and comments', () => {
+  const r = D.parseHex('AA 55,0x01 # comment\n02\t0f');
+  T.ok(!r.error, r.error);
+  T.eqList(arr(r.bytes), [0xAA, 0x55, 0x01, 0x02, 0x0F], 'bytes');
+});
+T.test('parseHex: errors', () => {
+  T.ok(/odd number/.test(D.parseHex('ABC').error || ''), 'odd digit count');
+  T.ok(/not hex/.test(D.parseHex('ZZ').error || ''), 'bad token');
+  T.eq(D.parseHex('   ').bytes.length, 0, 'empty input');
+});
+T.test('parseText: escapes', () => {
+  const r = D.parseText('a\\r\\n\\t\\x41');
+  T.ok(!r.error, r.error);
+  T.eqList(arr(r.bytes), [0x61, 0x0D, 0x0A, 0x09, 0x41], 'bytes');
+});
+T.test('evalExpr: precedence, shifts, comparisons, references', () => {
+  const env = { a: 1, b: 2, x: 3, y: 0 };
+  const look = (r) => env[r];
+  T.eq(D.evalExpr('1 + 2 * 3', look), 7);
+  T.eq(D.evalExpr('(a << 16) | b', look), 65538);
+  T.eq(D.evalExpr('x == 3 && y != 0', look), 0);
+  T.eq(D.evalExpr('x == 3 || y != 0', look), 1);
+  T.eq(D.evalExpr('(x - 1) * 4 >> 1', look), 4);
+});
+T.test('integer literals', () => {
+  T.eq(G.parseInt('0x10'), 16);
+  T.eq(G.parseInt('42'), 42);
+  T.ok(G.isInt('0b101') || G.isInt('5'), 'isInt');
+  T.ok(!G.isInt('abc'), 'not an int');
+});
+T.test('printer number formatting matches std::to_chars', () => {
+  const P = G.printer;
+  const cases = [
+    [P.fmtGeneral(12.34, 9), '12.34'], [P.fmtGeneral(1e-5, 9), '1e-05'], [P.fmtGeneral(123456789012, 9), '1.23456789e+11'],
+    [P.fmtGeneral(0.30000000000000004, 9), '0.3'], [P.fmtGeneral(-0, 9), '-0'],
+    [P.fmtShortest(Math.fround(0.9), true), '0.9'], [P.fmtShortest(1e20, false), '1e+20'],
+    [P.fmtShortest(123456, false), '123456'], [P.fmtShortest(0.0001, false), '1e-04'], [P.fmtShortest(0.001, false), '0.001'],
+    [P.fmtShortest(1234567e10, false), '1.234567e+16'], [P.fmtShortest(1e-7, false), '1e-07'], [P.fmtShortest(-2.5, false), '-2.5'],
+    [P.fmtShortest(NaN, false), 'nan'], [P.fmtShortest(-Infinity, false), '-inf'],
+  ];
+  cases.forEach(([a, b], i) => T.eq(a, b, `case ${i}`));
+});
+T.test('example schema validates and decodes its example input', () => {
+  const s = G.exampleState();
+  const errors = G.validate(s).filter((i) => i.level === 'error');
+  T.eq(errors.length, 0, 'validation errors: ' + errors.map((e) => e.msg).join('; '));
+  const p = s.protocols.find((x) => x.name === 'Link');
+  T.ok(p, 'Link protocol');
+  const input = D.exampleInput(s, 'protocol:Link');
+  const r = D.decodeProtocol(s, p, D.parseHex(input).bytes);
+  const frames = r.items.filter((i) => i.type === 'frame');
+  T.ok(frames.length >= 3, 'frames found');
+  T.ok(frames.some((f) => f.errors.length), 'the example contains a corrupted frame');
+  T.ok(r.items.some((i) => i.type === 'garbage'), 'the example contains noise');
+});
+T.run();
+</script>
+</body></html>

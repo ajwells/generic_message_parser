@@ -38,3 +38,20 @@ target_compile_options(gmp_embedded_profile PRIVATE
         $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti -Wall -Wextra -Werror>)
 target_link_options(gmp_embedded_profile PRIVATE ${GMP_STATIC_LINK})
 add_test(NAME gmp_embedded_profile COMMAND gmp_embedded_profile)
+
+# Reference data for the Schema Studio cross-check (tools/schema-studio/tests): frames and gmp::print output.
+add_executable(gmp_studio_crossref ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/schema-studio/tests/crossref.cpp)
+target_link_libraries(gmp_studio_crossref PRIVATE gmp_test_schemas)
+target_link_options(gmp_studio_crossref PRIVATE ${GMP_STATIC_LINK})
+
+# Schema Studio tests (tools/schema-studio/tests): run in headless Edge / Chrome / Chromium.
+# Reported as skipped (exit code 77) when no browser is found; tests needing js-yaml (cdnjs) skip when offline.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if (Python3_Interpreter_FOUND AND TARGET gmpc)
+    add_test(NAME gmp_studio_tests
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/schema-studio/tests/run_tests.py
+            --gmpc $<TARGET_FILE:gmpc> --crossref $<TARGET_FILE:gmp_studio_crossref>)
+    set_tests_properties(gmp_studio_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+else ()
+    message(STATUS "GMP: Python 3 not found, Schema Studio tests are not registered")
+endif ()
