@@ -18,7 +18,7 @@ describes **existing** protocols: binary or ASCII, any framing, any bit layout. 
   - [Top level](#top-level) · [defaults](#defaults) · [enums](#enums) · [messages](#messages) · [fields](#fields)
   - [bit fields](#bit-fields) · [lengths and counts](#lengths-and-counts) · [expressions](#expressions)
   - [text messages](#text-messages) · [protocols](#protocols) · [framing](#framing) · [checksum](#checksum)
-  - [dispatch](#dispatch) · [custom extensions](#custom-extensions)
+  - [message_type](#message_type) · [custom extensions](#custom-extensions)
 - [Generated C++ API](#generated-c-api) · [Streaming](#streaming) · [Errors](#errors)
 - [Building](#building) · [CMake integration](#cmake-integration) · [gmpc command line](#gmpc-command-line)
 - [Project layout](#project-layout) · [Adding a language backend](#adding-a-language-backend)
@@ -33,7 +33,7 @@ schema_version: 1
 namespace: demo
 messages:
   Status:
-    id: 1
+    type_id: 1
     fields:
       - { name: voltage, type: u16, scale: 0.001, unit: V }
       - { name: count, type: u8 }
@@ -43,7 +43,7 @@ protocols:
     header: [ { name: id, type: u8 }, { name: len, type: u16 } ]
     framing: { type: length_prefixed, sync: [0xAA, 0x55], length: { field: len } }
     checksum: { algo: crc16_ccitt }
-    dispatch: { field: id }
+    message_type: { field: id }
     messages: [Status]
 ```
 
@@ -97,7 +97,7 @@ generating code.
   A protocol says:
   - how frames are delimited (**framing**)
   - how they are validated (**checksum**)
-  - how the message type is chosen (**dispatch**)
+  - how the message type is chosen (**message_type**)
 
 - **Enums** and **custom** types/checksums/framers are shared building blocks.
 
@@ -149,7 +149,7 @@ enums:
 - Generates `enum class Mode : std::uint8_t` and `constexpr std::string_view to_string(Mode)`. `to_string`
   returns an empty string for unlisted values.
 - Values that are not listed still decode; the enum simply holds the raw number.
-- Enum constants can be used in expressions as `Mode.fault`, and as message `id`s when dispatching on an enum header
+- Enum constants can be used in expressions as `Mode.fault`, and as `type_id` values when `message_type` reads an enum header
   field.
 
 ### messages
@@ -157,7 +157,7 @@ enums:
 ```yaml
 messages:
   Status:
-    id: 1
+    type_id: 1
     format: binary
     endian: big
     bit_order: msb_first
@@ -169,12 +169,12 @@ messages:
 
 | key | description |
 |-----|-------------|
-| `id` | Value used by a protocol's [dispatch](#dispatch) to recognise this message. An unquoted number is an integer (`1`, `0x10`). Anything else is a string (`GPGGA`, or `"1"` quoted), which is either a text token or the name of an enum value. Only needed when the message is in a protocol that dispatches. |
+| `type_id` | Value a protocol's [message_type](#message_type) field or token must have for a frame to be this message. An unquoted number is an integer (`1`, `0x10`). Anything else is a string (`GPGGA`, or `"1"` quoted), which is either a text token or the name of an enum value. Only needed when the message is in a protocol with `message_type`. |
 | `format` | `binary` or `text`. Text messages are parsed from separator-delimited tokens (see [text messages](#text-messages)). |
 | `endian` | Default byte order for this message's fields. |
 | `bit_order` | Default bit order for this message's `bits` groups. |
 | `separator` | Text field separator. Must match the protocol's separator if used in a protocol. |
-| `access` | `view` generates only the zero-copy `MView` class, `struct` generates only the eager `struct M`, and `both` (the default) generates both. Messages used by a protocol need `view` (dispatch uses views). A nested message must support every access style its parent uses. |
+| `access` | `view` generates only the zero-copy `MView` class, `struct` generates only the eager `struct M`, and `both` (the default) generates both. Messages used by a protocol need `view` (message selection uses views). A nested message must support every access style its parent uses. |
 | `doc` | Documentation comment for the generated types. |
 | `fields` | Ordered list of fields. On the wire they appear in exactly this order. |
 
@@ -316,7 +316,7 @@ Text messages (`format: text`) are records of tokens separated by `separator`, l
 messages:
   GGA:
     format: text
-    id: GPGGA
+    type_id: GPGGA
     fields:
       - { name: utc_time, type: f64, precision: 2 }
       - { name: latitude, type: f64, optional: true }
@@ -350,7 +350,7 @@ protocols:
       - { name: len, type: u16 }
     framing: { ... }
     checksum: { ... }
-    dispatch: { field: msg_id }
+    message_type: { field: msg_id }
     messages: [Status, Command]
 ```
 
@@ -362,7 +362,7 @@ protocols:
 | `header` | Binary only. Fixed-size fields between the prefix and the body, using the same syntax as message fields (no `when`, no variable sizes). Typically holds the message id, a length and flags. Generated as a message `<Protocol>Header` / `<Protocol>HeaderView`. `const` header fields (protocol version, address) are validated and written automatically. |
 | `framing` | How frames are found in the byte stream (below). Default `none`. |
 | `checksum` | Optional integrity check (below). |
-| `dispatch` | How the message type is chosen (below). |
+| `message_type` | How the message type is chosen (below). |
 | `messages` | Names of the messages this protocol carries. |
 
 ### framing
@@ -436,18 +436,18 @@ Any other CRC can be defined inline using the Rocksoft model parameters:
 algo: { crc: { width: 8, poly: 0x1D, init: 0xFF, refin: false, refout: false, xorout: 0xFF } }
 ```
 
-### dispatch
+### message_type
 
-`dispatch` tells a protocol which message type a frame contains, after framing and checksum checks pass.
+`message_type` tells a protocol which message type a frame contains, after framing and checksum checks pass.
 
 | form | use | behaviour |
 |------|-----|-----------|
-| `dispatch: { field: msg_id }` | binary | Reads the named **header field** (integer or enum) and selects the message whose `id` equals it. Ids may be integers, or enum value names when the field is an enum. On encode the field is set from the message being encoded. |
-| `dispatch: { token: 0 }` | text | The first token of the record (e.g. `GPGGA`) is compared with each message's `id`. The message's fields start **after** that token, and encode writes it automatically. Only token 0 is supported. |
+| `message_type: { field: msg_id }` | binary | Reads the named **header field** (integer or enum) and selects the message whose `type_id` equals it. Type ids may be integers, or enum value names when the field is an enum. On encode the field is set from the message being encoded. |
+| `message_type: { token: 0 }` | text | The first token of the record (e.g. `GPGGA`) is compared with each message's `type_id`. The message's fields start **after** that token, and encode writes it automatically. Only token 0 is supported. |
 | *(omitted)* | either | Allowed only when the protocol has exactly one message; every frame is that message. |
 
-- Ids must be unique within a protocol.
-- A frame with an unrecognised id fails with `UnknownId`. In streaming mode it is reported to your `FrameError`
+- `type_id` values must be unique within a protocol.
+- A frame with an unrecognised type id fails with `UnknownType`. In streaming mode it is reported to your `FrameError`
   handler.
 - `parse()` returns a `std::variant` of the possible views (`AnyView`). Stream handlers are called with whichever
   overload matches; message types the handler does not accept are ignored.
@@ -552,13 +552,13 @@ Fixed-layout messages use compile-time offsets. Messages with variable fields co
 | `Header`, `HeaderView` | Header struct / view (binary protocols with a header). |
 | `AnyView` | `std::variant` of all message views. |
 | `AnyMessage` | `std::variant` of all message structs (when every message has a struct). |
-| `static Result<AnyView> parse(buffer)` | Whole-buffer mode: find one frame at the start of `buffer`, validate it, dispatch. |
+| `static Result<AnyView> parse(buffer)` | Whole-buffer mode: find one frame at the start of `buffer`, validate it, select the message type. |
 | `static Result<AnyMessage> decode(buffer)` | `parse` followed by `to_struct()`. |
 | `static Result<size_t> encode(const M&, mut_bytes out)` | Build a complete frame: prefix, header (id and length filled in), body, padding, checksum, escaping, suffix. One overload per message. |
 | `static Result<size_t> encode(Header, const M&, mut_bytes)` | Same, with explicit values for the other header fields. |
 | `static Result<size_t> encode(const AnyMessage&, mut_bytes)` | Encode whichever message the variant holds. |
 | `template <size_t Cap = max_frame> using Stream` | The stream parser for this protocol (see [Streaming](#streaming)). |
-| `scan`, `open`, `visit_frame`, `dispatch`, `process` | Building blocks. `scan` finds a frame boundary. `open` validates a frame and splits it into `Frame{header, id, body}`. `visit_frame`/`dispatch` select the message. `process` is the hook used by the stream parser. |
+| `scan`, `open`, `visit_frame`, `select_message`, `process` | Building blocks. `scan` finds a frame boundary. `open` validates a frame and splits it into `Frame{header, body}` (binary) or `Frame{type_id, body}` (text, where `type_id` is the first token). `visit_frame`/`select_message` pick the message type. `process` is the hook used by the stream parser. |
 
 ---
 
@@ -603,7 +603,7 @@ readable name.
 | `BadDelimiter` | A new start delimiter appeared inside a frame. |
 | `BadConst` | A `const` field or bit field did not match. |
 | `OutOfRange` | Data exceeds a container's `max`, or a value does not fit. |
-| `UnknownId` | No message matches the dispatch id. |
+| `UnknownType` | No message has the frame's `type_id`. |
 | `BufferFull` | Output buffer too small, or stream buffer full without a frame. |
 | `ParseError` | A text token is not a valid number/character. |
 | `MissingField` | A required text token is empty, or a conditional field's optional is empty on encode. |

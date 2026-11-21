@@ -3,7 +3,7 @@
 A local web app for building GMP YAML schemas visually.
 
 - **Left pane:** every schema option. This covers settings and defaults, messages and their fields (including bit
-  fields), protocols (header, framing, checksum, dispatch, carried messages), enums, and custom extensions.
+  fields), protocols (header, framing, checksum, message_type, carried messages), enums, and custom extensions.
 - **Right pane:** a vertical, size-proportional picture of each message and protocol frame. It shows byte offsets, bit
   layouts, nested messages, conditional and variable-length fields, plus side bars marking checksum and length-field
   coverage. Click any block to edit that field.
@@ -14,7 +14,7 @@ A local web app for building GMP YAML schemas visually.
 
 ## Decode tester
 
-1. Pick what to decode as: a protocol (frames, checksum, dispatch) or a single message (no framing).
+1. Pick what to decode as: a protocol (frames, checksum, message_type) or a single message (no framing).
 2. Paste the input:
    - **Hex bytes:** spaces, commas and `0x` are optional, and `#` starts a comment.
    - **Text:** escapes `\r \n \t \xHH` are supported. The **Newlines** option maps line breaks to `\r\n`, `\n`, or
@@ -33,7 +33,7 @@ A local web app for building GMP YAML schemas visually.
    - Hovering a field highlights its bytes, and hovering a byte highlights its field.
 
 The decoder (`js/decoder.js`) mirrors the C++ runtime: the same framers (fixed, length-prefixed, delimited with HDLC
-or SLIP escaping), checksums, dispatch rules, and stream resynchronisation after bad frames. Frames encoded by the
+or SLIP escaping), checksums, message_type selection, and stream resynchronisation after bad frames. Frames encoded by the
 generated C++ code decode to the same values.
 
 Not executed in the browser:
@@ -63,7 +63,7 @@ them.
 |------|------|
 | `js/state.js` | data model, constructors, example schema, persistence, byte-pattern helpers |
 | `js/layout.js` | size / offset computation (mirrors `generator/src/ir/lowering.cpp`) |
-| `js/decoder.js` | DOM-free decoder: framers, escaping, checksums, dispatch, binary + text fields (mirrors `runtime/include/gmp`) |
+| `js/decoder.js` | DOM-free decoder: framers, escaping, checksums, message_type, binary + text fields (mirrors `runtime/include/gmp`) |
 | `js/decode-view.js` | decode tester tab rendering |
 | `js/validate.js` | client-side diagnostics |
 | `js/yaml.js` | YAML emitter (no dependency) and importer (js-yaml) |

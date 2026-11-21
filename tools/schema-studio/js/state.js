@@ -36,7 +36,7 @@ window.GMP = window.GMP || {};
   G.newBit = (over = {}) => ({ uid: G.uid(), name: '', bits: '1', type: '', const: '', scale: '', offset: '', pad: false, doc: '', ...over });
 
   G.newMessage = (over = {}) => ({
-    uid: G.uid(), name: 'Message', id: '', format: '', endian: '', bit_order: '', separator: '', access: '', doc: '',
+    uid: G.uid(), name: 'Message', type_id: '', format: '', endian: '', bit_order: '', separator: '', access: '', doc: '',
     fields: [], ...over,
   });
 
@@ -52,7 +52,7 @@ window.GMP = window.GMP || {};
       enabled: false, algo: 'crc16_ccitt', covers: 'header_body', endian: '', separator: '*', required: true,
       crc: { width: '16', poly: '0x1021', init: '0xFFFF', refin: false, refout: false, xorout: '0x0' },
     },
-    dispatch: { kind: 'none', field: '', token: '0' },
+    message_type: { kind: 'none', field: '', token: '0' },
     messages: [],
     ...over,
   });
@@ -92,7 +92,7 @@ window.GMP = window.GMP || {};
       ],
     }));
     s.messages.push(G.newMessage({
-      name: 'Status', id: 'status', doc: 'Periodic status report.', fields: [
+      name: 'Status', type_id: 'status', doc: 'Periodic status report.', fields: [
         G.newField({ name: 'magic', type: 'u8', const: '0x5A' }),
         G.newField({ name: 'uptime_s', type: 'u32', unit: 's' }),
         G.newField({ name: 'voltage', type: 'u16', scale: '0.001', unit: 'V' }),
@@ -109,14 +109,14 @@ window.GMP = window.GMP || {};
       ],
     }));
     s.messages.push(G.newMessage({
-      name: 'Samples', id: 'samples', fields: [
+      name: 'Samples', type_id: 'samples', fields: [
         G.newField({ name: 'channel', type: 'u8' }),
         G.newField({ name: 'count', type: 'u8' }),
         G.newField({ name: 'values', type: 'array', of: 'i16', lenMode: 'expr', lenValue: 'count', max: '64' }),
       ],
     }));
     s.messages.push(G.newMessage({
-      name: 'GGA', id: 'GPGGA', format: 'text', doc: 'NMEA fix data.', fields: [
+      name: 'GGA', type_id: 'GPGGA', format: 'text', doc: 'NMEA fix data.', fields: [
         G.newField({ name: 'utc_time', type: 'f64', precision: '2' }),
         G.newField({ name: 'latitude', type: 'f64', precision: '4', optional: true }),
         G.newField({ name: 'lat_hemi', type: 'char', optional: true }),
@@ -131,13 +131,13 @@ window.GMP = window.GMP || {};
     link.header = [G.newField({ name: 'id', type: 'MsgId' }), G.newField({ name: 'length', type: 'u16' })];
     Object.assign(link.framing, { type: 'length_prefixed', sync: 'AA 55', lengthField: 'length', covers: 'body' });
     Object.assign(link.checksum, { enabled: true, algo: 'crc16_ccitt', covers: 'header_body' });
-    link.dispatch = { kind: 'field', field: 'id', token: '0' };
+    link.message_type = { kind: 'field', field: 'id', token: '0' };
     s.protocols.push(link);
 
     const nmea = G.newProtocol({ name: 'Nmea', format: 'text', messages: ['GGA'] });
     Object.assign(nmea.framing, { type: 'delimited', syncMode: 'text', sync: '$', endMode: 'text', end: '\\r\\n', maxFrame: '82' });
     Object.assign(nmea.checksum, { enabled: true, algo: 'xor8', separator: '*', required: true });
-    nmea.dispatch = { kind: 'token', field: '', token: '0' };
+    nmea.message_type = { kind: 'token', field: '', token: '0' };
     s.protocols.push(nmea);
     return s;
   };
@@ -239,13 +239,28 @@ window.GMP = window.GMP || {};
   // persistence
   // ----------------------------------------------------------------------------------------------
   const KEY = 'gmp-schema-studio-v1';
+  /** Upgrade state saved by older versions: `dispatch` -> `message_type`, message `id` -> `type_id`. */
+  G.migrate = (s) => {
+    (s.messages || []).forEach((m) => {
+      if (m.type_id === undefined) m.type_id = m.id ?? '';
+      delete m.id;
+    });
+    (s.protocols || []).forEach((p) => {
+      if (!p.message_type) p.message_type = p.dispatch || { kind: 'none', field: '', token: '0' };
+      delete p.dispatch;
+    });
+    return s;
+  };
+
   G.save = (s) => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (_) { /* private mode etc. */ } };
   G.load = () => {
     try {
       const raw = localStorage.getItem(KEY);
       if (!raw) return null;
       const s = JSON.parse(raw);
-      return s && s.version === 1 ? s : null;
+      if (!s || s.version !== 1) return null;
+      G.migrate(s);
+      return s;
     } catch (_) { return null; }
   };
 

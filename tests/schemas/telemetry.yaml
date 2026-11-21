@@ -17,7 +17,7 @@ messages:
       - { name: pressure, type: u32, endian: little }
 
   Status:
-    id: status
+    type_id: status
     doc: Periodic status report.
     fields:
       - { name: magic, type: u8, const: 0x5A }
@@ -35,14 +35,14 @@ messages:
       - { name: label, type: string, length: 8, padding: " " }
 
   Command:
-    id: 2
+    type_id: 2
     fields:
       - { name: opcode, type: u16 }
       - { name: arg_len, type: u8 }
       - { name: args, type: bytes, length: arg_len, max: 32 }
 
   Log:
-    id: 3
+    type_id: 3
     fields:
       - { name: level, type: u8 }
       - { name: text, type: string, terminator: 0, max: 64 }
@@ -59,5 +59,5 @@ protocols:
       length: { field: len, covers: body }
       max_frame: 256
     checksum: { algo: crc16_ccitt, covers: header_body }
-    dispatch: { field: msg_id }
+    message_type: { field: msg_id }
     messages: [Status, Command, Log]

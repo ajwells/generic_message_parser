@@ -323,9 +323,9 @@
       const p = G.getPath(state, el.dataset.path);
       const n = el.dataset.name;
       p.messages = p.messages.includes(n) ? p.messages.filter((x) => x !== n) : [...p.messages, n];
-      if (p.messages.length > 1 && p.dispatch.kind === 'none') {
-        p.dispatch.kind = G.protoFormat(state, p) === 'text' ? 'token' : 'field';
-        if (p.dispatch.kind === 'field' && !p.dispatch.field && p.header.length) p.dispatch.field = p.header[0].name;
+      if (p.messages.length > 1 && p.message_type.kind === 'none') {
+        p.message_type.kind = G.protoFormat(state, p) === 'text' ? 'token' : 'field';
+        if (p.message_type.kind === 'field' && !p.message_type.field && p.header.length) p.message_type.field = p.header[0].name;
       }
       refresh({ leftToo: true });
     },

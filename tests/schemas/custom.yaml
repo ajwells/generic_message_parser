@@ -12,7 +12,7 @@ custom:
 messages:
   Pos:
     format: text
-    id: POS
+    type_id: POS
     fields:
       - { name: lat, type: nmea_coord }
       - { name: lon, type: nmea_coord, optional: true }
@@ -26,7 +26,7 @@ protocols:
   TextPos:
     format: text
     framing: { type: delimited, end: "\n", max_frame: 64 }
-    dispatch: { token: 0 }
+    message_type: { token: 0 }
     messages: [Pos]
   Custom:
     header: [ { name: n, type: u8 } ]

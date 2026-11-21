@@ -254,7 +254,7 @@ struct Can {
         return f;
     }
 
-    /// Decode the message view selected by the frame's id and pass it to fn(view).
+    /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
     template <class F>
     static gmp::Error visit_frame(const Frame& f, F&& fn) noexcept {
         auto v = EngineDataView::from(f.body);
@@ -263,8 +263,8 @@ struct Can {
         return gmp::Error::None;
     }
 
-    [[nodiscard]] static gmp::Result<AnyView> dispatch(const Frame& f) noexcept {
-        gmp::Result<AnyView> out = gmp::fail(gmp::Error::UnknownId);
+    [[nodiscard]] static gmp::Result<AnyView> select_message(const Frame& f) noexcept {
+        gmp::Result<AnyView> out = gmp::fail(gmp::Error::UnknownType);
         const gmp::Error e = visit_frame(f, [&](const auto& v) { out = AnyView(v); });
         if (e != gmp::Error::None) return gmp::fail(e);
         return out;
@@ -277,7 +277,7 @@ struct Can {
         if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
         if (!f) return gmp::fail(f.error());
-        return dispatch(*f);
+        return select_message(*f);
     }
     /// Parse one frame and decode it into the eager message struct.
     [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::bytes_view buffer) noexcept {
@@ -290,7 +290,7 @@ struct Can {
         }, *v);
     }
 
-    /// StreamParser hook: validate, dispatch and deliver a frame to `handler`.
+    /// StreamParser hook: validate a frame, select its message type and deliver it to `handler`.
     /// The handler is called as handler(header_view, message_view) or handler(message_view),
     /// whichever it accepts; message types it does not accept are ignored.
     template <class H>
@@ -425,7 +425,7 @@ struct FixedLink {
         return f;
     }
 
-    /// Decode the message view selected by the frame's id and pass it to fn(view).
+    /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
     template <class F>
     static gmp::Error visit_frame(const Frame& f, F&& fn) noexcept {
         switch (gmp::to_int(f.header.id())) {
@@ -435,12 +435,12 @@ struct FixedLink {
                 fn(*v);
                 return gmp::Error::None;
             }
-            default: return gmp::Error::UnknownId;
+            default: return gmp::Error::UnknownType;
         }
     }
 
-    [[nodiscard]] static gmp::Result<AnyView> dispatch(const Frame& f) noexcept {
-        gmp::Result<AnyView> out = gmp::fail(gmp::Error::UnknownId);
+    [[nodiscard]] static gmp::Result<AnyView> select_message(const Frame& f) noexcept {
+        gmp::Result<AnyView> out = gmp::fail(gmp::Error::UnknownType);
         const gmp::Error e = visit_frame(f, [&](const auto& v) { out = AnyView(v); });
         if (e != gmp::Error::None) return gmp::fail(e);
         return out;
@@ -453,7 +453,7 @@ struct FixedLink {
         if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
         if (!f) return gmp::fail(f.error());
-        return dispatch(*f);
+        return select_message(*f);
     }
     /// Parse one frame and decode it into the eager message struct.
     [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::bytes_view buffer) noexcept {
@@ -466,7 +466,7 @@ struct FixedLink {
         }, *v);
     }
 
-    /// StreamParser hook: validate, dispatch and deliver a frame to `handler`.
+    /// StreamParser hook: validate a frame, select its message type and deliver it to `handler`.
     /// The handler is called as handler(header_view, message_view) or handler(message_view),
     /// whichever it accepts; message types it does not accept are ignored.
     template <class H>

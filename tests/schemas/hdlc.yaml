@@ -20,14 +20,14 @@ messages:
       - { name: name, type: string, length: name_len, max: 16 }
       - { name: value, type: f32 }
   Batch:
-    id: 0x10
+    type_id: 0x10
     fields:
       - { name: when, type: bcd_time }
       - { name: n, type: u8 }
       - { name: readings, type: array, of: Reading, count: n, max: 8 }
       - { name: crc_in_payload, type: u32, when: "n > 2" }
   Ping:
-    id: 0x11
+    type_id: 0x11
     fields:
       - { name: seq, type: u32 }
       - { name: payload, type: bytes, length: 4 }
@@ -43,7 +43,7 @@ protocols:
       end: [0x7E]
       escape: { char: 0x7D, xor: 0x20 }
     checksum: { algo: crc16_x25, covers: header_body, endian: little }
-    dispatch: { field: kind }
+    message_type: { field: kind }
     messages: [Batch, Ping]
 
   Summed:
@@ -51,5 +51,5 @@ protocols:
       - { name: kind, type: u8 }
     framing: { type: delimited, start: [0xC0], end: [0xC0], escape: { char: 0xDB, map: { 0xC0: 0xDC, 0xDB: 0xDD } } }
     checksum: { algo: add16 }
-    dispatch: { field: kind }
+    message_type: { field: kind }
     messages: [Ping]

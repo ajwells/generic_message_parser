@@ -46,7 +46,7 @@ Values that are not listed still decode; the enum just holds the raw value.
 ```yaml
 messages:
   Status:
-    id: 1                # dispatch id (integer, enum value name, or a string for text protocols)
+    type_id: 1           # value of the protocol's message_type field/token (integer, enum value name, or a string for text protocols)
     format: binary       # or text
     endian: big          # default for this message's fields
     bit_order: msb_first
@@ -151,7 +151,7 @@ protocols:
       - { name: len, type: u16 }
     framing: { ... }
     checksum: { ... }
-    dispatch: { field: msg_id }   # binary: header field. text: { token: 0 }
+    message_type: { field: msg_id }   # binary: header field. text: { token: 0 }
     messages: [Status, Command]
 ```
 

@@ -410,61 +410,61 @@ private:
         }
         if (p.messages.empty()) d_.error(p.loc, "protocol '" + p.name + "' has no messages");
 
-        lower_dispatch(p);
+        lower_message_type(p);
         lower_checksum(p);
         lower_framing(p);
     }
 
-    void lower_dispatch(Protocol& p) {
-        auto& d = p.dispatch;
-        p.ids.clear();
+    void lower_message_type(Protocol& p) {
+        auto& d = p.message_type;
+        p.type_ids.clear();
         switch (d.kind) {
-            case DispatchSpec::Kind::None:
+            case MessageTypeSpec::Kind::None:
                 if (p.messages.size() > 1)
-                    d_.error(p.loc, "protocol '" + p.name + "' has several messages and needs 'dispatch'");
-                p.ids.assign(p.messages.size(), std::monostate{});
+                    d_.error(p.loc, "protocol '" + p.name + "' has several messages and needs 'message_type'");
+                p.type_ids.assign(p.messages.size(), std::monostate{});
                 return;
-            case DispatchSpec::Kind::Token: {
-                if (p.format != Format::Text) { d_.error(d.loc, "dispatch by 'token' requires a text protocol"); return; }
-                if (d.token != 0) d_.error(d.loc, "only token 0 (the first token) is supported for dispatch");
+            case MessageTypeSpec::Kind::Token: {
+                if (p.format != Format::Text) { d_.error(d.loc, "message_type by 'token' requires a text protocol"); return; }
+                if (d.token != 0) d_.error(d.loc, "only token 0 (the first token) is supported for message_type");
                 std::set<std::string> seen;
                 for (const auto* m : p.messages) {
                     std::string id;
-                    if (auto* s = std::get_if<std::string>(&m->id)) id = *s;
-                    else if (auto* i = std::get_if<std::int64_t>(&m->id)) id = std::to_string(*i);
-                    else d_.error(m->loc, "message '" + m->name + "' needs an 'id' for dispatch in '" + p.name + "'");
-                    if (!id.empty() && !seen.insert(id).second) d_.error(m->loc, "duplicate message id '" + id + "'");
-                    p.ids.emplace_back(id);
+                    if (auto* s = std::get_if<std::string>(&m->type_id)) id = *s;
+                    else if (auto* i = std::get_if<std::int64_t>(&m->type_id)) id = std::to_string(*i);
+                    else d_.error(m->loc, "message '" + m->name + "' needs a 'type_id' to be identified in '" + p.name + "'");
+                    if (!id.empty() && !seen.insert(id).second) d_.error(m->loc, "duplicate type_id '" + id + "'");
+                    p.type_ids.emplace_back(id);
                 }
                 return;
             }
-            case DispatchSpec::Kind::Field: {
-                if (p.format != Format::Binary) { d_.error(d.loc, "text protocols dispatch by 'token'"); return; }
+            case MessageTypeSpec::Kind::Field: {
+                if (p.format != Format::Binary) { d_.error(d.loc, "text protocols identify messages by 'token'"); return; }
                 for (const auto& f : p.header->fields)
                     if (f->name == d.field_name) d.field = f.get();
                 if (!d.field) {
-                    d_.error(d.loc, "dispatch field '" + d.field_name + "' is not a header field of '" + p.name + "'");
+                    d_.error(d.loc, "message_type field '" + d.field_name + "' is not a header field of '" + p.name + "'");
                     return;
                 }
                 if (d.field->kind != FieldKind::Enum && !(d.field->kind == FieldKind::Scalar && prim_is_integer(d.field->prim))) {
-                    d_.error(d.loc, "dispatch field must be an integer or enum");
+                    d_.error(d.loc, "message_type field must be an integer or enum");
                     return;
                 }
                 std::set<std::int64_t> seen;
                 for (const auto* m : p.messages) {
                     std::int64_t id = 0;
-                    if (auto* i = std::get_if<std::int64_t>(&m->id)) {
+                    if (auto* i = std::get_if<std::int64_t>(&m->type_id)) {
                         id = *i;
-                    } else if (auto* s = std::get_if<std::string>(&m->id)) {
+                    } else if (auto* s = std::get_if<std::string>(&m->type_id)) {
                         const auto v = d.field->enum_def ? d.field->enum_def->find(*s) : std::nullopt;
-                        if (!v) d_.error(m->loc, "message id '" + *s + "' is not an integer" +
+                        if (!v) d_.error(m->loc, "type_id '" + *s + "' is not an integer" +
                                                      (d.field->enum_def ? " or a value of enum '" + d.field->enum_def->name + "'" : std::string()));
                         else id = *v;
                     } else {
-                        d_.error(m->loc, "message '" + m->name + "' needs an 'id' for dispatch in '" + p.name + "'");
+                        d_.error(m->loc, "message '" + m->name + "' needs a 'type_id' to be identified in '" + p.name + "'");
                     }
-                    if (!seen.insert(id).second) d_.error(m->loc, "duplicate message id " + std::to_string(id) + " in '" + p.name + "'");
-                    p.ids.emplace_back(id);
+                    if (!seen.insert(id).second) d_.error(m->loc, "duplicate type_id " + std::to_string(id) + " in '" + p.name + "'");
+                    p.type_ids.emplace_back(id);
                 }
                 return;
             }

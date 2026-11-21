@@ -1,4 +1,4 @@
-# Length-prefixed binary link with sync word, CRC, dispatch and a conditional nested message.
+# Length-prefixed binary link with sync word, CRC, message-type selection and a conditional nested message.
 schema_version: 1
 namespace: demo
 defaults: { endian: big }
@@ -13,7 +13,7 @@ messages:
       - { name: temperature, type: i16, scale: 0.1, unit: degC }
 
   Status:
-    id: 1
+    type_id: 1
     fields:
       - { name: uptime_s, type: u32 }
       - { name: voltage, type: u16, scale: 0.001, unit: V }
@@ -26,7 +26,7 @@ messages:
       - { name: fault, type: Fault, when: "state.mode == Mode.fault" }
 
   Samples:
-    id: 2
+    type_id: 2
     fields:
       - { name: channel, type: u8 }
       - { name: count, type: u8 }
@@ -42,5 +42,5 @@ protocols:
       sync: [0xAA, 0x55]
       length: { field: length, covers: body }
     checksum: { algo: crc16_ccitt }
-    dispatch: { field: id }
+    message_type: { field: id }
     messages: [Status, Samples]

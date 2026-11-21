@@ -119,7 +119,7 @@
     const sel = ui.sel.kind === 'message' && ui.sel.uid === m.uid;
     const badges = [
       `<span class="badge">${fmt}</span>`,
-      m.id ? `<span class="badge accent">id ${esc(m.id)}</span>` : '',
+      m.type_id ? `<span class="badge accent">type_id ${esc(m.type_id)}</span>` : '',
       L.text ? `<span class="badge">${L.tokens} tokens</span>` : `<span class="badge">${L.fixed ? L.size + ' B fixed' : G.sizeLabel({ fixed: null, min: L.min, max: L.max })}</span>`,
       G.msgAccess(s, m) !== 'both' ? `<span class="badge">${G.msgAccess(s, m)} only</span>` : '',
       errorBadge(issues, 'message', m.uid),
@@ -159,8 +159,8 @@
       off += L.prefix.length;
     }
     if (L.text) {
-      rows.push(frameRow('message', 'message id', p.dispatch.kind === 'token' ? 'first token selects the message' : 'single message', null, undefined, g('body'),
-        '', `<div class="body-alts">${L.bodies.map((b) => `<span class="alt" data-action="select" data-kind="message" data-uid="${b.message.uid}">${esc(b.message.id || b.message.name)}<small>${esc(b.message.name)}</small></span>`).join('')}</div>`));
+      rows.push(frameRow('message', 'type_id token', p.message_type.kind === 'token' ? 'first token selects the message' : 'single message', null, undefined, g('body'),
+        '', `<div class="body-alts">${L.bodies.map((b) => `<span class="alt" data-action="select" data-kind="message" data-uid="${b.message.uid}">${esc(b.message.type_id || b.message.name)}<small>${esc(b.message.name)}</small></span>`).join('')}</div>`));
       rows.push(frameRow('string', 'fields…', `tokens separated by “${esc(p.separator || s.schema.defaults.separator)}”`, null, undefined, g('body')));
       if (ck.enabled) rows.push(frameRow('check', 'checksum', `“${esc(ck.separator || '*')}” + ${L.checksumSize * 2} hex digits · ${esc(ck.algo === '__crc' ? 'custom CRC' : ck.algo)}`, null, undefined, null));
     } else {
@@ -172,12 +172,12 @@
       }
       const alts = L.bodies.map((b) => {
         const sz = b.layout.size != null ? `${b.layout.size} B` : G.sizeLabel({ fixed: null, min: b.layout.min, max: b.layout.max });
-        return `<span class="alt" data-action="select" data-kind="message" data-uid="${b.message.uid}">${esc(b.message.name)}<small>${b.message.id ? 'id ' + esc(b.message.id) + ' · ' : ''}${sz}</small></span>`;
+        return `<span class="alt" data-action="select" data-kind="message" data-uid="${b.message.uid}">${esc(b.message.name)}<small>${b.message.type_id ? 'type_id ' + esc(b.message.type_id) + ' · ' : ''}${sz}</small></span>`;
       }).join('');
       const fixedBody = L.bodies.length === 1 && L.bodies[0].layout.size != null ? L.bodies[0].layout.size : null;
-      const dispatchText = p.dispatch.kind === 'field' ? `selected by header.${esc(p.dispatch.field || '?')}` : L.bodies.length > 1 ? 'needs dispatch' : 'single message';
+      const selectText = p.message_type.kind === 'field' ? `message_type = header.${esc(p.message_type.field || '?')}` : L.bodies.length > 1 ? 'needs message_type' : 'single message';
       const bodyRange = L.bodies.length ? `${L.bodyMin}${L.bodyMax == null ? '+' : L.bodyMax !== L.bodyMin ? '–' + L.bodyMax : ''} B · ` : '';
-      rows.push(frameRow('message', 'body', bodyRange + dispatchText, fixedBody, off, g('body'), '', `<div class="body-alts">${alts || '<span class="ty">no messages selected</span>'}</div>`));
+      rows.push(frameRow('message', 'body', bodyRange + selectText, fixedBody, off, g('body'), '', `<div class="body-alts">${alts || '<span class="ty">no messages selected</span>'}</div>`));
       if (fixedBody == null) off = null;
       else off += fixedBody;
       if (ck.enabled) {

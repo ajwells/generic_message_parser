@@ -43,14 +43,15 @@ TEST_CASE("empty optional fields and struct decode") {
     CHECK(g.quality == FixQuality::invalid);
 }
 
-TEST_CASE("checksum and dispatch errors") {
+TEST_CASE("checksum and unknown message type errors") {
     std::string bad(kGGA);
     bad[10] = '9';
     CHECK(Nmea::parse(bv(bad)).error() == gmp::Error::BadChecksum);
-    constexpr std::string_view unknown = "$GPXYZ,1*5E\r\n";
+    constexpr std::string_view unknown = "$GPXYZ,1*51\r\n";  // valid checksum, unknown type id
     auto u = Nmea::parse(bv(unknown));
     REQUIRE_FALSE(u);
-    CHECK((u.error() == gmp::Error::UnknownId || u.error() == gmp::Error::BadChecksum));
+    CHECK(u.error() == gmp::Error::UnknownType);
+    CHECK(gmp::to_string(u.error()) == "unknown message type");
 }
 
 TEST_CASE("string field and encode round trip") {
@@ -104,4 +105,14 @@ TEST_CASE("NMEA stream with noise and truncated sentences") {
     CHECK(gga == 2);
     CHECK(txt == 1);
     CHECK(errors >= 2);
+}
+
+TEST_CASE("open + select_message building blocks expose the type id") {
+    std::string frame(kGGA);
+    auto f = Nmea::open(gmp::as_bytes(frame.data(), frame.size()));
+    REQUIRE(f);
+    CHECK(f->type_id == "GPGGA");
+    auto v = Nmea::select_message(*f);
+    REQUIRE(v);
+    CHECK(std::holds_alternative<GGAView>(*v));
 }

@@ -118,26 +118,26 @@ TEST_CASE("protocol errors") {
     const std::string msgs = R"(
 messages:
   A:
-    id: 1
+    type_id: 1
     fields: [ { name: x, type: u8 } ]
   B:
-    id: 1
+    type_id: 1
     fields: [ { name: y, type: u16 } ]
 )";
-    expect_error(msgs + "protocols:\n  P:\n    messages: [A, B]\n", "needs 'dispatch'");
+    expect_error(msgs + "protocols:\n  P:\n    messages: [A, B]\n", "needs 'message_type'");
     expect_error(msgs + R"(
 protocols:
   P:
     header: [ { name: id, type: u8 } ]
-    dispatch: { field: id }
+    message_type: { field: id }
     messages: [A, B]
 )",
-                 "duplicate message id 1");
+                 "duplicate type_id 1");
     expect_error(msgs + R"(
 protocols:
   P:
     header: [ { name: id, type: u8 } ]
-    dispatch: { field: nope }
+    message_type: { field: nope }
     messages: [A]
 )",
                  "is not a header field");
@@ -176,4 +176,34 @@ messages:
     fields: [ { name: i, type: Inner } ]
 )",
                  "needs view access too");
+}
+
+TEST_CASE("message_type / type_id; the old names are rejected with a hint") {
+    CHECK(compile(R"(
+messages:
+  A: { type_id: 1, fields: [ { name: x, type: u8 } ] }
+  B: { type_id: 2, fields: [ { name: y, type: u8 } ] }
+protocols:
+  P:
+    header: [ { name: kind, type: u8 } ]
+    message_type: { field: kind }
+    messages: [A, B]
+)")
+              .ok);
+    expect_error("messages:\n  A: { id: 1, fields: [ { name: x, type: u8 } ] }\n",
+                 "unknown key 'id' in message 'A' ('id' was renamed to 'type_id')");
+    expect_error(R"(
+messages:
+  A: { type_id: 1, fields: [ { name: x, type: u8 } ] }
+protocols:
+  P:
+    header: [ { name: kind, type: u8 } ]
+    dispatch: { field: kind }
+    messages: [A]
+)",
+                 "unknown key 'dispatch' in protocol 'P' ('dispatch' was renamed to 'message_type')");
+    // a field named with a key that was never renamed in that context gets no hint
+    const auto r = compile("messages:\n  A:\n    fields: [ { name: x, type: u8, id: 3 } ]\n");
+    CHECK_FALSE(r.ok);
+    CHECK(r.text.find("was renamed") == std::string::npos);
 }

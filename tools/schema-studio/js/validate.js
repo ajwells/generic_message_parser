@@ -198,39 +198,39 @@
       const m = msgs[i];
       if (!m) { add('error', t, p.name, `unknown message "${n}"`); return; }
       if (G.msgFormat(s, m) !== fmt) add('error', t, p.name, `message "${n}" format does not match the protocol`);
-      if (!G.wantsView(s, m)) add('error', t, p.name, `message "${n}" needs view access to be dispatched`);
+      if (!G.wantsView(s, m)) add('error', t, p.name, `message "${n}" needs view access to be identified by message_type`);
       if (fmt === 'text' && (p.separator || s.schema.defaults.separator) !== G.msgSeparator(s, m))
         add('error', t, p.name, `message "${n}" separator differs from the protocol`);
     });
 
-    // dispatch
-    const d = p.dispatch;
-    if (d.kind === 'none' && p.messages.length > 1) add('error', t, p.name, 'several messages need a dispatch rule');
+    // message_type
+    const d = p.message_type;
+    if (d.kind === 'none' && p.messages.length > 1) add('error', t, p.name, 'several messages need a message_type rule');
     if (d.kind === 'field') {
-      if (fmt !== 'binary') add('error', t, p.name, "text protocols dispatch by 'token'");
+      if (fmt !== 'binary') add('error', t, p.name, "text protocols identify messages by 'token'");
       const f = p.header.find((x) => x.name === d.field);
-      if (!f) add('error', t, p.name, `dispatch field "${d.field || ''}" is not a header field`);
-      else if (!['int', 'enum'].includes(G.fieldKind(s, f))) add('error', t, p.name, 'dispatch field must be an integer or enum');
+      if (!f) add('error', t, p.name, `message_type field "${d.field || ''}" is not a header field`);
+      else if (!['int', 'enum'].includes(G.fieldKind(s, f))) add('error', t, p.name, 'message_type field must be an integer or enum');
       const seen = new Set();
       msgs.forEach((m) => {
         if (!m) return;
-        if (!m.id) { add('error', { kind: 'message', uid: m.uid }, m.name, `needs an id for dispatch in ${p.name}`); return; }
-        if (!G.isInt(m.id) && f && G.fieldKind(s, f) === 'enum') {
+        if (!m.type_id) { add('error', { kind: 'message', uid: m.uid }, m.name, `needs a type_id to be identified in ${p.name}`); return; }
+        if (!G.isInt(m.type_id) && f && G.fieldKind(s, f) === 'enum') {
           const e = G.findEnum(s, f.type);
-          if (!e.values.some((v) => v.name === m.id)) add('error', { kind: 'message', uid: m.uid }, m.name, `id "${m.id}" is not a value of ${e.name}`);
-        } else if (!G.isInt(m.id)) add('error', { kind: 'message', uid: m.uid }, m.name, `id "${m.id}" must be an integer`);
-        if (seen.has(m.id)) add('error', t, p.name, `duplicate message id ${m.id}`);
-        seen.add(m.id);
+          if (!e.values.some((v) => v.name === m.type_id)) add('error', { kind: 'message', uid: m.uid }, m.name, `type_id "${m.type_id}" is not a value of ${e.name}`);
+        } else if (!G.isInt(m.type_id)) add('error', { kind: 'message', uid: m.uid }, m.name, `type_id "${m.type_id}" must be an integer`);
+        if (seen.has(m.type_id)) add('error', t, p.name, `duplicate type_id ${m.type_id}`);
+        seen.add(m.type_id);
       });
     }
     if (d.kind === 'token') {
-      if (fmt !== 'text') add('error', t, p.name, "dispatch by 'token' requires a text protocol");
+      if (fmt !== 'text') add('error', t, p.name, "message_type by 'token' requires a text protocol");
       const seen = new Set();
       msgs.forEach((m) => {
         if (!m) return;
-        if (!m.id) add('error', { kind: 'message', uid: m.uid }, m.name, `needs an id for dispatch in ${p.name}`);
-        if (seen.has(m.id)) add('error', t, p.name, `duplicate message id "${m.id}"`);
-        seen.add(m.id);
+        if (!m.type_id) add('error', { kind: 'message', uid: m.uid }, m.name, `needs a type_id to be identified in ${p.name}`);
+        if (seen.has(m.type_id)) add('error', t, p.name, `duplicate type_id "${m.type_id}"`);
+        seen.add(m.type_id);
       });
     }
 

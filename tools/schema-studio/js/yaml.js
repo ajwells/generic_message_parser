@@ -199,9 +199,9 @@
       if (fmt === 'text' && !c.required) co.required = false;
       o.checksum = flow(co);
     }
-    const d = p.dispatch;
-    if (d.kind === 'field') o.dispatch = flow({ field: d.field || 'id' });
-    if (d.kind === 'token') o.dispatch = flow({ token: raw(G.isInt(d.token) ? d.token : '0') });
+    const d = p.message_type;
+    if (d.kind === 'field') o.message_type = flow({ field: d.field || 'id' });
+    if (d.kind === 'token') o.message_type = flow({ token: raw(G.isInt(d.token) ? d.token : '0') });
     o.messages = p.messages.slice();
     return o;
   }
@@ -266,7 +266,7 @@
       root.messages = {};
       for (const m of s.messages) {
         const o = {};
-        if (has(m.id)) o.id = G.isInt(m.id) ? raw(m.id.trim()) : m.id.trim();
+        if (has(m.type_id)) o.type_id = G.isInt(m.type_id) ? raw(m.type_id.trim()) : m.type_id.trim();
         if (has(m.format)) o.format = m.format;
         if (has(m.endian)) o.endian = m.endian;
         if (has(m.bit_order)) o.bit_order = m.bit_order;
@@ -399,7 +399,7 @@
     }
     for (const [name, m] of Object.entries(y.messages || {})) {
       s.messages.push(G.newMessage({
-        name, id: m.id === undefined ? '' : str(m.id), format: str(m.format), endian: str(m.endian),
+        name, type_id: m.type_id === undefined ? '' : str(m.type_id), format: str(m.format), endian: str(m.endian),
         bit_order: str(m.bit_order), separator: str(m.separator), access: accessFromYaml(m.access), doc: str(m.doc),
         fields: (m.fields || []).map(fieldFromYaml),
       }));
@@ -433,9 +433,10 @@
           proto.checksum.crc = { width: str(cr.width), poly: hexOrDec(cr.poly), init: hexOrDec(cr.init ?? 0), refin: !!cr.refin, refout: !!cr.refout, xorout: hexOrDec(cr.xorout ?? 0) };
         } else proto.checksum.algo = str(ck.algo);
       }
-      if (p.dispatch) {
-        if (p.dispatch.field !== undefined) proto.dispatch = { kind: 'field', field: str(p.dispatch.field), token: '0' };
-        else proto.dispatch = { kind: 'token', field: '', token: str(p.dispatch.token ?? 0) };
+      const sel = p.message_type;
+      if (sel) {
+        if (sel.field !== undefined) proto.message_type = { kind: 'field', field: str(sel.field), token: '0' };
+        else proto.message_type = { kind: 'token', field: '', token: str(sel.token ?? 0) };
       }
       proto.messages = (p.messages || []).map(String);
       s.protocols.push(proto);

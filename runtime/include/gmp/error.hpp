@@ -15,7 +15,7 @@ enum class Error : std::uint8_t {
     BadDelimiter,   // unexpected delimiter inside a frame
     BadConst,       // constant / magic field did not match
     OutOfRange,     // value does not fit (count > capacity, etc.)
-    UnknownId,      // dispatch id did not match any message
+    UnknownType,    // the frame's type id (message_type field / token) matched no message
     BufferFull,     // output buffer too small / stream buffer full
     ParseError,     // text field could not be parsed
     MissingField,   // required (text) field was empty or absent
@@ -33,7 +33,7 @@ constexpr std::string_view to_string(Error e) noexcept {
         case Error::BadDelimiter: return "bad delimiter";
         case Error::BadConst: return "bad constant";
         case Error::OutOfRange: return "out of range";
-        case Error::UnknownId: return "unknown message id";
+        case Error::UnknownType: return "unknown message type";
         case Error::BufferFull: return "buffer full";
         case Error::ParseError: return "parse error";
         case Error::MissingField: return "missing field";

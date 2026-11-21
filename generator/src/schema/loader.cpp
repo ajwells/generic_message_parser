@@ -60,7 +60,15 @@ private:
             if (std::none_of(allowed.begin(), allowed.end(), [&](const char* a) { return key == a; })) {
                 std::string list;
                 for (const char* a : allowed) list += std::string(list.empty() ? "" : ", ") + a;
-                diag_.error(loc(kv.first), "unknown key '" + key + "' in " + ctx + " (expected one of: " + list + ")");
+                std::string msg = "unknown key '" + key + "' in " + ctx;
+                // keys renamed in earlier versions: point straight at the replacement
+                const auto renamed = [&](const char* old_key, const char* new_key) {
+                    if (key == old_key && std::any_of(allowed.begin(), allowed.end(), [&](const char* a) { return std::string_view(a) == new_key; }))
+                        msg += std::string(" ('") + old_key + "' was renamed to '" + new_key + "')";
+                };
+                renamed("dispatch", "message_type");
+                renamed("id", "type_id");
+                diag_.error(loc(kv.first), msg + " (expected one of: " + list + ")");
             }
         }
     }
@@ -413,7 +421,7 @@ private:
             m->want_view = s.default_view;
             m->want_struct = s.default_struct;
             const auto& b = kv.second;
-            check_keys(b, {"id", "format", "endian", "bit_order", "separator", "access", "doc", "fields"},
+            check_keys(b, {"type_id", "format", "endian", "bit_order", "separator", "access", "doc", "fields"},
                        "message '" + m->name + "'");
             if (auto v = b["format"]) m->format = to_format(v);
             if (auto v = b["endian"]) m->endian = to_endian(v);
@@ -421,12 +429,12 @@ private:
             if (auto v = b["separator"]) m->separator = to_char(v);
             if (auto v = b["access"]) to_access(v, m->want_view, m->want_struct);
             if (auto v = b["doc"]) m->doc = to_str(v);
-            if (auto v = b["id"]) {
+            if (auto v = b["type_id"]) {
                 const auto str = to_str(v);
                 const bool numeric = !str.empty() && (std::isdigit(static_cast<unsigned char>(str[0])) ||
                                                       (str[0] == '-' && str.size() > 1));
-                if (numeric && v.Tag() != "!") m->id = to_int(v);
-                else m->id = str;
+                if (numeric && v.Tag() != "!") m->type_id = to_int(v);
+                else m->type_id = str;
             }
             load_fields(b["fields"], *m);
             apply_field_defaults(*m);
@@ -536,7 +544,7 @@ private:
             p->endian = s.default_endian;
             p->separator = s.default_separator;
             const auto& b = kv.second;
-            check_keys(b, {"format", "endian", "separator", "doc", "header", "framing", "checksum", "dispatch",
+            check_keys(b, {"format", "endian", "separator", "doc", "header", "framing", "checksum", "message_type",
                            "messages"},
                        "protocol '" + p->name + "'");
             if (auto v = b["format"]) p->format = to_format(v);
@@ -556,17 +564,17 @@ private:
 
             if (auto v = b["framing"]) load_framing(v, *p);
             if (auto v = b["checksum"]) load_checksum(v, *p);
-            if (auto v = b["dispatch"]) {
-                p->dispatch.loc = loc(v);
-                check_keys(v, {"field", "token"}, "dispatch");
+            if (auto v = b["message_type"]) {
+                p->message_type.loc = loc(v);
+                check_keys(v, {"field", "token"}, "message_type");
                 if (auto f = v["field"]) {
-                    p->dispatch.kind = ir::DispatchSpec::Kind::Field;
-                    p->dispatch.field_name = to_str(f);
+                    p->message_type.kind = ir::MessageTypeSpec::Kind::Field;
+                    p->message_type.field_name = to_str(f);
                 } else if (auto t = v["token"]) {
-                    p->dispatch.kind = ir::DispatchSpec::Kind::Token;
-                    p->dispatch.token = to_size(t);
+                    p->message_type.kind = ir::MessageTypeSpec::Kind::Token;
+                    p->message_type.token = to_size(t);
                 } else {
-                    diag_.error(p->dispatch.loc, "dispatch needs 'field' or 'token'");
+                    diag_.error(p->message_type.loc, "message_type needs 'field' or 'token'");
                 }
             }
             if (auto v = b["messages"]) {

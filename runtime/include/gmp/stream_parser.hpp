@@ -6,7 +6,7 @@
 //     template <class H> static gmp::Error process(gmp::mut_bytes frame, H& handler);
 //
 // The parser owns a fixed buffer of `Capacity` bytes (no heap). Data can be pushed in chunks of any
-// size; complete frames are validated and dispatched to the handler. Garbage and corrupt frames are
+// size; complete frames are validated, matched to a message type and passed to the handler. Garbage and corrupt frames are
 // skipped and reported through `handler(gmp::FrameError{...})` when the handler accepts it.
 
 #include <algorithm>
@@ -44,7 +44,7 @@ constexpr void invoke_if(H& h, A&&... args) {
 
 struct StreamStats {
     std::uint32_t frames = 0;        // frames delivered successfully
-    std::uint32_t frame_errors = 0;  // frames rejected (checksum, unknown id, decode error)
+    std::uint32_t frame_errors = 0;  // frames rejected (checksum, unknown message type, decode error)
     std::uint32_t bytes_skipped = 0; // bytes discarded while resynchronising
     std::uint32_t overflows = 0;     // times the buffer filled without a complete frame
 };

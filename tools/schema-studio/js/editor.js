@@ -323,7 +323,7 @@
       iconBtn('trash', 'deleteItem', `data-kind="message" data-uid="${m.uid}"`, 'Delete message', true)) +
       section('Message', `<div class="grid">
         ${field('Name', input(`${b}.name`, m.name, { rename: 'type', mono: true }))}
-        ${field('Dispatch id', input(`${b}.id`, m.id, { placeholder: fmt === 'text' ? 'GPGGA' : '0x01 or enum value', mono: true }), 'used by protocols')}
+        ${field('Type id', input(`${b}.type_id`, m.type_id, { placeholder: fmt === 'text' ? 'GPGGA' : '0x01 or enum value', mono: true }), 'type_id: matched by message_type')}
         ${field('Format', select(`${b}.format`, m.format, inherit(['binary', 'text'], d.format)))}
         ${field('Access', select(`${b}.access`, m.access, inherit([['both', 'view + struct'], ['view', 'view only'], ['struct', 'struct only']], d.access)))}
         ${fmt === 'binary' ? field('Endian', select(`${b}.endian`, m.endian, inherit(['big', 'little'], d.endian))) : field('Separator', input(`${b}.separator`, m.separator, { placeholder: d.separator, mono: true }))}
@@ -345,7 +345,7 @@
     const b = `protocols.${i}`;
     const fmt = G.protoFormat(s, p);
     const d = s.schema.defaults;
-    const fr = p.framing, ck = p.checksum, dp = p.dispatch;
+    const fr = p.framing, ck = p.checksum, mt = p.message_type;
     const L = G.protocolLayout(s, p);
     const headerNames = p.header.filter((f) => f.type !== 'pad').map((f) => f.name);
 
@@ -416,19 +416,19 @@
     }
     const checksum = section('Checksum', `<div class="grid">${cparts.join('')}</div>`);
 
-    // dispatch
+    // message_type
     const kinds = fmt === 'text' ? [['none', 'none (single message)'], ['token', 'by first token']] : [['none', 'none (single message)'], ['field', 'by header field']];
-    const dparts = [field('Dispatch', select(`${b}.dispatch.kind`, dp.kind, kinds))];
-    if (dp.kind === 'field') dparts.push(field('Header field', select(`${b}.dispatch.field`, dp.field, [['', '— header field —'], ...headerNames])));
-    if (dp.kind === 'token') dparts.push(`<div class="callout" style="align-self:end">The first token (e.g. <code>GPGGA</code>) selects the message by its id.</div>`);
-    const dispatch = section('Dispatch', `<div class="grid">${dparts.join('')}</div>`);
+    const mtParts = [field('Message type', select(`${b}.message_type.kind`, mt.kind, kinds))];
+    if (mt.kind === 'field') mtParts.push(field('Header field', select(`${b}.message_type.field`, mt.field, [['', '— header field —'], ...headerNames])));
+    if (mt.kind === 'token') mtParts.push(`<div class="callout" style="align-self:end">The first token (e.g. <code>GPGGA</code>) selects the message by its <code>type_id</code>.</div>`);
+    const messageType = section('Message type', `<div class="grid">${mtParts.join('')}</div>`);
 
     // messages
     const cands = s.messages.filter((m) => G.msgFormat(s, m) === fmt);
     const others = p.messages.filter((n) => !cands.some((m) => m.name === n));
     const picks = cands.map((m) => {
       const on = p.messages.includes(m.name);
-      return `<button class="chip${on ? ' active' : ''}" data-action="toggleProtoMsg" data-path="${b}" data-name="${esc(m.name)}">${on ? '✓ ' : ''}${esc(m.name)}${m.id ? ` <span class="mono" style="color:var(--faint)">${esc(m.id)}</span>` : ''}</button>`;
+      return `<button class="chip${on ? ' active' : ''}" data-action="toggleProtoMsg" data-path="${b}" data-name="${esc(m.name)}">${on ? '✓ ' : ''}${esc(m.name)}${m.type_id ? ` <span class="mono" style="color:var(--faint)">${esc(m.type_id)}</span>` : ''}</button>`;
     }).join('');
     const messages = section('Messages carried', `<div class="msg-pick">${picks || `<span class="list-empty">No ${fmt} messages defined yet.</span>`}</div>
       ${others.length ? `<p class="callout" style="margin:10px 0 0">Not found / wrong format: ${others.map(esc).join(', ')}</p>` : ''}`);
@@ -436,7 +436,7 @@
     return head(`${fmt} protocol`, p.name,
       iconBtn('copy', 'duplicateItem', `data-kind="protocol" data-uid="${p.uid}"`, 'Duplicate protocol') +
       iconBtn('trash', 'deleteItem', `data-kind="protocol" data-uid="${p.uid}"`, 'Delete protocol', true)) +
-      general + messages + header + framing + checksum + dispatch;
+      general + messages + header + framing + checksum + messageType;
   }
 
   // ----------------------------------------------------------------------------------------------

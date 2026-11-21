@@ -9,7 +9,7 @@ enums:
 
 messages:
   GGA:
-    id: GPGGA
+    type_id: GPGGA
     doc: Global positioning system fix data.
     fields:
       - { name: utc_time, type: f64, precision: 2, width: 9 }
@@ -24,7 +24,7 @@ messages:
       - { name: altitude_unit, type: char, optional: true }
       - { pad: 4 }
   TXT:
-    id: GPTXT
+    type_id: GPTXT
     fields:
       - { name: total, type: u8, width: 2 }
       - { name: number, type: u8, width: 2 }
@@ -35,5 +35,5 @@ protocols:
   Nmea:
     framing: { type: delimited, start: "$", end: "\r\n", max_frame: 82 }
     checksum: { algo: xor8, separator: "*" }
-    dispatch: { token: 0 }
+    message_type: { token: 0 }
     messages: [GGA, TXT]

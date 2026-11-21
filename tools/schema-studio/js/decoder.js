@@ -1,5 +1,5 @@
 // decoder.js - decodes raw bytes against the schema, mirroring the C++ runtime (gmp/*.hpp) and the
-// generated code: framers, escaping, checksums, dispatch, binary and text field decoding.
+// generated code: framers, escaping, checksums, message_type selection, binary and text field decoding.
 // DOM-free. Produces a tree of nodes with byte ranges (in input coordinates) for highlighting.
 (function (G) {
   'use strict';
@@ -649,23 +649,23 @@
           bodyEnd = star;
         }
       }
-      // dispatch on token 0
+      // message_type by token 0
       const sep = (p.separator || s.schema.defaults.separator || ',').charCodeAt(0);
       let idEnd = 0;
       while (idEnd < bodyEnd && buf[idEnd] !== sep) idEnd++;
       const id = D.ascii(buf.slice(0, idEnd));
       const cands = p.messages.map((n) => G.findMessage(s, n)).filter(Boolean);
       let msg = null;
-      if (p.dispatch.kind === 'token') {
-        frame.nodes.push(node('id', 'frame', 0, idEnd, { value: q(id), raw: '' }));
-        msg = cands.find((m) => (m.id || '') === id);
-        if (!msg) err(`unknown message id "${id}"`);
+      if (p.message_type.kind === 'token') {
+        frame.nodes.push(node('type_id', 'frame', 0, idEnd, { value: q(id), raw: '' }));
+        msg = cands.find((m) => (m.type_id || '') === id);
+        if (!msg) err(`unknown type_id "${id}"`);
       } else msg = cands[0];
-      const bodyStart = p.dispatch.kind === 'token' ? Math.min(idEnd + 1, bodyEnd) : 0;
+      const bodyStart = p.message_type.kind === 'token' ? Math.min(idEnd + 1, bodyEnd) : 0;
       if (msg) {
         frame.message = msg.name;
         const r = decodeText(s, msg, buf, bodyStart, bodyEnd);
-        const mn = node(msg.name, 'message', bodyStart, bodyEnd, { children: r.nodes, value: `id ${q(id)}`, type: 'message' });
+        const mn = node(msg.name, 'message', bodyStart, bodyEnd, { children: r.nodes, value: `type_id ${q(id)}`, type: 'message' });
         frame.nodes.push(mn);
         if (r.nodes.some((n) => n.error)) err('field errors');
       }
@@ -698,25 +698,25 @@
         else cn.value = `✓ 0x${stored.toString(16).toUpperCase().padStart(hexw, '0')}`;
         inner.push(cn);
       }
-      // dispatch
+      // message_type: pick the message
       const cands = p.messages.map((n) => G.findMessage(s, n)).filter(Boolean);
       let msg = null;
-      if (p.dispatch.kind === 'field') {
-        const hn = (hdrVals || []).find((n) => n.name === p.dispatch.field);
-        const hf = p.header.find((f) => f.name === p.dispatch.field);
+      if (p.message_type.kind === 'field') {
+        const hn = (hdrVals || []).find((n) => n.name === p.message_type.field);
+        const hf = p.header.find((f) => f.name === p.message_type.field);
         const raw = hn ? Number(readUint(buf, hn.start, hn.end - hn.start, hf.endian || G.protoEndian(s, p))) : NaN;
         msg = cands.find((m) => {
-          if (G.isInt(m.id)) return G.parseInt(m.id) === raw;
+          if (G.isInt(m.type_id)) return G.parseInt(m.type_id) === raw;
           const e = hf && G.findEnum(s, hf.type);
-          const v = e && e.values.find((x) => x.name === m.id);
+          const v = e && e.values.find((x) => x.name === m.type_id);
           return v && G.parseInt(v.value) === raw;
         });
-        if (!msg) err(`unknown message id ${Number.isNaN(raw) ? '?' : raw}`);
+        if (!msg) err(`unknown type_id ${Number.isNaN(raw) ? '?' : raw}`);
       } else msg = cands[0];
       if (msg) {
         frame.message = msg.name;
         const r = decodeBinary(s, msg, buf, hs, buf.length - tr);
-        const mn = node(msg.name, 'message', hs, r.pos, { children: r.nodes, type: 'message', value: msg.id ? `id ${msg.id}` : '' });
+        const mn = node(msg.name, 'message', hs, r.pos, { children: r.nodes, type: 'message', value: msg.type_id ? `type_id ${msg.type_id}` : '' });
         const trailing = r.pos < buf.length - tr
           ? node(`+${buf.length - tr - r.pos} trailing`, 'pad', r.pos, buf.length - tr, { note: fr.type === 'fixed' ? 'fixed-frame padding' : 'bytes after the message (ignored)', raw: D.hex(buf.slice(r.pos, buf.length - tr)) })
           : null;

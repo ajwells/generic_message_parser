@@ -1,4 +1,4 @@
-// C++ emission for protocols: framing, checksum validation, dispatch, streaming and encoding.
+// C++ emission for protocols: framing, checksum validation, message selection, streaming and encoding.
 
 #include <algorithm>
 #include <set>
@@ -74,7 +74,7 @@ public:
         stream_ = p.framing.type != FT::None && p.max_frame > 0;
         all_struct_ = std::all_of(p.messages.begin(), p.messages.end(), [](const Message* m) { return m->want_struct; });
         all_view_ = std::all_of(p.messages.begin(), p.messages.end(), [](const Message* m) { return m->want_view; });
-        if (!all_view_) c.diag.error(p.loc, "protocol '" + p.name + "': all messages need view access (used for dispatch)");
+        if (!all_view_) c.diag.error(p.loc, "protocol '" + p.name + "': all messages need view access (used to select the message type)");
         if (text_)
             for (const auto* m : p.messages)
                 if (m->separator != p.separator)
@@ -175,7 +175,7 @@ private:
         w_.line("/// A validated frame split into its parts (views into the input buffer).");
         w_.open("struct Frame {");
         if (has_header_) w_.line("HeaderView header{};");
-        if (text_) w_.line("std::string_view id{};");
+        if (text_) w_.line("std::string_view type_id{};  // text: the first token");
         w_.line("gmp::bytes_view body{};");
         w_.close("};");
         w_.line();
@@ -261,21 +261,21 @@ private:
         }
         w_.line("Frame f;");
         w_.line("const auto p = text.find(" + char_lit(text_sep(p_)) + ");");
-        w_.line("f.id = text.substr(0, p);");
+        w_.line("f.type_id = text.substr(0, p);");
         w_.line("const std::string_view rest = p == std::string_view::npos ? std::string_view{} : text.substr(p + 1);");
         w_.line("f.body = gmp::as_bytes(rest.data(), rest.size());");
         w_.line("return f;");
     }
 
-    std::string id_literal(std::size_t i) const {
-        const auto& id = p_.ids[i];
+    std::string type_id_literal(std::size_t i) const {
+        const auto& id = p_.type_ids[i];
         if (auto* s = std::get_if<std::string>(&id)) return string_literal(*s);
         if (auto* n = std::get_if<std::int64_t>(&id)) return int_literal(*n);
         return "";
     }
 
     void emit_visit() {
-        w_.line("/// Decode the message view selected by the frame's id and pass it to fn(view).");
+        w_.line("/// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).");
         w_.line("template <class F>");
         w_.open("static gmp::Error visit_frame(const Frame& f, F&& fn) noexcept {");
         auto body = [&](std::size_t i) {
@@ -285,35 +285,35 @@ private:
             w_.line("fn(*v);");
             w_.line("return gmp::Error::None;");
         };
-        switch (p_.dispatch.kind) {
-            case DispatchSpec::Kind::None:
+        switch (p_.message_type.kind) {
+            case MessageTypeSpec::Kind::None:
                 body(0);
                 break;
-            case DispatchSpec::Kind::Field: {
-                w_.open("switch (gmp::to_int(f.header." + ident(p_.dispatch.field->name) + "())) {");
+            case MessageTypeSpec::Kind::Field: {
+                w_.open("switch (gmp::to_int(f.header." + ident(p_.message_type.field->name) + "())) {");
                 for (std::size_t i = 0; i < p_.messages.size(); ++i) {
-                    w_.open("case " + id_literal(i) + ": {  // " + p_.messages[i]->name);
+                    w_.open("case " + type_id_literal(i) + ": {  // " + p_.messages[i]->name);
                     body(i);
                     w_.close();
                 }
-                w_.line("default: return gmp::Error::UnknownId;");
+                w_.line("default: return gmp::Error::UnknownType;");
                 w_.close();
                 break;
             }
-            case DispatchSpec::Kind::Token: {
+            case MessageTypeSpec::Kind::Token: {
                 for (std::size_t i = 0; i < p_.messages.size(); ++i) {
-                    w_.open("if (f.id == " + id_literal(i) + ") {");
+                    w_.open("if (f.type_id == " + type_id_literal(i) + ") {");
                     body(i);
                     w_.close();
                 }
-                w_.line("return gmp::Error::UnknownId;");
+                w_.line("return gmp::Error::UnknownType;");
                 break;
             }
         }
         w_.close();
         w_.line();
-        w_.open("[[nodiscard]] static gmp::Result<AnyView> dispatch(const Frame& f) noexcept {");
-        w_.line("gmp::Result<AnyView> out = gmp::fail(gmp::Error::UnknownId);");
+        w_.open("[[nodiscard]] static gmp::Result<AnyView> select_message(const Frame& f) noexcept {");
+        w_.line("gmp::Result<AnyView> out = gmp::fail(gmp::Error::UnknownType);");
         w_.line("const gmp::Error e = visit_frame(f, [&](const auto& v) { out = AnyView(v); });");
         w_.line("if (e != gmp::Error::None) return gmp::fail(e);");
         w_.line("return out;");
@@ -330,7 +330,7 @@ private:
         w_.line("if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);");
         w_.line("auto f = open(buffer.first(s.size));");
         w_.line("if (!f) return gmp::fail(f.error());");
-        w_.line("return dispatch(*f);");
+        w_.line("return select_message(*f);");
         w_.close();
         if (all_struct_) {
             w_.line("/// Parse one frame and decode it into the eager message struct.");
@@ -348,7 +348,7 @@ private:
     }
 
     void emit_process() {
-        w_.line("/// StreamParser hook: validate, dispatch and deliver a frame to `handler`.");
+        w_.line("/// StreamParser hook: validate a frame, select its message type and deliver it to `handler`.");
         w_.line("/// The handler is called as handler(header_view, message_view) or handler(message_view),");
         w_.line("/// whichever it accepts; message types it does not accept are ignored.");
         w_.line("template <class H>");
@@ -402,10 +402,10 @@ private:
         if (p_.prefix_size) w_.line("if (auto e = w.write_bytes(prefix); !e) return gmp::fail(e.error());");
         w_.line("[[maybe_unused]] const std::size_t header_at = w.position();");
         if (has_header_) {
-            if (p_.dispatch.kind == DispatchSpec::Kind::Field) {
-                const auto& df = *p_.dispatch.field;
+            if (p_.message_type.kind == MessageTypeSpec::Kind::Field) {
+                const auto& df = *p_.message_type.field;
                 if (!df.const_value)
-                    w_.line("h." + ident(df.name) + " = " + typed_literal(df, std::get<std::int64_t>(p_.ids[i])) + ";");
+                    w_.line("h." + ident(df.name) + " = " + typed_literal(df, std::get<std::int64_t>(p_.type_ids[i])) + ";");
             }
             w_.line("if (auto e = h.write(w); !e) return gmp::fail(e.error());");
         }
@@ -473,8 +473,8 @@ private:
         }
         w_.open("{");
         w_.line("gmp::text::TextWriter w(out.subspan(pos), " + char_lit(text_sep(p_)) + ");");
-        if (p_.dispatch.kind == DispatchSpec::Kind::Token)
-            w_.line("if (auto e = w.token(std::string_view(" + id_literal(i) + ")); !e) return gmp::fail(e.error());");
+        if (p_.message_type.kind == MessageTypeSpec::Kind::Token)
+            w_.line("if (auto e = w.token(std::string_view(" + type_id_literal(i) + ")); !e) return gmp::fail(e.error());");
         w_.line("if (auto e = m.write_text(w); !e) return gmp::fail(e.error());");
         w_.line("pos += w.position();");
         w_.close();

@@ -357,7 +357,7 @@ struct Nmea {
 
     /// A validated frame split into its parts (views into the input buffer).
     struct Frame {
-        std::string_view id{};
+        std::string_view type_id{};  // text: the first token
         gmp::bytes_view body{};
     };
 
@@ -384,32 +384,32 @@ struct Nmea {
         }
         Frame f;
         const auto p = text.find(',');
-        f.id = text.substr(0, p);
+        f.type_id = text.substr(0, p);
         const std::string_view rest = p == std::string_view::npos ? std::string_view{} : text.substr(p + 1);
         f.body = gmp::as_bytes(rest.data(), rest.size());
         return f;
     }
 
-    /// Decode the message view selected by the frame's id and pass it to fn(view).
+    /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
     template <class F>
     static gmp::Error visit_frame(const Frame& f, F&& fn) noexcept {
-        if (f.id == "GPGGA") {
+        if (f.type_id == "GPGGA") {
             auto v = GGAView::from(f.body);
             if (!v) return v.error();
             fn(*v);
             return gmp::Error::None;
         }
-        if (f.id == "GPTXT") {
+        if (f.type_id == "GPTXT") {
             auto v = TXTView::from(f.body);
             if (!v) return v.error();
             fn(*v);
             return gmp::Error::None;
         }
-        return gmp::Error::UnknownId;
+        return gmp::Error::UnknownType;
     }
 
-    [[nodiscard]] static gmp::Result<AnyView> dispatch(const Frame& f) noexcept {
-        gmp::Result<AnyView> out = gmp::fail(gmp::Error::UnknownId);
+    [[nodiscard]] static gmp::Result<AnyView> select_message(const Frame& f) noexcept {
+        gmp::Result<AnyView> out = gmp::fail(gmp::Error::UnknownType);
         const gmp::Error e = visit_frame(f, [&](const auto& v) { out = AnyView(v); });
         if (e != gmp::Error::None) return gmp::fail(e);
         return out;
@@ -422,7 +422,7 @@ struct Nmea {
         if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
         if (!f) return gmp::fail(f.error());
-        return dispatch(*f);
+        return select_message(*f);
     }
     /// Parse one frame and decode it into the eager message struct.
     [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::bytes_view buffer) noexcept {
@@ -435,7 +435,7 @@ struct Nmea {
         }, *v);
     }
 
-    /// StreamParser hook: validate, dispatch and deliver a frame to `handler`.
+    /// StreamParser hook: validate a frame, select its message type and deliver it to `handler`.
     /// The handler is called as handler(header_view, message_view) or handler(message_view),
     /// whichever it accepts; message types it does not accept are ignored.
     template <class H>

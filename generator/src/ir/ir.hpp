@@ -184,7 +184,7 @@ using FieldPtr = std::shared_ptr<Field>;
 // ------------------------------------------------------------------------------------------------
 // Messages
 // ------------------------------------------------------------------------------------------------
-using MessageId = std::variant<std::monostate, std::int64_t, std::string>;
+using TypeId = std::variant<std::monostate, std::int64_t, std::string>;
 
 struct Message {
     std::string name;
@@ -194,7 +194,7 @@ struct Message {
     Endian endian = Endian::Big;
     BitOrder bit_order = BitOrder::MsbFirst;
     char separator = ',';  // text field separator
-    MessageId id;
+    TypeId type_id;
     bool want_view = true;
     bool want_struct = true;
     bool is_header = false;  // synthesised protocol header
@@ -264,7 +264,7 @@ struct FramingSpec {
     const Field* length = nullptr;
 };
 
-struct DispatchSpec {
+struct MessageTypeSpec {
     enum class Kind { None, Field, Token };
     Kind kind = Kind::None;
     SourceLoc loc;
@@ -282,11 +282,11 @@ struct Protocol {
     MessagePtr header;  // may have zero fields
     FramingSpec framing;
     ChecksumSpec checksum;
-    DispatchSpec dispatch;
+    MessageTypeSpec message_type;
     char separator = ',';                     // text: separator between id token and fields
     std::vector<std::string> message_names;   // declared
     std::vector<const Message*> messages;     // resolved
-    std::vector<MessageId> ids;               // dispatch id per message (int for field dispatch, string for token)
+    std::vector<TypeId> type_ids;          // resolved type id per message (int for a header field, string for a token)
 
     // ---- derived layout ----
     std::size_t prefix_size = 0;   // sync / start delimiter

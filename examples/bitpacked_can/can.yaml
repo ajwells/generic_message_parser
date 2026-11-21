@@ -22,7 +22,7 @@ messages:
           - { name: flags, bits: 16, type: u16 }
 
   Sensor:
-    id: 1
+    type_id: 1
     fields:
       - { name: temp, type: i16, scale: 0.01 }
       - { name: humidity, type: u8 }
@@ -37,5 +37,5 @@ protocols:
     header: [ { name: id, type: u8 } ]
     framing: { type: fixed, sync: 0xA5A5, size: 10 }
     checksum: { algo: { crc: { width: 8, poly: 0x1D, init: 0xFF, xorout: 0xFF } } }
-    dispatch: { field: id }
+    message_type: { field: id }
     messages: [Sensor]

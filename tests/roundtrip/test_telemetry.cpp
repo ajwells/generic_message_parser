@@ -114,7 +114,7 @@ TEST_CASE("Log: terminated string and remaining bytes") {
     CHECK(*d == l);
 }
 
-TEST_CASE("BinaryLink framing: encode, parse and dispatch") {
+TEST_CASE("BinaryLink framing: encode, parse and select the message type") {
     Command c;
     c.opcode = 0xBEEF;
     c.args = {9, 8, 7};
