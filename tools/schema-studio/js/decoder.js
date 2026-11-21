@@ -852,7 +852,80 @@
   // example input for the built-in example schema
   // ----------------------------------------------------------------------------------------------
   /** Sample input for a decode target of the built-in example schema (null for anything else). */
-  D.exampleInput = (s, target) => {
+  const hexLine = (a) => a.map((b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
+
+  /**
+   * Sample input for the Sensirion SHT4x example schemas (examples/sensirion_sht4x): 6-byte responses with a
+   * CRC-8 after every word, and 1-byte commands. Recognised by structure, not by file name.
+   */
+  function sht4xExample(s, target) {
+    const meas = s.messages.find((m) => m.name === 'Measurement' &&
+      ['temperature', 'humidity'].every((n) => m.fields.some((f) => f.name === n && f.crc === 'crc8_nrsc5')));
+    if (!meas || !target) return null;
+    const [kind, name] = target.split(/:(.*)/s);
+    const word = (v) => {
+      const w = [(v >> 8) & 0xff, v & 0xff];
+      return [...w, Number(D.checksum(s, { algo: 'crc8_nrsc5' }, Uint8Array.from(w)))];
+    };
+    const tTicks = (c) => Math.round(((c + 45) * 65535) / 175);
+    const rhTicks = (rh) => Math.round(((rh + 6) * 65535) / 125);
+    const measurement = (c, rh) => [...word(tTicks(c)), ...word(rhTicks(rh))];
+    const serial = [...word(0x0F4F), ...word(0x5A3C)];
+
+    if (target === 'protocol:MeasurementResponse' || target === 'message:Measurement') {
+      const bad = measurement(25, 54);
+      bad[4] ^= 0x01; // flip a humidity bit: its CRC no longer matches
+      const lines = [
+        '# 25.00 degC, 54.00 %RH (high precision measurement)',
+        hexLine(measurement(25, 54)),
+      ];
+      if (kind === 'message') return lines.join('\n');
+      return [...lines,
+        '# -10.00 degC, 85.00 %RH (outdoor, winter)',
+        hexLine(measurement(-10, 85)),
+        '# 72.50 degC, 12.00 %RH (read after a 200 mW / 1 s heater pulse)',
+        hexLine(measurement(72.5, 12)),
+        '# 4.00 degC, 101.20 %RH (condensing; RH is not cropped to 100)',
+        hexLine(measurement(4, 101.2)),
+        '# 25.00 degC, humidity word corrupted on the bus (bad CRC)',
+        hexLine(bad),
+      ].join('\n');
+    }
+    if (target === 'protocol:SerialNumberResponse' || target === 'message:SerialNumber') {
+      const bad = serial.slice();
+      bad[2] ^= 0xff;
+      return ['# serial number 0x0F4F5A3C', hexLine(serial)]
+        .concat(kind === 'protocol' ? ['# same response with the first CRC byte damaged', hexLine(bad)] : [])
+        .join('\n');
+    }
+    if (kind === 'message') {
+      const m = s.messages.find((x) => x.name === name);
+      // CommandFrame (enum variant): one known command; the decode tester flags unknown values of strict enums
+      const cmd = m && m.fields.length === 1 && G.findEnum(s, m.fields[0].type);
+      if (cmd) {
+        const v = cmd.values.find((x) => x.name === 'measure_high_precision') || cmd.values[0];
+        return v ? `# ${cmd.name}.${v.name}\n${hexLine([G.parseInt(v.value) & 0xff])}` : null;
+      }
+    }
+    return null;
+  }
+
+  /** A message made only of one constant byte (e.g. an SHT4x command) decodes from that byte. */
+  function constByteExample(s, target) {
+    const [kind, name] = (target || '').split(/:(.*)/s);
+    if (kind !== 'message') return null;
+    const m = s.messages.find((x) => x.name === name);
+    if (!m || m.fields.length !== 1) return null;
+    const f = m.fields[0];
+    if (f.type !== 'u8' || !G.isInt(f.const)) return null;
+    return `# ${m.name}: the command byte\n${hexLine([G.parseInt(f.const) & 0xff])}`;
+  }
+
+  D.exampleInput = (s, target) => D.exampleInputFor(s, target) || constByteExample(s, target);
+
+  D.exampleInputFor = (s, target) => {
+    const sht = sht4xExample(s, target);
+    if (sht) return sht;
     if (target === 'protocol:Nmea' && s.protocols.some((p) => p.name === 'Nmea')) {
       // One sentence per line; the tester's "Newlines" option turns each line break into \r\n.
       return [

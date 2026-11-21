@@ -187,3 +187,20 @@ TEST_CASE("SHT4x serial number as a computed value, in both schemas") {
     REQUIRE(r);
     CHECK(std::get<en::SerialNumber>(*r).serial() == 0x0F4F5A3Cu);
 }
+
+TEST_CASE("SHT4x: Schema Studio's example frames decode identically in C++") {
+    struct Case { std::array<std::uint8_t, 6> bytes; double t, rh; };
+    const Case cases[] = {
+        {{0x66, 0x66, 0x93, 0x7A, 0xE1, 0xA4}, 25.0, 54.0},
+        {{0x33, 0x33, 0x88, 0xBA, 0x5D, 0xCC}, -10.0, 85.0},
+        {{0xAB, 0xE2, 0xC7, 0x24, 0xDD, 0x96}, 72.5, 12.0},
+        {{0x47, 0xAE, 0x45, 0xDB, 0x8B, 0xCF}, 4.0, 101.2},  // uncropped RH above 100 %
+    };
+    for (const auto& c : cases) {
+        auto m = MeasurementResponse::decode(c.bytes);
+        REQUIRE(m);
+        const auto& v = std::get<Measurement>(*m);
+        CHECK_THAT(v.temperature_scaled(), WithinAbs(c.t, 0.01));
+        CHECK_THAT(v.humidity_scaled(), WithinAbs(c.rh, 0.01));
+    }
+}

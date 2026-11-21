@@ -43,7 +43,9 @@ Not executed in the browser:
 - custom framers (the whole input is treated as one frame)
 
 Each "decode as" target remembers its own input. The example schema has sample input with valid, corrupted and
-unknown frames (**Example input**).
+unknown frames (**Example input**). So do the Sensirion SHT4x schemas in `examples/sensirion_sht4x`: measurements and the
+serial number with real per-word CRCs (including one corrupted frame), and each command byte. Any message made of
+a single constant byte also gets that byte as its example.
 
 ## Running
 
