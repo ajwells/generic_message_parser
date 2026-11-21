@@ -1,0 +1,243 @@
+# GMP schema reference (schema_version 1)
+
+A schema is one YAML file. `gmpc` turns it into one generated header `<schema>.gmp.hpp`.
+
+```yaml
+schema_version: 1          # required value: 1
+namespace: acme::telemetry # C++ namespace of the generated code (optional)
+defaults: { ... }          # defaults applied to messages / protocols
+enums: { ... }
+custom: { types: {...}, checksums: {...}, framers: {...} }
+messages: { ... }
+protocols: { ... }
+```
+
+Unknown keys are errors, so a typo like `feilds` is caught. Diagnostics report `file:line:col`.
+
+---
+
+## defaults
+
+| key         | values                       | default      |
+|-------------|------------------------------|--------------|
+| `endian`    | `big`, `little`              | `big`        |
+| `bit_order` | `msb_first`, `lsb_first`     | `msb_first`  |
+| `format`    | `binary`, `text`             | `binary`     |
+| `separator` | one character (text fields)  | `,`          |
+| `access`    | `view`, `struct`, `both` or a list | `both` |
+
+## enums
+
+```yaml
+enums:
+  Mode:
+    type: u8                       # underlying integer type (default u8)
+    values: { idle: 0, run: 1, fault: 2 }
+    doc: Operating mode
+```
+
+Generates `enum class Mode : std::uint8_t` and `constexpr std::string_view to_string(Mode)`.
+Values that are not listed still decode; the enum just holds the raw value.
+
+---
+
+## messages
+
+```yaml
+messages:
+  Status:
+    id: 1                # dispatch id (integer, enum value name, or a string for text protocols)
+    format: binary       # or text
+    endian: big          # default for this message's fields
+    bit_order: msb_first
+    separator: ","       # text messages
+    access: [view, struct]
+    doc: Periodic status.
+    fields: [ ... ]
+```
+
+### Field types
+
+| type | binary wire format | struct member | view accessor |
+|------|--------------------|---------------|---------------|
+| `u8 u16 u32 u64 i8 i16 i32 i64` | fixed width integer | `std::uintN_t` / `std::intN_t` | value |
+| `f32 f64` | IEEE-754 | `float` / `double` | value |
+| `bool` | 1 byte, non-zero = true | `bool` | value |
+| `char` | 1 byte | `char` | value |
+| *EnumName* | underlying integer | enum | enum |
+| `bits` | group of bit fields packed into whole bytes | `<Msg>_<field>` struct | that struct |
+| `bytes` | raw bytes, see *lengths* | `std::array` / `gmp::static_vector` | `gmp::bytes_view` |
+| `string` | characters, see *lengths* | `gmp::static_string<N>` | `std::string_view` |
+| `array` | repeated `of:` element | `std::array` / `gmp::static_vector` | `ScalarArrayView` / `FixedArrayView` / `SeqArrayView` |
+| *MessageName* | nested message | that struct | that view |
+| *custom type* | user codec | user type | `gmp::Result<T>` |
+| `{ pad: N }` | N zero bytes (text: N ignored tokens) | none | none |
+
+The same type names are used in text messages, which parse them from tokens instead.
+
+### Field keys
+
+| key | applies to | meaning |
+|-----|-----------|---------|
+| `name` | all | identifier. Names that clash with C++ keywords or generated members get a `_` suffix (e.g. `data` becomes `data_()`) |
+| `type` | all | see above |
+| `endian` | numeric | overrides the message default |
+| `const` | integer / enum | magic value. It is checked on decode (`Error::BadConst`), written automatically on encode, and has no struct member |
+| `scale`, `offset` | numeric | engineering value = raw * scale + offset. Generates `<name>_scaled()` and (struct) `set_<name>_scaled()` |
+| `unit`, `doc` | all | documentation, copied into comments |
+| `length` / `size` | `bytes`, `string`, `pad` | number, expression, or `remaining` |
+| `count` | `array` | number, expression, or `remaining` |
+| `terminator` | `bytes`, `string` | delimiter byte, e.g. `0` for C strings |
+| `max` | variable length | capacity of the generated struct container (required when the message has a struct) |
+| `padding` | fixed `string` | pad character, stripped on decode and filled on encode (default `\0`) |
+| `of` | `array` | element type name, or a mapping like `{ type: u16, endian: little }` |
+| `when` | binary | expression; the field is present only when it evaluates to true (`std::optional`) |
+| `optional` | text | an empty token is allowed (`std::optional`) |
+| `fields` | `bits` | list of bit fields (see below) |
+| `bit_order` | `bits` | overrides the message default |
+| `base`, `width`, `precision` | text numbers | number base (10/16), zero-padded width, decimal places on encode |
+
+### Lengths and counts
+
+- `length: 8` gives a fixed size.
+- `length: len_field` or `length: "n * 2 + 1"` is an expression over earlier fields.
+  If the expression is just a field name, that field is **derived**. On encode it is written from the
+  container's size, so you never set it by hand. On decode it is read as normal.
+- `length: remaining` consumes the rest of the message. Only allowed on the last field.
+- `terminator: 0` reads up to and including the terminator byte.
+
+### Bit fields
+
+```yaml
+- name: flags
+  type: bits
+  bit_order: lsb_first          # optional
+  fields:
+    - { name: armed, bits: 1 }                  # 1 bit defaults to bool
+    - { name: mode,  bits: 3, enum: Mode }
+    - { name: level, bits: 4, type: i8 }        # signed values are sign-extended
+    - { name: rpm,   bits: 14, type: u16, scale: 0.5 }
+    - { name: ver,   bits: 4, const: 1 }        # validated, no member
+    - { pad: 4 }
+```
+
+The group must add up to a whole number of bytes. Bit offset 0 is the first bit of the group:
+- `msb_first`: the MSB of byte 0, with values read most significant bit first (network / Motorola order).
+- `lsb_first`: the LSB of byte 0, with values read least significant bit first (Intel / CAN DBC `@1`).
+
+### Expressions
+
+Used by `when`, `length` and `count`. They support integer literals (`10`, `0x1F`, `0b101`), references to earlier
+non-conditional fields (`count`, `flags.mode`), enum constants (`Mode.fault`), and the operators
+`! - ~ * / % + - << >> & ^ | == != < <= > >= && ||` with C precedence.
+
+---
+
+## protocols
+
+A protocol ties messages to a wire framing:
+
+```
+| prefix (sync/start) | header | body (message) | checksum | suffix (end) |
+```
+
+```yaml
+protocols:
+  BinaryLink:
+    format: binary                # or text
+    endian: big                   # header / checksum default
+    header:                       # binary only; fixed-size fields
+      - { name: msg_id, type: u8 }
+      - { name: len, type: u16 }
+    framing: { ... }
+    checksum: { ... }
+    dispatch: { field: msg_id }   # binary: header field. text: { token: 0 }
+    messages: [Status, Command]
+```
+
+### framing
+
+| `type` | keys | description |
+|--------|------|-------------|
+| `none` | | The whole buffer is one frame (datagrams, CAN payloads). No stream parser. |
+| `fixed` | `sync`, `size` | Fixed-size frames, optionally starting with a sync pattern. Without `size`, all messages must share one fixed size. Shorter messages are zero padded. |
+| `length_prefixed` | `sync`, `length: { field, covers, adjust }` | The size comes from a header field. `covers`: `body` (default), `header_body` or `all` (prefix through checksum). Covered length = value + `adjust`. |
+| `delimited` | `start`, `end`, `escape` | Bounded by delimiters (`start` is optional). Identical start and end bytes (HDLC `0x7E`) may share a flag between frames. |
+| `custom` | `framer` | User type from `custom.framers` providing `static gmp::FrameScan scan(gmp::bytes_view)`. |
+
+Shared keys:
+- `max_frame`: largest frame and the stream buffer size. It is computed when every message is bounded, and required otherwise.
+- `sync` / `start` / `end`: a list of bytes `[0xAA, 0x55]`, a string `"$"`, or an integer `0xA5A5` (big endian).
+- `escape` (delimited only):
+  - `{ char: 0x7D, xor: 0x20 }` is HDLC/PPP style. Delimiter bytes and the escape byte are escaped.
+  - `{ char: 0xDB, map: { 0xC0: 0xDC, 0xDB: 0xDD } }` is SLIP style.
+
+### checksum
+
+```yaml
+checksum:
+  algo: crc16_ccitt      # built-in name, a custom.checksums name, or { crc: {...} }
+  covers: header_body    # binary: header_body (default), body, all (prefix..body)
+  endian: big            # byte order of the stored checksum
+  separator: "*"         # text: checksum follows this character as hex digits
+  required: true         # text: reject frames without a checksum
+```
+
+Built-in algorithms (all `constexpr`, table driven):
+
+- CRCs: `crc8`, `crc8_maxim`, `crc8_autosar`, `crc15_can`, `crc16_ccitt` (CCITT-FALSE), `crc16_xmodem`,
+  `crc16_kermit`, `crc16_x25`, `crc16_modbus`, `crc16_arc`, `crc24_openpgp`, `crc32`, `crc32c`, `crc32_mpeg2`, `crc64_ecma`
+- Sums: `xor8` (NMEA), `sum8`, `lrc8`, `sum16`, `fletcher16`, `fletcher8_ubx`
+
+Any other CRC can be defined inline:
+
+```yaml
+algo: { crc: { width: 8, poly: 0x1D, init: 0xFF, refin: false, refout: false, xorout: 0xFF } }
+```
+
+For text protocols the checksum covers everything between the start delimiter and the separator, and is written as
+uppercase hex (NMEA style).
+
+---
+
+## custom extensions
+
+Language-specific settings live in a block named after the backend (`cpp:`), so other backends can add theirs later.
+
+```yaml
+custom:
+  types:
+    bcd_time:
+      wire_size: 3            # binary: fixed size if known (else max_wire_size: N for bounds)
+      cpp:
+        header: "my_codecs.hpp"
+        type: "my::Time"
+        decode: "my::decode_bcd_time"
+        encode: "my::encode_bcd_time"
+  checksums:
+    add16:
+      size: 2
+      cpp: { header: "my_codecs.hpp", function: "my::add16" }
+  framers:
+    len_byte:
+      cpp: { header: "my_codecs.hpp", type: "my::LengthByteFramer" }
+```
+
+Required C++ signatures. The generated code checks them with `static_assert`:
+
+| extension | signature |
+|-----------|-----------|
+| binary decoder | `gmp::Result<T> decode(gmp::ByteReader&)` |
+| binary encoder | `gmp::VoidResult encode(gmp::ByteWriter&, const T&)` |
+| text decoder | `gmp::Result<T> decode(std::string_view token)` |
+| text encoder | `gmp::VoidResult encode(gmp::text::TextWriter&, const T&)`. Write the token content with `w.raw(...)`; the separator is already handled. |
+| checksum | `<unsigned integer> fn(gmp::bytes_view covered)` |
+| framer | `struct F { static gmp::FrameScan scan(gmp::bytes_view); };` |
+
+A `FrameScan` is one of three results:
+- `need_more(hint)`
+- `frame(size, consume, consume_on_error)`
+- `skip(n, error)`
+
+`consume_on_error` controls resynchronisation after a corrupt frame. Use 1 to rescan from the next byte, or `size` to
+drop the whole frame.

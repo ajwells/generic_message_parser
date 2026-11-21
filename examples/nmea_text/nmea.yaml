@@ -1,0 +1,39 @@
+schema_version: 1
+namespace: nav::nmea
+defaults: { format: text, separator: "," }
+
+enums:
+  FixQuality:
+    type: u8
+    values: { invalid: 0, gps: 1, dgps: 2 }
+
+messages:
+  GGA:
+    id: GPGGA
+    doc: Global positioning system fix data.
+    fields:
+      - { name: utc_time, type: f64, precision: 2, width: 9 }
+      - { name: latitude, type: f64, precision: 4, width: 9, optional: true }
+      - { name: lat_hemi, type: char, optional: true }
+      - { name: longitude, type: f64, precision: 4, width: 10, optional: true }
+      - { name: lon_hemi, type: char, optional: true }
+      - { name: quality, type: FixQuality }
+      - { name: satellites, type: u8, width: 2 }
+      - { name: hdop, type: f32, precision: 1, optional: true }
+      - { name: altitude, type: f64, precision: 1, optional: true }
+      - { name: altitude_unit, type: char, optional: true }
+      - { pad: 4 }
+  TXT:
+    id: GPTXT
+    fields:
+      - { name: total, type: u8, width: 2 }
+      - { name: number, type: u8, width: 2 }
+      - { name: severity, type: u8, width: 2 }
+      - { name: text, type: string, max: 61 }
+
+protocols:
+  Nmea:
+    framing: { type: delimited, start: "$", end: "\r\n", max_frame: 82 }
+    checksum: { algo: xor8, separator: "*" }
+    dispatch: { token: 0 }
+    messages: [GGA, TXT]

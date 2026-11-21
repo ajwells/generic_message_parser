@@ -1,0 +1,63 @@
+schema_version: 1
+namespace: acme::telemetry
+defaults: { endian: big, bit_order: msb_first }
+
+enums:
+  Mode:
+    type: u8
+    values: { idle: 0, run: 1, fault: 2 }
+  MsgId:
+    type: u8
+    values: { status: 1, command: 2, log: 3 }
+
+messages:
+  Extended:
+    fields:
+      - { name: temperature, type: i16, scale: 0.1, unit: degC }
+      - { name: pressure, type: u32, endian: little }
+
+  Status:
+    id: status
+    doc: Periodic status report.
+    fields:
+      - { name: magic, type: u8, const: 0x5A }
+      - { name: voltage, type: u16, scale: 0.01, unit: V }
+      - name: flags
+        type: bits
+        fields:
+          - { name: armed, bits: 1 }
+          - { name: mode, bits: 3, enum: Mode }
+          - { name: level, bits: 4, type: i8 }
+      - { name: count, type: u8 }
+      - { name: samples, type: array, of: i16, count: count, max: 16 }
+      - { name: ext, type: Extended, when: "flags.mode == Mode.fault" }
+      - { pad: 1 }
+      - { name: label, type: string, length: 8, padding: " " }
+
+  Command:
+    id: 2
+    fields:
+      - { name: opcode, type: u16 }
+      - { name: arg_len, type: u8 }
+      - { name: args, type: bytes, length: arg_len, max: 32 }
+
+  Log:
+    id: 3
+    fields:
+      - { name: level, type: u8 }
+      - { name: text, type: string, terminator: 0, max: 64 }
+      - { name: tail, type: bytes, length: remaining, max: 16 }
+
+protocols:
+  BinaryLink:
+    header:
+      - { name: msg_id, type: MsgId }
+      - { name: len, type: u16 }
+    framing:
+      type: length_prefixed
+      sync: [0xAA, 0x55]
+      length: { field: len, covers: body }
+      max_frame: 256
+    checksum: { algo: crc16_ccitt, covers: header_body }
+    dispatch: { field: msg_id }
+    messages: [Status, Command, Log]

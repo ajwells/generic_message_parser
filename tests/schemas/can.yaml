@@ -1,0 +1,41 @@
+schema_version: 1
+namespace: vehicle::can
+defaults: { endian: little, bit_order: lsb_first }
+
+enums:
+  Gear: { type: u8, values: { park: 0, reverse: 1, neutral: 2, drive: 3 } }
+
+messages:
+  EngineData:
+    doc: 8-byte CAN payload with Intel (lsb_first) signals.
+    fields:
+      - name: signals
+        type: bits
+        fields:
+          - { name: rpm, bits: 14, type: u16, scale: 0.5 }
+          - { name: gear, bits: 2, enum: Gear }
+          - { name: coolant, bits: 8, type: u8, offset: -40 }
+          - { name: throttle, bits: 10, type: u16, scale: 0.1 }
+          - { pad: 6 }
+          - { name: counter, bits: 4 }
+          - { name: version, bits: 4, const: 1 }
+          - { name: flags, bits: 16, type: u16 }
+
+  Sensor:
+    id: 1
+    fields:
+      - { name: temp, type: i16, scale: 0.01 }
+      - { name: humidity, type: u8 }
+
+protocols:
+  Can:
+    framing: { type: none }
+    messages: [EngineData]
+
+  FixedLink:
+    endian: big
+    header: [ { name: id, type: u8 } ]
+    framing: { type: fixed, sync: 0xA5A5, size: 10 }
+    checksum: { algo: { crc: { width: 8, poly: 0x1D, init: 0xFF, xorout: 0xFF } } }
+    dispatch: { field: id }
+    messages: [Sensor]

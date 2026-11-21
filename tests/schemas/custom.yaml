@@ -1,0 +1,34 @@
+schema_version: 1
+namespace: ext
+
+custom:
+  types:
+    nmea_coord:
+      cpp: { header: "test_codecs.hpp", type: "double", decode: "test::decode_coord", encode: "test::encode_coord" }
+  framers:
+    len_byte:
+      cpp: { header: "test_codecs.hpp", type: "test::LengthByteFramer" }
+
+messages:
+  Pos:
+    format: text
+    id: POS
+    fields:
+      - { name: lat, type: nmea_coord }
+      - { name: lon, type: nmea_coord, optional: true }
+  Blob:
+    access: view
+    fields:
+      - { name: kind, type: u8 }
+      - { name: data, type: bytes, length: remaining }
+
+protocols:
+  TextPos:
+    format: text
+    framing: { type: delimited, end: "\n", max_frame: 64 }
+    dispatch: { token: 0 }
+    messages: [Pos]
+  Custom:
+    header: [ { name: n, type: u8 } ]
+    framing: { type: custom, framer: len_byte, max_frame: 256 }
+    messages: [Blob]

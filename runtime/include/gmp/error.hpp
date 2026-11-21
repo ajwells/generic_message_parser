@@ -1,0 +1,46 @@
+#pragma once
+// gmp/error.hpp - error codes shared by the runtime and generated code.
+
+#include <cstdint>
+#include <string_view>
+
+namespace gmp {
+
+enum class Error : std::uint8_t {
+    None = 0,
+    Truncated,      // input ended before the message/frame was complete
+    BadSync,        // sync bytes / start delimiter not found (garbage skipped)
+    BadChecksum,    // checksum / CRC mismatch
+    BadLength,      // length field invalid or frame exceeds max size
+    BadDelimiter,   // unexpected delimiter inside a frame
+    BadConst,       // constant / magic field did not match
+    OutOfRange,     // value does not fit (count > capacity, etc.)
+    UnknownId,      // dispatch id did not match any message
+    BufferFull,     // output buffer too small / stream buffer full
+    ParseError,     // text field could not be parsed
+    MissingField,   // required (text) field was empty or absent
+    InvalidValue,   // generic semantic failure (used by custom codecs)
+    Custom,         // reserved for user codecs
+};
+
+constexpr std::string_view to_string(Error e) noexcept {
+    switch (e) {
+        case Error::None: return "none";
+        case Error::Truncated: return "truncated";
+        case Error::BadSync: return "bad sync";
+        case Error::BadChecksum: return "bad checksum";
+        case Error::BadLength: return "bad length";
+        case Error::BadDelimiter: return "bad delimiter";
+        case Error::BadConst: return "bad constant";
+        case Error::OutOfRange: return "out of range";
+        case Error::UnknownId: return "unknown message id";
+        case Error::BufferFull: return "buffer full";
+        case Error::ParseError: return "parse error";
+        case Error::MissingField: return "missing field";
+        case Error::InvalidValue: return "invalid value";
+        case Error::Custom: return "custom error";
+    }
+    return "unknown";
+}
+
+} // namespace gmp

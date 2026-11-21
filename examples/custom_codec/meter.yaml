@@ -1,0 +1,26 @@
+# Custom field codec (BCD date/time) and a custom checksum function.
+schema_version: 1
+namespace: meter
+defaults: { endian: little }
+
+custom:
+  types:
+    bcd_datetime:
+      wire_size: 6
+      cpp: { header: "meter_codecs.hpp", type: "meter::DateTime", decode: "meter::decode_bcd", encode: "meter::encode_bcd" }
+  checksums:
+    mod256:
+      size: 1
+      cpp: { header: "meter_codecs.hpp", function: "meter::mod256" }
+
+messages:
+  Reading:
+    fields:
+      - { name: timestamp, type: bcd_datetime }
+      - { name: kwh, type: u32, scale: 0.01, unit: kWh }
+
+protocols:
+  MeterBus:
+    framing: { type: fixed, sync: [0x68], size: 12 }
+    checksum: { algo: mod256, covers: body }
+    messages: [Reading]

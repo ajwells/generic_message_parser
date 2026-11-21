@@ -1,0 +1,46 @@
+# Length-prefixed binary link with sync word, CRC, dispatch and a conditional nested message.
+schema_version: 1
+namespace: demo
+defaults: { endian: big }
+
+enums:
+  Mode: { type: u8, values: { idle: 0, run: 1, fault: 2 } }
+
+messages:
+  Fault:
+    fields:
+      - { name: code, type: u16 }
+      - { name: temperature, type: i16, scale: 0.1, unit: degC }
+
+  Status:
+    id: 1
+    fields:
+      - { name: uptime_s, type: u32 }
+      - { name: voltage, type: u16, scale: 0.001, unit: V }
+      - name: state
+        type: bits
+        fields:
+          - { name: armed, bits: 1 }
+          - { name: mode, bits: 2, enum: Mode }
+          - { pad: 5 }
+      - { name: fault, type: Fault, when: "state.mode == Mode.fault" }
+
+  Samples:
+    id: 2
+    fields:
+      - { name: channel, type: u8 }
+      - { name: count, type: u8 }
+      - { name: values, type: array, of: i16, count: count, max: 64 }
+
+protocols:
+  Link:
+    header:
+      - { name: id, type: u8 }
+      - { name: length, type: u16 }
+    framing:
+      type: length_prefixed
+      sync: [0xAA, 0x55]
+      length: { field: length, covers: body }
+    checksum: { algo: crc16_ccitt }
+    dispatch: { field: id }
+    messages: [Status, Samples]

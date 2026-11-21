@@ -1,0 +1,20 @@
+#pragma once
+// gmp/gmp.hpp - umbrella header included by generated code.
+
+#include "gmp/bits.hpp"
+#include "gmp/byte_reader.hpp"
+#include "gmp/byte_writer.hpp"
+#include "gmp/checksum.hpp"
+#include "gmp/concepts.hpp"
+#include "gmp/containers.hpp"
+#include "gmp/endian.hpp"
+#include "gmp/error.hpp"
+#include "gmp/framing/delimited.hpp"
+#include "gmp/framing/escape.hpp"
+#include "gmp/framing/fixed.hpp"
+#include "gmp/framing/frame.hpp"
+#include "gmp/framing/length_prefixed.hpp"
+#include "gmp/result.hpp"
+#include "gmp/stream_parser.hpp"
+#include "gmp/text.hpp"
+#include "gmp/views.hpp"
