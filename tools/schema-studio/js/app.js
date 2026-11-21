@@ -15,6 +15,7 @@
   // rendering
   // ----------------------------------------------------------------------------------------------
   function renderLeft() {
+    hideTip();
     const scroll = left.scrollTop;
     left.innerHTML = G.renderEditor(state, ui, issues);
     left.scrollTop = scroll;
@@ -37,6 +38,55 @@
     if (ui.tab === 'decode') renderDecode();
     renderIssues();
   }
+
+  // ---- tooltips (left pane) -------------------------------------------------------------------------
+  const tip = document.createElement('div');
+  tip.className = 'tip';
+  tip.setAttribute('role', 'tooltip');
+  document.body.appendChild(tip);
+  let tipTimer = null, tipTarget = null, tipShown = false;
+  function hideTip() {
+    clearTimeout(tipTimer);
+    tip.classList.remove('show');
+    tipShown = false;
+    tipTarget = null;
+  }
+  function showTip(el) {
+    const t = G.tipFor(el);
+    if (!t || (!t.text && !t.options)) { hideTip(); return; }
+    const e = G.esc;
+    tip.innerHTML = `<div class="tip-head"><span class="tip-title">${e(t.title)}</span>${t.key ? `<code class="tip-key">${e(t.key)}</code>` : ''}</div>` +
+      (t.text ? `<div class="tip-body">${e(t.text)}</div>` : '') +
+      (t.value ? `<div class="tip-val"><b>${e(t.value.label)}</b>: ${e(t.value.text)}</div>` : '') +
+      (t.options ? `<div class="tip-opts">${t.options.map((o) => `<div class="tip-opt${o.on ? ' on' : ''}"><b>${e(o.label)}</b><span>${e(o.text)}</span></div>`).join('')}</div>` : '');
+    tip.classList.add('show');
+    tipShown = true;
+    const r = el.getBoundingClientRect();
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    const x = Math.max(8, Math.min(window.innerWidth - w - 8, r.left));
+    let y = r.bottom + 8;
+    if (y + h > window.innerHeight - 8) y = Math.max(8, r.top - h - 8);
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+  left.addEventListener('mouseover', (ev) => {
+    // native title tooltips would double up with ours: keep the text for our tooltip instead
+    const titled = ev.target.closest('[title]');
+    if (titled && left.contains(titled)) {
+      titled.dataset.tipText = titled.getAttribute('title');
+      titled.removeAttribute('title');
+    }
+    const target = ev.target.closest('label.field-label, label.check, input[data-path], select[data-path], [data-action]');
+    if (!target || !left.contains(target)) { hideTip(); return; }
+    if (target === tipTarget) return;
+    tipTarget = target;
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(() => { if (tipTarget === target && target.isConnected) showTip(target); }, tipShown ? 80 : 450);
+  });
+  left.addEventListener('mouseleave', hideTip);
+  left.addEventListener('scroll', hideTip, true);
+  left.addEventListener('mousedown', hideTip);
+  left.addEventListener('keydown', hideTip);
 
   // ---- decode tester ------------------------------------------------------------------------------
   // dui = the active target's input; `saved` remembers the input of every other target.

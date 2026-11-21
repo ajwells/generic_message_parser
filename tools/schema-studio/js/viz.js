@@ -228,6 +228,13 @@
     return `<div class="viz-grid">${sec('Protocols', protos)}${sec('Messages', msgs)}</div>`;
   };
 
+  /** One layout card ('message' | 'protocol'), as shown on the Layout tab. Used by the guide page. */
+  G.renderCard = (s, kind, name, ui = { sel: {}, field: null }) => {
+    if (kind === 'message') { const m = G.findMessage(s, name); return m ? messageCard(s, ui, m, []) : ''; }
+    const p = s.protocols.find((x) => x.name === name);
+    return p ? protocolCard(s, ui, p, []) : '';
+  };
+
   G.renderLegend = () => [
     ['int', 'integer'], ['float', 'float'], ['enum', 'enum'], ['bits', 'bits'], ['string', 'string'], ['bytes', 'bytes'],
     ['array', 'array'], ['message', 'message'], ['custom', 'custom'], ['check', 'checksum'],

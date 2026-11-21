@@ -83,7 +83,8 @@ sync byte, escaped as `81 00` / `81 01` everywhere else).
 **Prefer a visual editor?** Open [`tools/schema-studio/index.html`](tools/schema-studio) in a browser. You build
 schemas with forms on the left and see a size-proportional layout of every message and frame on the right, then
 download the YAML. Its **Decode tester** tab decodes pasted raw frames against the schema, so you can check them before
-generating code.
+generating code. New to GMP? Open [`tools/schema-studio/guide.html`](tools/schema-studio/guide.html) for a visual
+tour of every feature, with live decoded examples.
 
 ---
 

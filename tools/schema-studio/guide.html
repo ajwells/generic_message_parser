@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GMP Guide</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="guide-page">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="3" width="18" height="4" rx="1.5"/><rect x="3" y="9" width="11" height="6" rx="1.5"/><rect x="16" y="9" width="5" height="6" rx="1.5"/><rect x="3" y="17" width="18" height="4" rx="1.5"/></svg>
+      </span>
+      <span class="brand-name">GMP Guide</span>
+      <span class="brand-sub">every feature, with live decoded examples</span>
+    </div>
+    <div class="topbar-actions">
+      <a class="btn primary" href="index.html">Open the Studio</a>
+    </div>
+  </header>
+
+  <div class="guide">
+    <nav class="guide-nav" id="guide-nav" aria-label="Sections"></nav>
+    <main class="guide-main" id="guide-main"></main>
+  </div>
+
+  <script src="js/state.js"></script>
+  <script src="js/layout.js"></script>
+  <script src="js/validate.js"></script>
+  <script src="js/yaml.js"></script>
+  <script src="js/viz.js"></script>
+  <script src="js/decoder.js"></script>
+  <script src="js/decode-view.js"></script>
+  <script src="js/guide.js"></script>
+  <script>window.GMP.renderGuide();</script>
+</body>
+</html>

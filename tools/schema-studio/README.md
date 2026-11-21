@@ -4,6 +4,7 @@ A local web app for building GMP YAML schemas visually.
 
 - **Left pane:** every schema option. This covers settings and defaults, messages and their fields (including bit
   fields), protocols (header, framing, checksum, message_type, carried messages), enums, and custom extensions.
+  **Hover any option** for a tooltip: what it does, the YAML key it writes, and for drop-downs what each choice means.
 - **Right pane:** a vertical, size-proportional picture of each message and protocol frame. It shows byte offsets, bit
   layouts, nested messages, conditional and variable-length fields, plus side bars marking checksum and length-field
   coverage. Click any block to edit that field.
@@ -11,6 +12,10 @@ A local web app for building GMP YAML schemas visually.
 - **Issues bar:** live validation that mirrors `gmpc`'s rules. Click an issue to jump to it.
 - **Decode tester:** paste raw bytes (hex) or text and see them decoded live against the schema, like a regex
   tester for messages (see below).
+
+- **Guide** (`guide.html`, the Guide button in the top bar): a visual tour of every GMP feature. Each example is a
+  real schema shown as YAML, laid out as Studio cards and decoded with the decode tester. **Open in Studio** loads it
+  into the editor (after asking, because it replaces the current schema).
 
 ## Decode tester
 
@@ -72,8 +77,10 @@ them.
 | `js/yaml.js` | YAML emitter (no dependency) and importer (js-yaml) |
 | `js/editor.js` | left pane rendering |
 | `js/viz.js` | right pane rendering |
-| `js/app.js` | events, actions, tabs, import / export |
+| `js/app.js` | events, actions, tabs, import / export, editor tooltips |
+| `js/tips.js` | tooltip text for every editor control, keyed by normalised `data-path` |
+| `js/guide.js` | the guide page (`guide.html`): sections, example schemas, live demos |
 
 Inputs carry `data-path` attributes pointing into the state object, and `app.js` applies edits generically. To expose
 a new schema option, add it to the constructor in `state.js`, a control in `editor.js`, and emit/import logic in
-`yaml.js`.
+`yaml.js`. Add its tooltip to `js/tips.js` too.
