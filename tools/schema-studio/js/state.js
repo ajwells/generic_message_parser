@@ -64,7 +64,7 @@ window.GMP = window.GMP || {};
   G.newCustomFramer = (over = {}) => ({ uid: G.uid(), name: 'my_framer', header: '', type: '', ...over });
 
   G.emptyState = () => ({
-    version: 1,
+    version: STATE_VERSION,  // defined in the persistence section below
     schema: {
       namespace: '',
       defaults: { endian: 'big', bit_order: 'msb_first', format: 'binary', separator: ',', access: 'both' },
@@ -239,18 +239,8 @@ window.GMP = window.GMP || {};
   // persistence
   // ----------------------------------------------------------------------------------------------
   const KEY = 'gmp-schema-studio-v1';
-  /** Upgrade state saved by older versions: `dispatch` -> `message_type`, message `id` -> `type_id`. */
-  G.migrate = (s) => {
-    (s.messages || []).forEach((m) => {
-      if (m.type_id === undefined) m.type_id = m.id ?? '';
-      delete m.id;
-    });
-    (s.protocols || []).forEach((p) => {
-      if (!p.message_type) p.message_type = p.dispatch || { kind: 'none', field: '', token: '0' };
-      delete p.dispatch;
-    });
-    return s;
-  };
+  /** Shape of the saved state; saved state with another version is ignored (no migration). */
+  const STATE_VERSION = 2;
 
   G.save = (s) => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (_) { /* private mode etc. */ } };
   G.load = () => {
@@ -258,9 +248,7 @@ window.GMP = window.GMP || {};
       const raw = localStorage.getItem(KEY);
       if (!raw) return null;
       const s = JSON.parse(raw);
-      if (!s || s.version !== 1) return null;
-      G.migrate(s);
-      return s;
+      return s && s.version === STATE_VERSION ? s : null;
     } catch (_) { return null; }
   };
 
