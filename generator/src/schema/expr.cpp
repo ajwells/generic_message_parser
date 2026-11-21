@@ -205,6 +205,7 @@ std::string expr_to_string(const ir::Expr& e) {
             for (std::size_t i = 0; i < e.path.size(); ++i) s += (i ? "." : "") + e.path[i];
             return s;
         }
+        case ir::Expr::Kind::Input: return "value";
         case ir::Expr::Kind::Unary: return e.op + "(" + expr_to_string(*e.lhs) + ")";
         case ir::Expr::Kind::Binary:
             return "(" + expr_to_string(*e.lhs) + " " + e.op + " " + expr_to_string(*e.rhs) + ")";

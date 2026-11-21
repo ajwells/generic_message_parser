@@ -121,6 +121,7 @@ public:
 using crc8          = Crc<std::uint8_t, 8, 0x07, 0x00, false, false, 0x00>;          // CRC-8/SMBUS
 using crc8_maxim    = Crc<std::uint8_t, 8, 0x31, 0x00, true, true, 0x00>;            // CRC-8/MAXIM-DOW (1-Wire)
 using crc8_autosar  = Crc<std::uint8_t, 8, 0x2F, 0xFF, false, false, 0xFF>;          // CRC-8/AUTOSAR
+using crc8_nrsc5    = Crc<std::uint8_t, 8, 0x31, 0xFF, false, false, 0x00>;          // CRC-8/NRSC-5 (Sensirion SHT4x/SCD4x/SGP4x word CRC)
 using crc15_can     = Crc<std::uint16_t, 15, 0x4599, 0x0000, false, false, 0x0000>;  // CRC-15/CAN
 using crc16_ccitt   = Crc<std::uint16_t, 16, 0x1021, 0xFFFF, false, false, 0x0000>;  // CRC-16/IBM-3740 ("CCITT-FALSE")
 using crc16_xmodem  = Crc<std::uint16_t, 16, 0x1021, 0x0000, false, false, 0x0000>;  // CRC-16/XMODEM

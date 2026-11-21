@@ -21,6 +21,7 @@ enum class Error : std::uint8_t {
     MissingField,   // required (text) field was empty or absent
     InvalidValue,   // generic semantic failure (used by custom codecs)
     Custom,         // reserved for user codecs
+    UnknownEnum,    // a `strict` enum field held a value that is not one of the enum's values
 };
 
 constexpr std::string_view to_string(Error e) noexcept {
@@ -39,6 +40,7 @@ constexpr std::string_view to_string(Error e) noexcept {
         case Error::MissingField: return "missing field";
         case Error::InvalidValue: return "invalid value";
         case Error::Custom: return "custom error";
+        case Error::UnknownEnum: return "unknown enum value";
     }
     return "unknown";
 }

@@ -35,6 +35,17 @@ enum class Mode : std::uint8_t {
     }
 }
 
+/// True when `v` is one of the declared values.
+[[nodiscard]] constexpr bool is_known(Mode v) noexcept {
+    switch (v) {
+        case Mode::idle:
+        case Mode::run:
+        case Mode::fault:
+            return true;
+        default: return false;
+    }
+}
+
 enum class MsgId : std::uint8_t {
     status = 1,
     command = 2,
@@ -47,6 +58,17 @@ enum class MsgId : std::uint8_t {
         case MsgId::command: return "command";
         case MsgId::log: return "log";
         default: return {};
+    }
+}
+
+/// True when `v` is one of the declared values.
+[[nodiscard]] constexpr bool is_known(MsgId v) noexcept {
+    switch (v) {
+        case MsgId::status:
+        case MsgId::command:
+        case MsgId::log:
+            return true;
+        default: return false;
     }
 }
 

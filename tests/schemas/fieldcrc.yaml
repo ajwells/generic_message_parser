@@ -1,0 +1,33 @@
+# Field-level checksums (`crc:`) and extra conversions (`conversions:`) in less common positions.
+schema_version: 1
+namespace: test::fieldcrc
+defaults: { endian: big }
+
+enums:
+  State: { type: u8, values: { off: 0, on: 1, error: 2 } }
+
+messages:
+  Mixed:
+    fields:
+      - { name: state, type: State, crc: crc8_nrsc5 }
+      - { name: count, type: u8 }
+      - { name: items, type: array, of: u16, count: count, max: 4 }          # variable length before CRC fields
+      - name: level
+        type: i16
+        endian: little
+        crc: { crc: { width: 16, poly: 0x1021, init: 0xFFFF } }              # inline CRC, stored little endian
+        scale: 0.5
+        conversions:
+          percent: { scale: 0.25, unit: "%" }
+          centi: { scale: 50, offset: 1 }
+      - { name: extra, type: u16, crc: crc8_nrsc5, when: "state == State.error" }
+      - { name: magic, type: u8, const: 0xA5, crc: crc8 }
+
+  Reading:
+    format: text
+    fields:
+      - name: raw
+        type: i32
+        scale: 0.1
+        conversions:
+          millis: { scale: 100 }

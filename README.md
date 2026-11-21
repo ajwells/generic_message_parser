@@ -75,7 +75,9 @@ stream.feed(chunk, gmp::overloaded{
 });
 ```
 
-Working programs are in [examples/](examples): `binary_telemetry`, `nmea_text`, `bitpacked_can` and `custom_codec`.
+Working programs are in [examples/](examples): `binary_telemetry`, `nmea_text`, `bitpacked_can`, `custom_codec` and
+`sensirion_sht4x` (an I²C humidity sensor with per-word CRCs, built from its datasheet; `sht4x.yaml` has one message per
+command, `sht4x_enum.yaml` has the commands as an enum).
 
 **Prefer a visual editor?** Open [`tools/schema-studio/index.html`](tools/schema-studio) in a browser. You build
 schemas with forms on the left and see a size-proportional layout of every message and frame on the right, then
@@ -133,6 +135,7 @@ and must not shadow built-in type names. Each message `M` also reserves `MView`,
 | `format` | `binary`, `text` | `binary` | Whether messages and protocols are binary or token-separated text. |
 | `separator` | one character | `,` | Field separator for text messages and protocols. |
 | `access` | `view`, `struct`, `both`, or a list like `[view, struct]` | `both` | Which C++ access styles to generate (see [messages](#messages)). |
+| `strict_enums` | `true`, `false` | `false` | Default for each enum's `strict`: reject undeclared enum values on decode (see [enums](#enums)). |
 
 Every default can be overridden per message, per protocol, and (for `endian`/`bit_order`) per field.
 
@@ -143,12 +146,19 @@ enums:
   Mode:
     type: u8                                  # underlying integer type, default u8
     values: { idle: 0, run: 1, fault: 2 }     # name -> integer (hex/binary literals allowed)
+    strict: true                              # reject undeclared values on decode (default: defaults.strict_enums)
     doc: Operating mode                       # copied into the generated comment
 ```
 
-- Generates `enum class Mode : std::uint8_t` and `constexpr std::string_view to_string(Mode)`. `to_string`
-  returns an empty string for unlisted values.
-- Values that are not listed still decode; the enum simply holds the raw number.
+- Generates `enum class Mode : std::uint8_t`, `constexpr std::string_view to_string(Mode)` and `constexpr bool
+  is_known(Mode)` (true for declared values). `to_string` returns an empty string for unlisted values.
+- By default, values that are not listed still decode; the enum simply holds the raw number (check with
+  `is_known()`).
+- With `strict: true` (or `defaults: { strict_enums: true }`), decoding fails with `UnknownEnum` instead. This applies
+  wherever the enum appears: plain fields, bit fields, array elements, nested messages, and text fields. The struct's
+  `read`/`decode` and the view's `from()` check binary fields. Text views parse lazily, so the field's accessor
+  returns the error. Encoding checks too: `write`/`encode` (and protocol `encode`) fail with `UnknownEnum` before
+  writing an undeclared value. `strict: false` on one enum opts it out of a `strict_enums` default.
 - Enum constants can be used in expressions as `Mode.fault`, and as `type_id` values when `message_type` reads an enum header
   field.
 
@@ -177,6 +187,7 @@ messages:
 | `access` | `view` generates only the zero-copy `MView` class, `struct` generates only the eager `struct M`, and `both` (the default) generates both. Messages used by a protocol need `view` (message selection uses views). A nested message must support every access style its parent uses. |
 | `doc` | Documentation comment for the generated types. |
 | `fields` | Ordered list of fields. On the wire they appear in exactly this order. |
+| `computed` | Values derived from the fields, with accessors but no bytes on the wire. See [computed values](#computed-values). |
 
 #### Views vs structs
 
@@ -232,6 +243,8 @@ Array views:
 | `endian` | multi-byte numerics | Overrides the message default for this field only. |
 | `const` | integer / enum / bool / char | Fixed (magic) value. Decode fails with `BadConst` on mismatch. Encode writes it automatically. There is no struct member or view accessor; the struct gets a `static constexpr <name>_value`. |
 | `scale`, `offset` | numeric scalars | Engineering conversion: `value = raw * scale + offset`. The raw value is stored and transmitted. Adds `<name>_scaled()` to struct and view, and `set_<name>_scaled(double)` to the struct (rounds to nearest for integers). |
+| `conversions` | numeric scalars | Additional named conversions next to `scale`/`offset`, e.g. a temperature in both °C and °F. A mapping of name → `{ scale, offset, unit }`. Each adds `<name>_<conversion>()` to struct and view, and `set_<name>_<conversion>(double)` to the struct. See [field checksums and conversions](#field-checksums-and-conversions). |
+| `crc` | binary scalars and enums | A checksum of this field's value bytes, stored right after them, e.g. `crc: crc8_nrsc5` for Sensirion sensors. Takes the same values as a protocol checksum's `algo`. See [field checksums and conversions](#field-checksums-and-conversions). |
 | `unit` | all | Documentation only; appears in generated comments. |
 | `doc` | all | Documentation comment. |
 | `length` (alias `size`) | `bytes`, `string`, `pad` | Number of bytes: a number, an expression, or `remaining`. See [lengths and counts](#lengths-and-counts). |
@@ -247,6 +260,84 @@ Array views:
 | `base` | text integers / enums | Number base for parsing and writing (`10` default, `16` for hex). |
 | `width` | text numbers | Minimum digits when encoding, zero padded (`width: 2` gives `08`). Ignored on decode. |
 | `precision` | text floats | Decimal places when encoding (`precision: 3` gives `4807.038`). The default `-1` gives the shortest exact representation. |
+
+#### field checksums and conversions
+
+Some devices protect each value separately instead of the whole frame. For example, Sensirion sensors send every
+16-bit word followed by its own CRC-8. Use `crc` on the field:
+
+```yaml
+- name: temperature
+  type: u16
+  crc: crc8_nrsc5                  # 2 value bytes, then 1 CRC byte over those two bytes
+  scale: 0.0026703288319218739     # 175 / 65535
+  offset: -45
+  unit: degC
+  conversions:
+    degf: { scale: 0.0048065918974593731, offset: -49, unit: degF }   # 315 / 65535
+```
+
+- The field occupies the value bytes plus the checksum bytes: 3 bytes here. Following fields start after the
+  checksum.
+- **Decode:** the struct's `read`/`decode` and the view's `from()` verify the checksum and fail with `BadChecksum` on
+  a mismatch. View accessors then read the value without re-checking.
+- **Encode:** `write`/`encode` compute and write the checksum. The struct has no member for it.
+- **Algorithms:** `crc` takes the same values as a protocol checksum's `algo`: a built-in name, a `custom.checksums`
+  entry, or inline parameters (`crc: { crc: { width: 16, poly: 0x1021, init: 0xFFFF } }`).
+- **Byte order:** a multi-byte checksum is stored in the field's byte order.
+- **Restrictions:** allowed on binary scalar and enum fields, including conditional (`when`) and `const` fields. Not
+  allowed on array elements or in text messages.
+
+`conversions` adds extra engineering-unit accessors next to `scale`/`offset`, which provides `_scaled()`. With the
+field above, the generated code has:
+- `temperature_scaled()` for °C
+- `temperature_degf()` for °F
+- `set_temperature_degf(77.0)` on the struct
+
+Each conversion needs a `scale` and/or an `offset`; `unit` is optional and only documents the value. Conversion names
+must be identifiers. `scaled` and `value` are reserved, and `<field>_<conversion>` must not clash with another field.
+
+#### computed values
+
+A computed value is derived from a message's fields instead of being read from its own bytes. Use one when a
+single logical value is split across fields. For example, the SHT4x serial number is sent as two 16-bit words,
+each followed by a CRC:
+
+```yaml
+SerialNumber:
+  fields:
+    - { name: serial_high, type: u16, crc: crc8_nrsc5 }
+    - { name: serial_low,  type: u16, crc: crc8_nrsc5 }
+  computed:
+    serial:
+      type: u32
+      value: "(serial_high << 16) | serial_low"
+```
+
+This generates `serial()` on the struct and the view, and `set_serial(std::uint32_t)` on the struct:
+
+```cpp
+view.serial();               // 0x0F4F5A3C
+msg.set_serial(0x0F4F5A3C);  // serial_high = 0x0F4F, serial_low = 0x5A3C
+```
+
+| key | description |
+|-----|-------------|
+| `type` | Result type: `u8`…`u64`, `i8`…`i64`, `f32`, `f64`. |
+| `value` | An [expression](#expressions) over the message's fields (scalars, enums, bits members; not conditional fields). It is evaluated in 64-bit integer arithmetic and then converted to `type`. |
+| `set` | Optional explicit setter, written as a mapping of field to expression. In these expressions, `value` is the new computed value: `set: { lo: "value & 0xFFFF", hi: "value >> 16" }`. Fields are assigned in order. Targets must be plain scalar or enum fields: not `const`, conditional, or a derived length/count. |
+| `unit`, `doc` | Documentation, copied into the generated comment. |
+
+**Setters**
+- **Without `set`:** a setter is generated automatically when `value` only packs whole unsigned fields at fixed
+  shifts, joined with `|` or `+`, e.g. `(a << 16) | b` or `(b0 << 16) | (b1 << 8) | b2`. The fields must not
+  overlap. Each field is set to `(v >> shift) & mask`.
+- **No setter:** other expressions, e.g. `b0 + b1` or one that reads a bits member, give a read-only value. Add `set`
+  if you need to write it.
+- **Views are read-only:** they never get a setter.
+
+Computed values are binary-only. Their names share the field namespace, so they must not clash with a field or a
+generated accessor such as `<field>_scaled`.
 
 ### bit fields
 
@@ -422,6 +513,7 @@ Built-in algorithms (all `constexpr` and table driven):
 | `crc8` | CRC-8/SMBUS | `crc16_arc` | CRC-16/ARC |
 | `crc8_maxim` | CRC-8/MAXIM (1-Wire) | `crc24_openpgp` | CRC-24/OPENPGP |
 | `crc8_autosar` | CRC-8/AUTOSAR | `crc32` | CRC-32 (zip, Ethernet) |
+| `crc8_nrsc5` | CRC-8/NRSC-5 (Sensirion word CRC) | | |
 | `crc15_can` | CRC-15/CAN | `crc32c` | CRC-32C (iSCSI) |
 | `crc16_ccitt` | CRC-16/CCITT-FALSE | `crc32_mpeg2` | CRC-32/MPEG-2 |
 | `crc16_xmodem` | CRC-16/XMODEM | `crc64_ecma` | CRC-64/ECMA-182 |
@@ -515,6 +607,8 @@ and the headers of your custom extensions.
 | `min_wire_size`, `max_wire_size`, `wire_size` | Encoded size bounds. `max_wire_size` is present when bounded; `wire_size` when fixed. |
 | `<name>_value` | `static constexpr` value of each `const` field. |
 | `<name>_scaled()`, `set_<name>_scaled(double)` | Engineering-unit access for fields with `scale`/`offset`. |
+| `<name>_<conversion>()`, `set_<name>_<conversion>(double)` | The same for each entry of `conversions`. |
+| `<computed>()`, `set_<computed>(v)` | [Computed values](#computed-values). The setter exists when the value can be split back into fields. |
 | `static Result<M> decode(bytes_view)` | Decode from the start of a buffer. Trailing bytes are ignored. |
 | `Result<size_t> encode(mut_bytes out) const` | Encode into `out`. Returns bytes written, or `BufferFull`. |
 | `read(ByteReader&)` / `write(ByteWriter&)` | Lower-level building blocks (used for nesting). |
@@ -527,7 +621,8 @@ and the headers of your custom extensions.
 | `static Result<MView> from(bytes_view)` | Validate bounds, constants, nested messages and variable layout once. |
 | `static MView unchecked(bytes_view)` | Wrap data already validated by `from()`. |
 | field accessors | `name()` reads the value from the buffer. Bits groups return the unpacked struct, `bytes` a `bytes_view`, `string` a `string_view`, arrays an array view, nested messages a view, custom types `Result<T>`, and conditional fields `std::optional<...>`. |
-| `<name>_scaled()` | Engineering value. |
+| `<name>_scaled()`, `<name>_<conversion>()` | Engineering values. |
+| `<computed>()` | [Computed values](#computed-values) (read only). |
 | `data()`, `wire_size()` | The exact bytes of this message. |
 | `to_struct()` | Eager decode (when the struct is generated). |
 
@@ -598,7 +693,7 @@ readable name.
 |-------|---------|
 | `Truncated` | Input ended before the message/frame was complete. |
 | `BadSync` | Bytes before a sync word / start delimiter were skipped. |
-| `BadChecksum` | Checksum mismatch, or a text checksum missing or malformed. |
+| `BadChecksum` | Frame checksum or field `crc` mismatch, or a text checksum missing or malformed. |
 | `BadLength` | Length field out of range, frame larger than `max_frame`, or container size inconsistent with a length expression on encode. |
 | `BadDelimiter` | A new start delimiter appeared inside a frame. |
 | `BadConst` | A `const` field or bit field did not match. |
@@ -607,6 +702,7 @@ readable name.
 | `BufferFull` | Output buffer too small, or stream buffer full without a frame. |
 | `ParseError` | A text token is not a valid number/character. |
 | `MissingField` | A required text token is empty, or a conditional field's optional is empty on encode. |
+| `UnknownEnum` | A field of a `strict` enum holds a value that is not declared (on decode, or in a struct being encoded). |
 | `InvalidValue`, `Custom` | For use by custom codecs. |
 
 ---

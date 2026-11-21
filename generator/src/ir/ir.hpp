@@ -38,7 +38,7 @@ struct EnumDef;
 // Expressions (conditions, counts, lengths)
 // ------------------------------------------------------------------------------------------------
 struct Expr {
-    enum class Kind { Int, Ref, EnumConst, Unary, Binary };
+    enum class Kind { Int, Ref, EnumConst, Unary, Binary, Input };  // Input: `value` in a computed setter
     Kind kind = Kind::Int;
     SourceLoc loc;
     std::int64_t value = 0;           // Int
@@ -62,6 +62,7 @@ struct EnumDef {
     Prim underlying = Prim::U8;
     std::vector<std::pair<std::string, std::int64_t>> values;
     std::string doc;
+    bool strict = false;  // decode fails with UnknownEnum for values not listed in `values`
 
     [[nodiscard]] std::optional<std::int64_t> find(const std::string& v) const {
         for (const auto& [n, x] : values)
@@ -118,6 +119,16 @@ struct LengthSpec {
     std::uint8_t terminator = 0;
 };
 
+struct ChecksumSpec;
+
+/// An extra engineering-unit conversion of a numeric field: `<field>_<name>() = raw * scale + offset`.
+struct Conversion {
+    std::string name;
+    SourceLoc loc;
+    std::optional<double> scale, offset_value;
+    std::string unit;
+};
+
 struct BitField {
     std::string name;  // empty for padding
     SourceLoc loc;
@@ -157,6 +168,8 @@ struct Field {
 
     std::optional<double> scale, offset_value;
     std::string unit, doc;
+    std::vector<Conversion> conversions;      // additional named conversions (Scalar)
+    std::shared_ptr<ChecksumSpec> crc;        // checksum of the value's bytes, stored right after them (Scalar/Enum)
     std::optional<std::int64_t> const_value;  // constant / magic value (Scalar/Enum)
     char pad_char = '\0';                     // String with fixed length: trailing pad character
 
@@ -186,6 +199,21 @@ using FieldPtr = std::shared_ptr<Field>;
 // ------------------------------------------------------------------------------------------------
 using TypeId = std::variant<std::monostate, std::int64_t, std::string>;
 
+/// A value computed from a message's fields (`computed:`), with an optional setter that writes it back.
+struct Computed {
+    std::string name;
+    SourceLoc loc;
+    std::string type_name;  // declared result type
+    Prim prim = Prim::I64;
+    ExprPtr value;          // over the message's fields
+    std::vector<std::pair<std::string, ExprPtr>> set;  // declared: field <- expression over `value`
+    std::string doc, unit;
+
+    // ---- derived ----
+    std::vector<std::pair<const Field*, ExprPtr>> setters;  // resolved (declared, or derived automatically)
+    bool setter_derived = false;                             // setters came from analysing `value`
+};
+
 struct Message {
     std::string name;
     SourceLoc loc;
@@ -199,6 +227,7 @@ struct Message {
     bool want_struct = true;
     bool is_header = false;  // synthesised protocol header
     std::vector<FieldPtr> fields;
+    std::vector<Computed> computed;  // read-only values derived from fields (binary messages)
 
     // ---- derived ----
     std::optional<std::size_t> static_size;
@@ -311,6 +340,7 @@ struct Schema {
     char default_separator = ',';
     bool default_view = true;
     bool default_struct = true;
+    bool default_strict_enums = false;  // defaults.strict_enums
 
     std::vector<std::shared_ptr<EnumDef>> enums;
     std::vector<std::shared_ptr<CustomType>> custom_types;

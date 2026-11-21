@@ -100,9 +100,32 @@
     if (['bytes', 'string', 'array'].includes(kind) && has(f.max)) o.max = raw(f.max.trim());
     if (kind === 'string' && f.lenMode === 'fixed' && f.padding !== '' && f.padding != null && !text) o.padding = f.padding;
     if (has(f.const)) o.const = raw(f.const.trim());
+    if (!text && has(f.crc) && ['int', 'float', 'bool', 'char', 'enum'].includes(kind)) {
+      if (f.crc === '__crc') {
+        const c = f.crcParams;
+        const p = { width: raw(c.width || '8'), poly: raw(c.poly || '0') };
+        if (has(c.init) && G.parseInt(c.init) !== 0) p.init = raw(c.init);
+        if (c.refin) p.refin = true;
+        if (c.refout) p.refout = true;
+        if (has(c.xorout) && G.parseInt(c.xorout) !== 0) p.xorout = raw(c.xorout);
+        o.crc = flow({ crc: flow(p) });
+      } else o.crc = f.crc;
+    }
     if (has(f.scale)) o.scale = numOrStr(f.scale);
     if (has(f.offset)) o.offset = numOrStr(f.offset);
     if (has(f.unit)) o.unit = f.unit;
+    const convs = (f.conversions || []).filter((c) => has(c.name));
+    if (convs.length && ['int', 'float'].includes(kind)) {
+      const map = {};
+      for (const c of convs) {
+        const co = {};
+        if (has(c.scale)) co.scale = numOrStr(c.scale);
+        if (has(c.offset)) co.offset = numOrStr(c.offset);
+        if (has(c.unit)) co.unit = c.unit;
+        map[c.name.trim()] = flow(co);
+      }
+      o.conversions = flow(map);
+    }
     if (!text && has(f.when)) o.when = raw(JSON.stringify(f.when.trim()));
     if (text && f.optional) o.optional = true;
     if (text && has(f.base) && ['int', 'enum'].includes(kind)) o.base = raw(f.base);
@@ -216,6 +239,7 @@
     if (d.format && d.format !== 'binary') def.format = d.format;
     if (d.separator && d.separator !== ',') def.separator = d.separator;
     if (d.access && d.access !== 'both') def.access = d.access;
+    if (d.strict_enums) def.strict_enums = true;
     if (Object.keys(def).length) root.defaults = flow(def);
 
     if (s.enums.length) {
@@ -225,6 +249,7 @@
         e.values.forEach((v) => { vals[v.name || 'unnamed'] = raw(G.isInt(v.value) ? v.value : '0'); });
         const eo = {};
         if (e.type && e.type !== 'u8') eo.type = e.type;
+        if (e.strict === 'true' || e.strict === 'false') eo.strict = e.strict === 'true';
         eo.values = flow(vals);
         if (has(e.doc)) eo.doc = e.doc;
         root.enums[e.name] = flow(eo);
@@ -274,6 +299,18 @@
         if (has(m.access)) o.access = m.access;
         if (has(m.doc)) o.doc = m.doc;
         o.fields = m.fields.map((f) => fieldNode(s, f, m));
+        const comps = (m.computed || []).filter((c) => has(c.name));
+        if (comps.length && G.msgFormat(s, m) !== 'text') {
+          o.computed = {};
+          for (const c of comps) {
+            const co = { type: c.type || 'u32', value: raw(JSON.stringify((c.value || '').trim())) };
+            const sets = G.parseSetList(c.set);
+            if (sets.length) co.set = flow(Object.fromEntries(sets.map(([k, v]) => [k, raw(JSON.stringify(v))])));
+            if (has(c.unit)) co.unit = c.unit;
+            if (has(c.doc)) co.doc = c.doc;
+            o.computed[c.name.trim()] = flow(co);
+          }
+        }
         root.messages[m.name] = o;
       }
     }
@@ -353,6 +390,17 @@
       if (typeof y.of === 'string') f.of = y.of;
       else { f.of = str(y.of.type); f.ofEndian = str(y.of.endian); }
     }
+    if (y.crc !== undefined) {
+      if (y.crc && typeof y.crc === 'object' && y.crc.crc) {
+        const c = y.crc.crc;
+        f.crc = '__crc';
+        f.crcParams = { width: str(c.width), poly: hexOrDec(c.poly), init: hexOrDec(c.init ?? 0), refin: !!c.refin, refout: !!c.refout, xorout: hexOrDec(c.xorout ?? 0) };
+      } else f.crc = str(y.crc);
+    }
+    if (y.conversions && typeof y.conversions === 'object') {
+      f.conversions = Object.entries(y.conversions).map(([name, c]) =>
+        G.newConversion({ name, scale: str((c || {}).scale), offset: str((c || {}).offset), unit: str((c || {}).unit) }));
+    }
     if (Array.isArray(y.fields)) {
       f.bits = y.fields.map((b) => (b.pad !== undefined
         ? G.newBit({ pad: true, bits: str(b.pad) })
@@ -376,11 +424,11 @@
     const d = y.defaults || {};
     Object.assign(s.schema.defaults, {
       endian: d.endian || 'big', bit_order: d.bit_order || 'msb_first', format: d.format || 'binary',
-      separator: d.separator || ',', access: accessFromYaml(d.access) || 'both',
+      separator: d.separator || ',', access: accessFromYaml(d.access) || 'both', strict_enums: !!d.strict_enums,
     });
     for (const [name, e] of Object.entries(y.enums || {})) {
       s.enums.push(G.newEnum({
-        name, type: e.type || 'u8', doc: str(e.doc),
+        name, type: e.type || 'u8', doc: str(e.doc), strict: e.strict === undefined ? '' : String(!!e.strict),
         values: Object.entries(e.values || {}).map(([n, v]) => G.newEnumValue(n, str(v))),
       }));
     }
@@ -402,6 +450,10 @@
         name, type_id: m.type_id === undefined ? '' : str(m.type_id), format: str(m.format), endian: str(m.endian),
         bit_order: str(m.bit_order), separator: str(m.separator), access: accessFromYaml(m.access), doc: str(m.doc),
         fields: (m.fields || []).map(fieldFromYaml),
+        computed: Object.entries(m.computed || {}).map(([cn, c]) => G.newComputed({
+          name: cn, type: str((c || {}).type), value: str((c || {}).value), unit: str((c || {}).unit), doc: str((c || {}).doc),
+          set: Object.entries((c || {}).set || {}).map(([k, v]) => `${k} = ${str(v)}`).join('; '),
+        })),
       }));
     }
     for (const [name, p] of Object.entries(y.protocols || {})) {

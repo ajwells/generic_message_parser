@@ -74,7 +74,8 @@ const CustomFramer* Schema::find_custom_framer(const std::string& n) const { ret
 namespace {
 const std::vector<std::pair<std::string, std::size_t>>& checksum_table() {
     static const std::vector<std::pair<std::string, std::size_t>> t = {
-        {"crc8", 1},         {"crc8_maxim", 1},   {"crc8_autosar", 1}, {"crc15_can", 2},
+        {"crc8", 1},         {"crc8_maxim", 1},   {"crc8_autosar", 1}, {"crc8_nrsc5", 1},
+        {"crc15_can", 2},
         {"crc16_ccitt", 2},  {"crc16_xmodem", 2}, {"crc16_kermit", 2}, {"crc16_x25", 2},
         {"crc16_modbus", 2}, {"crc16_arc", 2},    {"crc24_openpgp", 3}, {"crc32", 4},
         {"crc32c", 4},       {"crc32_mpeg2", 4},  {"crc64_ecma", 8},   {"xor8", 1},

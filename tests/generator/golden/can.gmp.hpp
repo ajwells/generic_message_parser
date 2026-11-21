@@ -37,6 +37,18 @@ enum class Gear : std::uint8_t {
     }
 }
 
+/// True when `v` is one of the declared values.
+[[nodiscard]] constexpr bool is_known(Gear v) noexcept {
+    switch (v) {
+        case Gear::park:
+        case Gear::reverse:
+        case Gear::neutral:
+        case Gear::drive:
+            return true;
+        default: return false;
+    }
+}
+
 /// Bit fields of EngineData.signals
 struct EngineData_signals {
     std::uint16_t rpm{};

@@ -207,3 +207,48 @@ protocols:
     CHECK_FALSE(r.ok);
     CHECK(r.text.find("was renamed") == std::string::npos);
 }
+
+TEST_CASE("field crc errors") {
+    expect_error("messages:\n  A:\n    fields:\n      - { name: x, type: u16, crc: crc99 }\n", "unknown checksum algo 'crc99'");
+    expect_error("messages:\n  A:\n    fields:\n      - { name: b, type: bytes, length: 2, crc: crc8 }\n",
+                 "'crc' is only valid on scalar and enum fields");
+    expect_error("messages:\n  A:\n    fields:\n      - { name: a, type: array, count: 2, of: { type: u16, crc: crc8 } }\n",
+                 "'crc' is not supported on array elements");
+    expect_error("messages:\n  T:\n    format: text\n    fields:\n      - { name: x, type: u16, crc: crc8 }\n",
+                 "'crc' is not supported in text messages");
+    expect_error("messages:\n  A:\n    fields:\n      - { name: x, type: u16, crc: { crc: { width: 70, poly: 1 } } }\n",
+                 "crc width must be 1..64");
+}
+
+TEST_CASE("conversion errors") {
+    expect_error("messages:\n  A:\n    fields:\n      - { name: x, type: u16, conversions: { f: { unit: degF } } }\n",
+                 "conversion 'f' needs 'scale' and/or 'offset'");
+    expect_error("messages:\n  A:\n    fields:\n      - { name: x, type: u16, conversions: { scaled: { scale: 2 } } }\n",
+                 "conversion name 'scaled' is reserved");
+    expect_error("messages:\n  A:\n    fields:\n      - { name: x, type: u16, conversions: { 2x: { scale: 2 } } }\n",
+                 "conversion name '2x' is not a valid identifier");
+    expect_error(
+        "messages:\n  A:\n    fields:\n      - { name: x, type: u16, conversions: { y: { scale: 2 } } }\n      - { name: x_y, type: u8 }\n",
+        "conversion accessor 'x_y' clashes with a field");
+    expect_error("enums:\n  E: { values: { a: 1 } }\nmessages:\n  A:\n    fields:\n      - { name: e, type: E, conversions: { y: { scale: 2 } } }\n",
+                 "'conversions' are only valid on numeric scalar fields");
+    expect_error("messages:\n  A:\n    fields:\n      - { name: x, type: u16, conversions: [1] }\n",
+                 "'conversions' must be a mapping");
+}
+
+TEST_CASE("computed value errors") {
+    const std::string m = "messages:\n  A:\n    fields:\n      - { name: x, type: u8 }\n      - { name: y, type: u8, when: 'x == 1' }\n    computed:\n";
+    expect_error(m + "      c: { type: u32 }\n", "needs a 'value' expression");
+    expect_error(m + "      c: { value: x }\n", "needs a 'type'");
+    expect_error(m + "      c: { type: bool, value: x }\n", "type must be numeric");
+    expect_error(m + "      c: { type: u8, value: 'nope + 1' }\n", "does not name an earlier field");
+    expect_error(m + "      c: { type: u8, value: y }\n", "cannot reference conditional field");
+    expect_error(m + "      x: { type: u8, value: x }\n", "clashes with a field or accessor");
+    expect_error(m + "      c: { type: u8, value: x, set: { nope: value } }\n", "set target 'nope' is not a field");
+    expect_error(m + "      c: { type: u8, value: x, set: { y: value } }\n", "must be a scalar or enum field that is not const, conditional");
+    expect_error(m + "      c: { type: u8, value: x, set: { x: 'value +' } }\n", "invalid expression");
+    expect_error("messages:\n  T:\n    format: text\n    fields: [ { name: x, type: u8 } ]\n    computed:\n      c: { type: u8, value: x }\n",
+                 "only supported in binary messages");
+    // `value` only means the input inside `set`
+    expect_error(m + "      c: { type: u8, value: value }\n", "does not name an earlier field");
+}

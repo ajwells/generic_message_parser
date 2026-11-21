@@ -153,6 +153,20 @@ private:
         w.close();
         w.close();
         w.line();
+        w.line("/// True when `v` is one of the declared values" +
+               std::string(e.strict ? " (decode rejects other values: the enum is strict)." : "."));
+        w.open("[[nodiscard]] constexpr bool is_known(" + e.name + " v) noexcept {");
+        w.open("switch (v) {");
+        seen.clear();
+        for (const auto& [n, v] : e.values) {
+            if (!seen.insert(v).second) continue;
+            w.line("case " + e.name + "::" + cpp::ident(n) + ":");
+        }
+        w.line("    return true;");
+        w.line("default: return false;");
+        w.close();
+        w.close();
+        w.line();
     }
 };
 

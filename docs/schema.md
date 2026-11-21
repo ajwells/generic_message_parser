@@ -25,6 +25,7 @@ Unknown keys are errors, so a typo like `feilds` is caught. Diagnostics report `
 | `format`    | `binary`, `text`             | `binary`     |
 | `separator` | one character (text fields)  | `,`          |
 | `access`    | `view`, `struct`, `both` or a list | `both` |
+| `strict_enums` | `true`, `false` | `false` |
 
 ## enums
 
@@ -37,7 +38,9 @@ enums:
 ```
 
 Generates `enum class Mode : std::uint8_t` and `constexpr std::string_view to_string(Mode)`.
-Values that are not listed still decode; the enum just holds the raw value.
+Values that are not listed still decode; the enum just holds the raw value (check with the generated `is_known(Mode)`).
+With `strict: true` on the enum (or `defaults: { strict_enums: true }`), decoding or encoding an undeclared value fails with
+`Error::UnknownEnum` instead; `strict: false` opts one enum out of the default.
 
 ---
 
@@ -54,6 +57,9 @@ messages:
     access: [view, struct]
     doc: Periodic status.
     fields: [ ... ]
+    computed:            # binary: values derived from fields; accessor serial(), struct setter set_serial()
+      serial: { type: u32, value: "(hi << 16) | lo" }   # setter is automatic for shift/or packing;
+                                                        # otherwise add set: { field: "expr over value" }
 ```
 
 ### Field types
@@ -84,6 +90,8 @@ The same type names are used in text messages, which parse them from tokens inst
 | `endian` | numeric | overrides the message default |
 | `const` | integer / enum | magic value. It is checked on decode (`Error::BadConst`), written automatically on encode, and has no struct member |
 | `scale`, `offset` | numeric | engineering value = raw * scale + offset. Generates `<name>_scaled()` and (struct) `set_<name>_scaled()` |
+| `conversions` | numeric | extra named conversions `{ name: { scale, offset, unit } }`. Each generates `<name>_<conversion>()` and (struct) `set_<name>_<conversion>()` |
+| `crc` | binary scalar / enum | checksum of the value bytes, stored right after them (`crc: crc8_nrsc5`, a custom checksum, or `{ crc: {...} }`). Verified on decode (`BadChecksum`), written on encode |
 | `unit`, `doc` | all | documentation, copied into comments |
 | `length` / `size` | `bytes`, `string`, `pad` | number, expression, or `remaining` |
 | `count` | `array` | number, expression, or `remaining` |
@@ -185,7 +193,7 @@ checksum:
 
 Built-in algorithms (all `constexpr`, table driven):
 
-- CRCs: `crc8`, `crc8_maxim`, `crc8_autosar`, `crc15_can`, `crc16_ccitt` (CCITT-FALSE), `crc16_xmodem`,
+- CRCs: `crc8`, `crc8_maxim`, `crc8_autosar`, `crc8_nrsc5` (Sensirion), `crc15_can`, `crc16_ccitt` (CCITT-FALSE), `crc16_xmodem`,
   `crc16_kermit`, `crc16_x25`, `crc16_modbus`, `crc16_arc`, `crc24_openpgp`, `crc32`, `crc32c`, `crc32_mpeg2`, `crc64_ecma`
 - Sums: `xor8` (NMEA), `sum8`, `lrc8`, `sum16`, `fletcher16`, `fletcher8_ubx`
 

@@ -145,6 +145,7 @@ std::string expr(const Expr& e, const RefFn& ref) {
         case Expr::Kind::Int: return "std::int64_t(" + int_literal(e.value) + ")";
         case Expr::Kind::Ref: return "gmp::to_int(" + ref(*e.field, e.bitfield) + ")";
         case Expr::Kind::EnumConst: return "gmp::to_int(" + e.enum_def->name + "::" + ident(e.path[1]) + ")";
+        case Expr::Kind::Input: return "value";  // computed setter parameter (as std::int64_t)
         case Expr::Kind::Unary: return "(" + e.op + expr(*e.lhs, ref) + ")";
         case Expr::Kind::Binary: return "(" + expr(*e.lhs, ref) + " " + e.op + " " + expr(*e.rhs, ref) + ")";
     }

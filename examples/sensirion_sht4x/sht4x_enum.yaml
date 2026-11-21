@@ -1,0 +1,96 @@
+# Sensirion SHT4x relative humidity & temperature sensor (SHT40/41/43/45) - command enum variant.
+# Source: SHT4x datasheet, version 5 (January 2023), sections 4.3 - 4.7.
+#
+# Same wire format as sht4x.yaml, but the 11 commands are values of one `Command` enum carried by a
+# single 1-byte `CommandFrame` message, instead of one message per command. Use this layout when you
+# want to pass commands around as data (tables, queues, a CLI argument) or switch over them.
+#
+# I2C addressing (0x44 / 0x45 / 0x46), the R/W bit and ACK/NACK are handled by your bus driver:
+#
+#   1. write one command byte    -> CommandFrame{ .command = Command::measure_high_precision }.encode(buf)
+#   2. wait (see the enum doc)   -> the sensor NACKs reads until it is done
+#   3. read 6 bytes              -> decode with MeasurementResponse or SerialNumberResponse,
+#                                   depending on the command that was sent
+#
+# Every 16-bit word the sensor sends is followed by a CRC-8 (CRC-8/NRSC-5: poly 0x31, init 0xFF,
+# no reflection, xorout 0x00; CRC(0xBEEF) = 0x92), applied per field with `crc:`.
+schema_version: 1
+namespace: sensirion::sht4x_enum
+defaults: { endian: big }
+
+enums:
+  Command:
+    strict: true           # decoding a byte that is not a known command fails with UnknownEnum
+    type: u8
+    doc: |-
+      SHT4x I2C commands (datasheet Table 8) and the wait before reading the response:
+        measure_*_precision  -> Measurement after 8.3 / 4.5 / 1.6 ms (high / medium / low, max)
+        read_serial_number   -> SerialNumber
+        soft_reset           -> no response; idle again after 1 ms
+        heater_*             -> heater on for 1 s or 0.1 s, then a high-precision Measurement
+                                (read after 1.1 s / 0.11 s max)
+    values:
+      measure_high_precision: 0xFD
+      measure_medium_precision: 0xF6
+      measure_low_precision: 0xE0
+      read_serial_number: 0x89
+      soft_reset: 0x94
+      heater_200mw_1s: 0x39
+      heater_200mw_100ms: 0x32
+      heater_110mw_1s: 0x2F
+      heater_110mw_100ms: 0x24
+      heater_20mw_1s: 0x1E
+      heater_20mw_100ms: 0x15
+
+messages:
+  # ---------------------------------------------------------------------------------------------
+  # Command (master -> sensor): one byte
+  # ---------------------------------------------------------------------------------------------
+  CommandFrame:
+    doc: The single command byte written to the sensor.
+    fields:
+      - { name: command, type: Command }
+
+  # ---------------------------------------------------------------------------------------------
+  # Responses (sensor -> master)
+  # ---------------------------------------------------------------------------------------------
+  Measurement:
+    doc: |-
+      Response to the measure and heater commands (datasheet 4.3, 4.6).
+      Humidity is not cropped: values slightly below 0 or above 100 %RH are possible; clamp if needed.
+    fields:
+      - name: temperature
+        type: u16
+        crc: crc8_nrsc5
+        scale: 0.0026703288319218739     # 175 / 65535
+        offset: -45
+        unit: degC
+        conversions:
+          degf: { scale: 0.0048065918974593731, offset: -49, unit: degF }   # 315 / 65535
+      - name: humidity
+        type: u16
+        crc: crc8_nrsc5
+        scale: 0.0019073777370870527     # 125 / 65535
+        offset: -6
+        unit: "%RH"
+  SerialNumber:
+    doc: Response to read_serial_number (datasheet 4.7) - two 16-bit words, each followed by its CRC.
+    fields:
+      - { name: serial_high, type: u16, crc: crc8_nrsc5 }
+      - { name: serial_low, type: u16, crc: crc8_nrsc5 }
+    computed:
+      serial:                                   # serial() on struct and view, set_serial() on the struct
+        type: u32
+        value: "(serial_high << 16) | serial_low"
+
+protocols:
+  # The response bytes do not identify themselves, so each response layout is its own protocol;
+  # decode with the one matching the command you sent.
+  MeasurementResponse:
+    doc: 6 bytes read after a measure or heater command.
+    framing: { type: fixed, size: 6 }
+    messages: [Measurement]
+  SerialNumberResponse:
+    doc: 6 bytes read after read_serial_number.
+    framing: { type: fixed, size: 6 }
+    messages: [SerialNumber]

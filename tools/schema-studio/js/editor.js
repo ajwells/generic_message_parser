@@ -129,6 +129,7 @@
         ${field('Format', select('schema.defaults.format', d.format, ['binary', 'text']))}
         ${field('Access', select('schema.defaults.access', d.access, [['both', 'view + struct'], ['view', 'view only'], ['struct', 'struct only']]))}
         ${field('Text separator', input('schema.defaults.separator', d.separator, { mono: true }), 'one character')}
+        <div class="span-2">${check('schema.defaults.strict_enums', d.strict_enums, 'Strict enums: reject undeclared enum values on decode')}</div>
       </div>
       <p class="callout" style="margin:12px 0 0">Every message and protocol inherits these unless it overrides them. Views are zero-copy accessors over the input buffer; structs are fixed-capacity value types used for encoding.</p>`);
   }
@@ -143,6 +144,7 @@
       section('Enum', `<div class="grid">
         ${field('Name', input(`${base}.name`, e.name, { rename: 'type', mono: true, rerender: false }))}
         ${field('Underlying type', select(`${base}.type`, e.type, G.INT_PRIMS))}
+        ${field('Unknown values', select(`${base}.strict`, e.strict || '', [['', `inherit (${s.schema.defaults.strict_enums ? 'reject' : 'accept'})`], ['true', 'reject on decode (strict)'], ['false', 'accept on decode']]), 'values not listed below')}
         ${field('Doc', input(`${base}.doc`, e.doc, { placeholder: 'Description' }), '', 'span-2')}
       </div>`) +
       section('Values', `<table class="subtable"><thead><tr><th>Name</th><th>Value</th><th></th></tr></thead><tbody>${rows}</tbody></table>
@@ -270,6 +272,24 @@
     if (kind === 'string' && text) parts.push(field('Max length', input(`${path}.max`, f.max, { placeholder: '32', mono: true }), 'struct capacity'));
     if (kind === 'string' && !text && f.lenMode === 'fixed') parts.push(field('Padding char', input(`${path}.padding`, f.padding, { placeholder: '\\0', mono: true }), 'stripped on decode'));
     if (['int', 'enum', 'bool', 'char'].includes(kind)) parts.push(field('Const', input(`${path}.const`, f.const, { placeholder: 'none', mono: true }), 'magic value'));
+    if (!text && ['int', 'float', 'enum', 'bool', 'char'].includes(kind)) {
+      const algos = [['', 'none'],
+        { group: 'CRC', items: Object.keys(G.CHECKSUMS).filter((k) => k.startsWith('crc')) },
+        { group: 'Sums', items: Object.keys(G.CHECKSUMS).filter((k) => !k.startsWith('crc')) },
+        { group: 'Other', items: [['__crc', 'custom CRC parameters…'], ...s.customChecksums.map((c) => [c.name, c.name + ' (custom)'])] }];
+      parts.push(field('CRC', select(`${path}.crc`, f.crc, algos), 'checksum stored right after the value'));
+      if (f.crc === '__crc') {
+        const c = `${path}.crcParams`, cp = f.crcParams;
+        parts.push(`<div class="span-2"><div class="grid three">
+          ${field('Width', input(`${c}.width`, cp.width, { mono: true }), 'bits')}
+          ${field('Poly', input(`${c}.poly`, cp.poly, { mono: true }))}
+          ${field('Init', input(`${c}.init`, cp.init, { mono: true }))}
+          ${field('XorOut', input(`${c}.xorout`, cp.xorout, { mono: true }))}
+          <div style="align-self:end">${check(`${c}.refin`, cp.refin, 'RefIn')}</div>
+          <div style="align-self:end">${check(`${c}.refout`, cp.refout, 'RefOut')}</div>
+        </div></div>`);
+      }
+    }
     if (['int', 'float'].includes(kind)) {
       parts.push(field('Scale', input(`${path}.scale`, f.scale, { placeholder: '1', mono: true }), 'value = raw × scale + offset'));
       parts.push(field('Offset', input(`${path}.offset`, f.offset, { placeholder: '0', mono: true })));
@@ -283,7 +303,31 @@
     parts.push(field('Doc', input(`${path}.doc`, f.doc, { placeholder: 'Description' }), '', 'span-2'));
     let html = `<div class="grid">${parts.join('')}</div>`;
     if (kind === 'bits') html += bitsEditor(s, f, path);
+    if (['int', 'float'].includes(kind)) html += conversionsEditor(f, path);
     return html;
+  }
+
+  /** Extra named conversions: each becomes a <field>_<name>() accessor. */
+  function conversionsEditor(f, path) {
+    const list = f.conversions || [];
+    const rows = list.map((c, k) => {
+      const cp = `${path}.conversions.${k}`;
+      return `<tr>
+        <td>${input(`${cp}.name`, c.name, { placeholder: 'name', mono: true })}</td>
+        <td>${input(`${cp}.scale`, c.scale, { placeholder: '1', mono: true })}</td>
+        <td>${input(`${cp}.offset`, c.offset, { placeholder: '0', mono: true })}</td>
+        <td>${input(`${cp}.unit`, c.unit, { placeholder: 'unit' })}</td>
+        <td style="width:32px">${iconBtn('trash', 'delete', `data-path="${cp}"`, 'Remove', true)}</td>
+      </tr>`;
+    }).join('');
+    return `<div style="margin-top:12px">
+      <div class="inline" style="justify-content:space-between;margin-bottom:6px">
+        <span class="outline-title">Extra conversions${list.length ? '' : ' <span style="color:var(--faint);font-weight:400">· e.g. °F next to °C</span>'}</span>
+        <button class="btn small" data-action="addConversion" data-path="${path}.conversions">+ Conversion</button>
+      </div>
+      ${list.length ? `<table class="subtable"><thead><tr><th>Name</th><th>Scale</th><th>Offset</th><th>Unit</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      <div style="margin-top:4px;color:var(--faint);font-size:11.5px">Each adds <code>${esc(f.name || 'field')}_&lt;name&gt;()</code> = raw × scale + offset.</div>` : ''}
+    </div>`;
   }
 
   function bitsEditor(s, f, path) {
@@ -330,7 +374,29 @@
         ${fmt === 'binary' ? field('Bit order', select(`${b}.bit_order`, m.bit_order, inherit(['msb_first', 'lsb_first'], d.bit_order))) : ''}
         ${field('Doc', input(`${b}.doc`, m.doc, { placeholder: 'Description' }), '', 'span-2')}
       </div>`) +
-      fieldList(s, ui, m, `${b}.fields`, 'Fields');
+      fieldList(s, ui, m, `${b}.fields`, 'Fields') +
+      (fmt === 'binary' ? computedEditor(m, b) : '');
+  }
+
+  /** Values computed from the fields: name() on struct and view, set_name() on the struct when it can be split. */
+  function computedEditor(m, b) {
+    const list = m.computed || [];
+    const types = ['u8', 'u16', 'u32', 'u64', 'i8', 'i16', 'i32', 'i64', 'f32', 'f64'];
+    const rows = list.map((c, k) => {
+      const cp = `${b}.computed.${k}`;
+      return `<div class="computed-item" style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px">
+        <div class="grid">
+          ${field('Name', input(`${cp}.name`, c.name, { placeholder: 'serial', mono: true }), 'accessor name')}
+          ${field('Type', select(`${cp}.type`, c.type || 'u32', types))}
+          ${field('Value', input(`${cp}.value`, c.value, { placeholder: '(serial_high << 16) | serial_low', mono: true }), 'expression over fields', 'span-2')}
+          ${field('Setter', input(`${cp}.set`, c.set, { placeholder: 'automatic for (a << 8) | b packing', mono: true }), 'optional: field = expr over value; …', 'span-2')}
+          ${field('Unit', input(`${cp}.unit`, c.unit, { placeholder: 'optional' }))}
+          <div style="align-self:end;justify-self:end">${iconBtn('trash', 'delete', `data-path="${cp}"`, 'Remove computed value', true)}</div>
+        </div>
+      </div>`;
+    }).join('');
+    return section('Computed values', `${rows || '<div class="list-empty">None. A computed value is derived from fields, e.g. a serial number split across two words.</div>'}`,
+      `<button class="btn small" data-action="addComputed" data-path="${b}.computed">+ Computed</button>`);
   }
 
   // ---- protocol -------------------------------------------------------------------------------------

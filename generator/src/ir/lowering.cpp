@@ -115,6 +115,16 @@ private:
             d_.error(f.loc, "'const' is only valid on scalar and enum fields");
         if ((f.scale || f.offset_value) && f.kind != FieldKind::Scalar)
             d_.error(f.loc, "'scale'/'offset' are only valid on numeric scalar fields");
+        if (!f.conversions.empty() && (f.kind != FieldKind::Scalar || f.prim == Prim::Bool || f.prim == Prim::Char))
+            d_.error(f.conversions.front().loc, "'conversions' are only valid on numeric scalar fields");
+        if (f.crc) {
+            if (text) d_.error(f.crc->loc, "field '" + f.name + "': 'crc' is not supported in text messages");
+            else if (element) d_.error(f.crc->loc, "'crc' is not supported on array elements");
+            else if (f.kind != FieldKind::Scalar && f.kind != FieldKind::Enum)
+                d_.error(f.crc->loc, "field '" + f.name + "': 'crc' is only valid on scalar and enum fields");
+            f.crc->endian = f.endian;  // a multi-byte CRC is stored in the field's byte order
+            resolve_algo(*f.crc);
+        }
     }
 
     void resolve_bits(Field& f) {
@@ -159,7 +169,13 @@ private:
                 resolve_expr(*e.rhs, m, limit);
                 return;
             case Expr::Kind::EnumConst: return;
-            case Expr::Kind::Ref: break;
+            case Expr::Kind::Input: return;
+            case Expr::Kind::Ref:
+                if (allow_input_ && e.path.size() == 1 && e.path[0] == "value") {
+                    e.kind = Expr::Kind::Input;
+                    return;
+                }
+                break;
         }
         const Field* target = nullptr;
         for (std::size_t i = 0; i < limit && i < m.fields.size(); ++i)
@@ -225,6 +241,110 @@ private:
                 }
             }
         }
+        resolve_computed(m);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // computed values
+    // ---------------------------------------------------------------------------------------------
+    /// Fields a computed setter may assign: plain scalar / enum members.
+    static bool settable(const Field& f) {
+        return (f.kind == FieldKind::Scalar || f.kind == FieldKind::Enum) && !f.const_value && !f.when && !f.derived_from &&
+               f.prim != Prim::Bool && f.prim != Prim::Char;
+    }
+
+    void resolve_computed(Message& m) {
+        for (auto& c : m.computed) {
+            if (m.format == Format::Text) {
+                d_.error(c.loc, "computed values are only supported in binary messages");
+                continue;
+            }
+            if (auto p = parse_prim(c.type_name); p && *p != Prim::Bool && *p != Prim::Char) c.prim = *p;
+            else if (!c.type_name.empty())
+                d_.error(c.loc, "computed value '" + c.name + "': type must be numeric (u8..u64, i8..i64, f32, f64)");
+            if (c.value) resolve_expr(*c.value, m, m.fields.size());
+            c.setters.clear();
+            if (!c.set.empty()) {
+                std::set<const Field*> seen;
+                for (auto& [name, e] : c.set) {
+                    const Field* target = nullptr;
+                    for (const auto& f : m.fields)
+                        if (f->name == name) target = f.get();
+                    if (!target) {
+                        d_.error(c.loc, "computed value '" + c.name + "': set target '" + name + "' is not a field of '" + m.name + "'");
+                        continue;
+                    }
+                    if (!settable(*target))
+                        d_.error(c.loc, "computed value '" + c.name + "': set target '" + name +
+                                            "' must be a scalar or enum field that is not const, conditional or a derived length");
+                    if (!seen.insert(target).second)
+                        d_.error(c.loc, "computed value '" + c.name + "': field '" + name + "' is set twice");
+                    if (e) {
+                        allow_input_ = true;
+                        resolve_expr(*e, m, m.fields.size());
+                        allow_input_ = false;
+                    }
+                    c.setters.emplace_back(target, e);
+                }
+            } else if (c.value) {
+                derive_setter(c);
+            }
+        }
+    }
+
+    static ExprPtr make_int(std::int64_t v) {
+        auto e = std::make_shared<Expr>();
+        e->kind = Expr::Kind::Int;
+        e->value = v;
+        return e;
+    }
+    static ExprPtr make_bin(const char* op, ExprPtr l, ExprPtr r) {
+        auto e = std::make_shared<Expr>();
+        e->kind = Expr::Kind::Binary;
+        e->op = op;
+        e->lhs = std::move(l);
+        e->rhs = std::move(r);
+        return e;
+    }
+
+    /// `value` built by packing whole unsigned fields at fixed shifts, e.g. `(hi << 16) | lo`, can be split back:
+    /// each field = (value >> shift) & mask. Terms may be joined with `|` or `+` and must not overlap.
+    void derive_setter(Computed& c) {
+        struct Term { const Field* f; std::int64_t shift; };
+        std::vector<Term> terms;
+        auto term = [&](const Expr& ref, std::int64_t shift) {
+            if (ref.kind != Expr::Kind::Ref || !ref.field || ref.bitfield) return false;
+            const Field& f = *ref.field;
+            if (!settable(f) || f.kind != FieldKind::Scalar || !prim_is_integer(f.prim) || prim_is_signed(f.prim)) return false;
+            if (shift < 0 || shift > 63) return false;
+            terms.push_back({&f, shift});
+            return true;
+        };
+        auto collect = [&](auto&& self, const Expr& e) -> bool {
+            if (e.kind == Expr::Kind::Binary && (e.op == "|" || e.op == "+")) return self(self, *e.lhs) && self(self, *e.rhs);
+            if (e.kind == Expr::Kind::Binary && e.op == "<<" && e.rhs->kind == Expr::Kind::Int) return term(*e.lhs, e.rhs->value);
+            return term(e, 0);
+        };
+        if (!collect(collect, *c.value)) return;  // not a packing expression: no setter unless `set:` is given
+        std::uint64_t used = 0;
+        std::set<const Field*> fields;
+        for (const auto& t : terms) {
+            const auto bits = static_cast<std::int64_t>(prim_size(t.f->prim) * 8);
+            const auto width = std::min<std::int64_t>(bits, 64 - t.shift);
+            const std::uint64_t mask = width >= 64 ? ~std::uint64_t{0} : ((std::uint64_t{1} << width) - 1) << t.shift;
+            if ((used & mask) || !fields.insert(t.f).second) return;  // overlapping terms cannot be split
+            used |= mask;
+        }
+        for (const auto& t : terms) {
+            auto input = std::make_shared<Expr>();
+            input->kind = Expr::Kind::Input;
+            input->path = {"value"};
+            ExprPtr e = t.shift ? make_bin(">>", input, make_int(t.shift)) : input;
+            const auto bits = prim_size(t.f->prim) * 8;
+            if (bits < 64) e = make_bin("&", e, make_int(static_cast<std::int64_t>((std::uint64_t{1} << bits) - 1)));
+            c.setters.emplace_back(t.f, e);
+        }
+        c.setter_derived = true;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -236,7 +356,7 @@ private:
         f.min_size = 0;
         switch (f.kind) {
             case FieldKind::Scalar:
-            case FieldKind::Enum: f.static_size = prim_size(f.prim); break;
+            case FieldKind::Enum: f.static_size = prim_size(f.prim) + (f.crc ? f.crc->size : 0); break;
             case FieldKind::Bits: f.static_size = f.bits_bytes; break;
             case FieldKind::Pad: f.static_size = f.len.fixed; break;
             case FieldKind::Bytes:
@@ -291,14 +411,17 @@ private:
     }
 
     bool field_needs_validation(const Field& f) {
+        if (f.crc) return true;
         if (f.const_value) return true;
+        if (f.kind == FieldKind::Enum && f.enum_def && f.enum_def->strict) return true;
         if (f.kind == FieldKind::Bits)
             for (const auto& b : f.bits)
-                if (b.const_value) return true;
+                if (b.const_value || (b.enum_def && b.enum_def->strict)) return true;
         if (f.kind == FieldKind::Message && f.message->needs_validation) return true;
         if (f.kind == FieldKind::Array && f.elem) {
             if (f.elem->kind == FieldKind::Message && f.elem->message->needs_validation) return true;
             if (f.elem->const_value) return true;
+            if (f.elem->kind == FieldKind::Enum && f.elem->enum_def && f.elem->enum_def->strict) return true;
         }
         return !f.static_size.has_value();
     }
@@ -474,6 +597,13 @@ private:
     void lower_checksum(Protocol& p) {
         auto& c = p.checksum;
         if (!c.present) return;
+        resolve_algo(c);
+        if (p.format == Format::Binary && p.header->fields.empty() && c.covers == ChecksumSpec::Covers::HeaderBody)
+            c.covers = ChecksumSpec::Covers::Body;
+    }
+
+    /// Resolve a checksum algorithm (built-in, custom or inline CRC) and its size in bytes.
+    void resolve_algo(ChecksumSpec& c) {
         if (c.algo == "crc" && c.crc) {
             if (c.crc->width == 0 || c.crc->width > 64) d_.error(c.loc, "crc width must be 1..64");
             c.size = (c.crc->width + 7) / 8;
@@ -491,8 +621,6 @@ private:
             d_.error(c.loc, "unknown checksum algo '" + c.algo + "' (built-in: " + names + ", or a custom.checksums entry)");
         }
         if (c.size == 0 || c.size > 8) d_.error(c.loc, "checksum size must be 1..8 bytes");
-        if (p.format == Format::Binary && p.header->fields.empty() && c.covers == ChecksumSpec::Covers::HeaderBody)
-            c.covers = ChecksumSpec::Covers::Body;
     }
 
     void lower_framing(Protocol& p) {
@@ -574,6 +702,7 @@ private:
 
     Schema& s_;
     Diagnostics& d_;
+    bool allow_input_ = false;  // resolving a computed setter: `value` names the input
 };
 
 } // namespace

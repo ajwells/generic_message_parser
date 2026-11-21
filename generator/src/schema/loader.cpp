@@ -224,12 +224,13 @@ private:
     // sections
     // ---------------------------------------------------------------------------------------------
     void load_defaults(const YAML::Node& d, ir::Schema& s) {
-        check_keys(d, {"endian", "bit_order", "format", "separator", "access"}, "defaults");
+        check_keys(d, {"endian", "bit_order", "format", "separator", "access", "strict_enums"}, "defaults");
         if (auto v = d["endian"]) s.default_endian = to_endian(v);
         if (auto v = d["bit_order"]) s.default_bit_order = to_bit_order(v);
         if (auto v = d["format"]) s.default_format = to_format(v);
         if (auto v = d["separator"]) s.default_separator = to_char(v);
         if (auto v = d["access"]) to_access(v, s.default_view, s.default_struct);
+        if (auto v = d["strict_enums"]) s.default_strict_enums = to_bool(v);
     }
 
     void load_enums(const YAML::Node& n, ir::Schema& s) {
@@ -239,7 +240,9 @@ private:
             e->name = kv.first.as<std::string>();
             e->loc = loc(kv.first);
             const auto& body = kv.second;
-            check_keys(body, {"type", "values", "doc"}, "enum '" + e->name + "'");
+            check_keys(body, {"type", "values", "strict", "doc"}, "enum '" + e->name + "'");
+            e->strict = s.default_strict_enums;
+            if (auto v = body["strict"]) e->strict = to_bool(v);
             if (auto t = body["type"]) {
                 auto p = ir::parse_prim(to_str(t));
                 if (!p || !ir::prim_is_integer(*p)) diag_.error(loc(t), "enum type must be an integer type");
@@ -351,8 +354,8 @@ private:
         }
 
         check_keys(n, {"name", "type", "endian", "bit_order", "fields", "count", "length", "size", "max", "of",
-                       "when", "optional", "scale", "offset", "unit", "doc", "const", "terminator", "padding",
-                       "base", "width", "precision"},
+                       "when", "optional", "scale", "offset", "unit", "conversions", "crc", "doc", "const",
+                       "terminator", "padding", "base", "width", "precision"},
                    element ? "array element" : "field");
         if (auto v = n["name"]) f->name = to_str(v);
         else if (!element) diag_.error(f->loc, "field needs a 'name'");
@@ -380,6 +383,32 @@ private:
         if (auto v = n["scale"]) f->scale = to_double(v);
         if (auto v = n["offset"]) f->offset_value = to_double(v);
         if (auto v = n["unit"]) f->unit = to_str(v);
+        if (auto v = n["conversions"]) {
+            if (!v.IsMap()) {
+                diag_.error(loc(v), "'conversions' must be a mapping of name -> { scale, offset, unit }");
+            } else {
+                for (const auto& kv : v) {
+                    ir::Conversion cv;
+                    cv.name = kv.first.as<std::string>();
+                    cv.loc = loc(kv.first);
+                    const auto& b = kv.second;
+                    if (!b.IsMap()) { diag_.error(cv.loc, "conversion '" + cv.name + "' must be a mapping"); continue; }
+                    check_keys(b, {"scale", "offset", "unit"}, "conversion '" + cv.name + "'");
+                    if (auto x = b["scale"]) cv.scale = to_double(x);
+                    if (auto x = b["offset"]) cv.offset_value = to_double(x);
+                    if (auto x = b["unit"]) cv.unit = to_str(x);
+                    if (!cv.scale && !cv.offset_value)
+                        diag_.error(cv.loc, "conversion '" + cv.name + "' needs 'scale' and/or 'offset'");
+                    f->conversions.push_back(std::move(cv));
+                }
+            }
+        }
+        if (auto v = n["crc"]) {
+            f->crc = std::make_shared<ir::ChecksumSpec>();
+            f->crc->present = true;
+            f->crc->loc = loc(v);
+            load_algo(v, *f->crc, "crc");
+        }
         if (auto v = n["doc"]) f->doc = to_str(v);
         if (auto v = n["const"]) f->const_value = to_int(v);
         if (auto v = n["padding"]) {
@@ -391,6 +420,31 @@ private:
         if (auto v = n["width"]) f->width = static_cast<int>(to_int(v));
         if (auto v = n["precision"]) f->precision = static_cast<int>(to_int(v));
         return f;
+    }
+
+    /// computed: { name: { type, value, set: { field: expr, ... }, unit, doc } }
+    void load_computed(const YAML::Node& n, ir::Message& m) {
+        if (!n.IsMap()) { diag_.error(loc(n), "'computed' must be a mapping of name -> { type, value }"); return; }
+        for (const auto& kv : n) {
+            ir::Computed c;
+            c.name = kv.first.as<std::string>();
+            c.loc = loc(kv.first);
+            const auto& b = kv.second;
+            if (!b.IsMap()) { diag_.error(c.loc, "computed value '" + c.name + "' must be a mapping"); continue; }
+            check_keys(b, {"type", "value", "set", "unit", "doc"}, "computed value '" + c.name + "'");
+            if (auto v = b["type"]) c.type_name = to_str(v);
+            else diag_.error(c.loc, "computed value '" + c.name + "' needs a 'type'");
+            if (auto v = b["value"]) c.value = parse_expr(to_str(v), loc(v), diag_);
+            else diag_.error(c.loc, "computed value '" + c.name + "' needs a 'value' expression");
+            if (auto v = b["set"]) {
+                if (!v.IsMap()) diag_.error(loc(v), "'set' must be a mapping of field -> expression over 'value'");
+                else
+                    for (const auto& s : v) c.set.emplace_back(s.first.as<std::string>(), parse_expr(to_str(s.second), loc(s.second), diag_));
+            }
+            if (auto v = b["unit"]) c.unit = to_str(v);
+            if (auto v = b["doc"]) c.doc = to_str(v);
+            m.computed.push_back(std::move(c));
+        }
     }
 
     void load_fields(const YAML::Node& n, ir::Message& m) {
@@ -421,7 +475,7 @@ private:
             m->want_view = s.default_view;
             m->want_struct = s.default_struct;
             const auto& b = kv.second;
-            check_keys(b, {"type_id", "format", "endian", "bit_order", "separator", "access", "doc", "fields"},
+            check_keys(b, {"type_id", "format", "endian", "bit_order", "separator", "access", "doc", "fields", "computed"},
                        "message '" + m->name + "'");
             if (auto v = b["format"]) m->format = to_format(v);
             if (auto v = b["endian"]) m->endian = to_endian(v);
@@ -437,6 +491,7 @@ private:
                 else m->type_id = str;
             }
             load_fields(b["fields"], *m);
+            if (auto v = b["computed"]) load_computed(v, *m);
             apply_field_defaults(*m);
             s.messages.push_back(m);
         }
@@ -491,37 +546,34 @@ private:
         }
     }
 
+    /// A checksum algorithm: a built-in / custom name, or inline `{ crc: { width, poly, ... } }`.
+    void load_algo(const YAML::Node& a, ir::ChecksumSpec& c, const std::string& ctx) {
+        if (!a.IsMap()) { c.algo = to_str(a); return; }
+        check_keys(a, {"crc"}, ctx);
+        auto crc = a["crc"];
+        if (!crc) { diag_.error(loc(a), "inline algo must be { crc: {...} }"); return; }
+        check_keys(crc, {"width", "poly", "init", "refin", "refout", "xorout"}, "crc parameters");
+        ir::CrcParams cp;
+        if (auto w = crc["width"]) cp.width = static_cast<unsigned>(to_size(w));
+        else diag_.error(loc(crc), "crc needs 'width'");
+        if (auto w = crc["poly"]) cp.poly = static_cast<std::uint64_t>(to_int(w));
+        else diag_.error(loc(crc), "crc needs 'poly'");
+        if (auto w = crc["init"]) cp.init = static_cast<std::uint64_t>(to_int(w));
+        if (auto w = crc["xorout"]) cp.xorout = static_cast<std::uint64_t>(to_int(w));
+        if (auto w = crc["refin"]) cp.refin = to_bool(w);
+        if (auto w = crc["refout"]) cp.refout = to_bool(w);
+        c.algo = "crc";
+        c.crc = cp;
+    }
+
     void load_checksum(const YAML::Node& n, ir::Protocol& p) {
         auto& c = p.checksum;
         c.present = true;
         c.loc = loc(n);
         c.endian = p.endian;
         check_keys(n, {"algo", "covers", "endian", "separator", "required"}, "checksum");
-        if (auto a = n["algo"]) {
-            if (a.IsMap()) {
-                check_keys(a, {"crc"}, "checksum.algo");
-                auto crc = a["crc"];
-                if (!crc) { diag_.error(loc(a), "inline algo must be { crc: {...} }"); }
-                else {
-                    check_keys(crc, {"width", "poly", "init", "refin", "refout", "xorout"}, "crc parameters");
-                    ir::CrcParams cp;
-                    if (auto w = crc["width"]) cp.width = static_cast<unsigned>(to_size(w));
-                    else diag_.error(loc(crc), "crc needs 'width'");
-                    if (auto w = crc["poly"]) cp.poly = static_cast<std::uint64_t>(to_int(w));
-                    else diag_.error(loc(crc), "crc needs 'poly'");
-                    if (auto w = crc["init"]) cp.init = static_cast<std::uint64_t>(to_int(w));
-                    if (auto w = crc["xorout"]) cp.xorout = static_cast<std::uint64_t>(to_int(w));
-                    if (auto w = crc["refin"]) cp.refin = to_bool(w);
-                    if (auto w = crc["refout"]) cp.refout = to_bool(w);
-                    c.algo = "crc";
-                    c.crc = cp;
-                }
-            } else {
-                c.algo = to_str(a);
-            }
-        } else {
-            diag_.error(c.loc, "checksum needs 'algo'");
-        }
+        if (auto a = n["algo"]) load_algo(a, c, "checksum.algo");
+        else diag_.error(c.loc, "checksum needs 'algo'");
         if (auto v = n["covers"]) {
             const auto s = to_str(v);
             if (s == "header_body") c.covers = ir::ChecksumSpec::Covers::HeaderBody;

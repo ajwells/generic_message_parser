@@ -3,6 +3,7 @@
 #include <string>
 
 #include "backend/cpp/cpp_common.hpp"
+#include "schema/expr.hpp"
 
 namespace gmpc::cpp {
 
@@ -16,6 +17,46 @@ std::string dv(int depth) { return std::to_string(depth); }
 const char* kFailPrefix = "return gmp::fail(";
 
 std::string fail(const char* err) { return std::string(kFailPrefix) + "gmp::Error::" + err + ");"; }
+
+/// Expression computing a field-level checksum over `covered` (a gmp::bytes_view expression).
+std::string crc_call(const ChecksumSpec& c, const std::string& covered) {
+    bool fn = false;
+    const auto impl = checksum_impl(c, fn);
+    return "static_cast<std::uint64_t>(" + (fn ? impl + "(" + covered + ")" : impl + "::compute(" + covered + ")") + ")";
+}
+
+/// Bytes of a scalar/enum value itself (without its field-level checksum).
+std::size_t value_bytes(const Field& f) { return prim_size(f.prim); }
+
+/// Enum field whose decode must reject values that are not declared (`strict: true`).
+bool strict_enum(const Field& f) { return f.kind == FieldKind::Enum && f.enum_def && f.enum_def->strict; }
+
+/// A bits group whose raw bytes need `check()`: constant bit fields or strict enum bit fields.
+bool bits_need_check(const Field& f) {
+    for (const auto& b : f.bits)
+        if (b.const_value || (b.enum_def && b.enum_def->strict)) return true;
+    return false;
+}
+
+/// Doc comment for a computed value: its doc, unit and defining expression.
+void computed_doc(CodeWriter& w, const Computed& c) {
+    if (!c.doc.empty()) doc(w, c.doc);
+    w.line("/// = " + expr_to_string(*c.value) + (c.unit.empty() ? "" : "  [" + c.unit + "]"));
+}
+
+/// Engineering conversions of a numeric scalar: `scale`/`offset` as <name>_scaled, then each named conversion.
+struct ConvAccessor {
+    std::string suffix;
+    double scale, offset;
+    std::string unit;
+};
+std::vector<ConvAccessor> conversions_of(const Field& f) {
+    std::vector<ConvAccessor> out;
+    if (f.kind != FieldKind::Scalar) return out;
+    if (f.scale || f.offset_value) out.push_back({"scaled", f.scale.value_or(1.0), f.offset_value.value_or(0.0), f.unit});
+    for (const auto& c : f.conversions) out.push_back({c.name, c.scale.value_or(1.0), c.offset_value.value_or(0.0), c.unit});
+    return out;
+}
 
 // -------------------------------------------------------------------------------------------------
 // bits groups
@@ -66,9 +107,13 @@ void emit_bits_type(Ctx& c, const Message& m, const Field& f) {
     w.close();
     w.open("static constexpr gmp::VoidResult check([[maybe_unused]] const std::uint8_t* p) noexcept {");
     for (const auto& b : f.bits) {
-        if (!b.const_value) continue;
-        w.line("if (gmp::extract_bits(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " + order + ") != " +
-               int_literal(*b.const_value) + "ull) " + fail("BadConst"));
+        if (b.const_value) {
+            w.line("if (gmp::extract_bits(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " + order + ") != " +
+                   int_literal(*b.const_value) + "ull) " + fail("BadConst"));
+        } else if (b.enum_def && b.enum_def->strict) {
+            w.line("if (!is_known(gmp::get_bits<" + bitfield_type(b) + ">(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " +
+                   order + "))) " + fail("UnknownEnum"));
+        }
     }
     w.line("return {};");
     w.close();
@@ -117,6 +162,7 @@ public:
         w_.line();
         emit_constants();
         emit_scaled();
+        emit_computed();
         emit_read();
         emit_write();
         emit_wrappers();
@@ -140,24 +186,47 @@ private:
     void emit_scaled() {
         bool any = false;
         for (const auto& f : m_.fields) {
-            if (f->kind != FieldKind::Scalar || !(f->scale || f->offset_value) || !f->has_member()) continue;
-            any = true;
+            if (!f->has_member()) continue;
             const auto n = ident(f->name);
-            const auto scale = double_literal(f->scale.value_or(1.0));
-            const auto off = double_literal(f->offset_value.value_or(0.0));
             const auto t = prim_type(f->prim);
-            if (f->when) {
-                w_.line("[[nodiscard]] std::optional<double> " + f->name + "_scaled() const noexcept { if (!" + n +
-                        ") return std::nullopt; return static_cast<double>(*" + n + ") * " + scale + " + " + off + "; }");
-                continue;
+            for (const auto& cv : conversions_of(*f)) {
+                any = true;
+                const auto scale = double_literal(cv.scale);
+                const auto off = double_literal(cv.offset);
+                const auto acc = f->name + "_" + cv.suffix;
+                if (!cv.unit.empty() && cv.suffix != "scaled") w_.line("/// " + f->name + " in " + cv.unit);
+                if (f->when) {
+                    w_.line("[[nodiscard]] std::optional<double> " + acc + "() const noexcept { if (!" + n +
+                            ") return std::nullopt; return static_cast<double>(*" + n + ") * " + scale + " + " + off + "; }");
+                    continue;
+                }
+                w_.line("[[nodiscard]] constexpr double " + acc + "() const noexcept { return static_cast<double>(" + n +
+                        ") * " + scale + " + " + off + "; }");
+                const auto conv = prim_is_float(f->prim) ? "static_cast<" + t + ">((v - " + off + ") / " + scale + ")"
+                                                         : "static_cast<" + t + ">(std::llround((v - " + off + ") / " + scale + "))";
+                w_.line("void set_" + acc + "(double v) noexcept { " + n + " = " + conv + "; }");
             }
-            w_.line("[[nodiscard]] constexpr double " + f->name + "_scaled() const noexcept { return static_cast<double>(" +
-                    n + ") * " + scale + " + " + off + "; }");
-            const auto conv = prim_is_float(f->prim) ? "static_cast<" + t + ">((v - " + off + ") / " + scale + ")"
-                                                     : "static_cast<" + t + ">(std::llround((v - " + off + ") / " + scale + "))";
-            w_.line("void set_" + f->name + "_scaled(double v) noexcept { " + n + " = " + conv + "; }");
         }
         if (any) w_.line();
+    }
+
+    void emit_computed() {
+        for (const auto& c : m_.computed) {
+            const auto t = prim_type(c.prim);
+            const auto n = ident(c.name);
+            computed_doc(w_, c);
+            w_.line("[[nodiscard]] constexpr " + t + " " + n + "() const noexcept { return static_cast<" + t + ">(" +
+                    expr(*c.value, base_ref_) + "); }");
+            if (c.setters.empty()) continue;
+            w_.line(std::string("/// Sets the fields ") + (c.setter_derived ? "packed into " : "listed in `set` for ") + c.name +
+                    " so that " + n + "() == v" + (c.setter_derived ? " (for values that fit in those fields)." : "."));
+            w_.open("constexpr void set_" + c.name + "(" + t + " v) noexcept {");
+            w_.line("[[maybe_unused]] const std::int64_t value = static_cast<std::int64_t>(v);");
+            for (const auto& [f, e] : c.setters)
+                w_.line("this->" + ident(f->name) + " = static_cast<" + element_type(m_, *f) + ">(" + expr(*e, base_ref_) + ");");
+            w_.close();
+        }
+        if (!m_.computed.empty()) w_.line();
     }
 
     void emit_read() {
@@ -187,10 +256,23 @@ private:
             case FieldKind::Enum: {
                 const auto t = element_type(m_, f);
                 w_.open("{");
-                w_.line("auto v" + d + " = r.read<" + t + ">(" + endian_expr(f.endian) + ");");
-                w_.line("if (!v" + d + ") return gmp::fail(v" + d + ".error());");
-                if (f.const_value) w_.line("if (*v" + d + " != " + typed_literal(f, *f.const_value) + ") " + fail("BadConst"));
-                else if (!dst.empty()) w_.line(dst + " = *v" + d + ";");
+                if (f.crc) {
+                    // value bytes followed by their checksum
+                    const auto n = sz(value_bytes(f));
+                    w_.line("auto b" + d + " = r.read_bytes(" + sz(value_bytes(f) + f.crc->size) + ");");
+                    w_.line("if (!b" + d + ") return gmp::fail(b" + d + ".error());");
+                    w_.line("if (gmp::load_uint(b" + d + "->data() + " + n + ", " + sz(f.crc->size) + ", " +
+                            endian_expr(f.crc->endian) + ") != " + crc_call(*f.crc, "b" + d + "->first(" + n + ")") + ") " +
+                            fail("BadChecksum"));
+                    w_.line("const auto v" + d + " = gmp::load<" + t + ">(b" + d + "->data(), " + endian_expr(f.endian) + ");");
+                } else {
+                    w_.line("auto v" + d + " = r.read<" + t + ">(" + endian_expr(f.endian) + ");");
+                    w_.line("if (!v" + d + ") return gmp::fail(v" + d + ".error());");
+                }
+                const auto val = (f.crc ? "v" : "*v") + d;
+                if (strict_enum(f)) w_.line("if (!is_known(" + val + ")) " + fail("UnknownEnum"));
+                if (f.const_value) w_.line("if (" + val + " != " + typed_literal(f, *f.const_value) + ") " + fail("BadConst"));
+                else if (!dst.empty()) w_.line(dst + " = " + val + ";");
                 w_.close();
                 break;
             }
@@ -339,12 +421,21 @@ private:
                     w_.line("if (" + count + " > static_cast<std::size_t>(std::numeric_limits<" + t + ">::max())) " +
                             fail("OutOfRange"));
                     val = "static_cast<" + t + ">(" + count + ")";
+                } else if (strict_enum(f)) {
+                    w_.line("if (!is_known(" + val + ")) " + fail("UnknownEnum"));
                 }
                 w_.line("if (auto e" + d + " = w.write<" + t + ">(" + val + ", " + endian_expr(f.endian) + "); !e" + d +
                         ") return e" + d + ";");
+                if (f.crc)
+                    w_.line("if (auto e" + d + " = w.write_uint(" +
+                            crc_call(*f.crc, "w.written().last(" + sz(value_bytes(f)) + ")") + ", " + sz(f.crc->size) + ", " +
+                            endian_expr(f.crc->endian) + "); !e" + d + ") return e" + d + ";");
                 break;
             }
             case FieldKind::Bits:
+                for (const auto& b : f.bits)
+                    if (!b.pad && !b.const_value && b.enum_def && b.enum_def->strict)
+                        w_.line("if (!is_known(" + src + "." + ident(b.name) + ")) " + fail("UnknownEnum"));
                 w_.open("{");
                 w_.line("auto at" + d + " = w.reserve(" + sz(f.bits_bytes) + ");");
                 w_.line("if (!at" + d + ") return gmp::fail(at" + d + ".error());");
@@ -468,6 +559,7 @@ public:
         w_.line("[[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }");
         w_.line();
         for (const auto& f : m_.fields) emit_accessor(*f);
+        emit_computed_accessors();
         if (m_.want_struct) {
             w_.line();
             w_.line("/// Decode into the eager struct.");
@@ -499,16 +591,21 @@ private:
         switch (f.kind) {
             case FieldKind::Scalar:
             case FieldKind::Enum:
+                if (f.crc) {
+                    const auto n = sz(value_bytes(f));
+                    w_.line("if (gmp::load_uint(" + p + " + " + n + ", " + sz(f.crc->size) + ", " + endian_expr(f.crc->endian) +
+                            ") != " + crc_call(*f.crc, "gmp::bytes_view(" + p + ", " + n + ")") + ") " + fail("BadChecksum"));
+                }
                 if (f.const_value)
                     w_.line("if (gmp::load<" + element_type(m_, f) + ">(" + p + ", " + endian_expr(f.endian) + ") != " +
                             typed_literal(f, *f.const_value) + ") " + fail("BadConst"));
+                else if (strict_enum(f))
+                    w_.line("if (!is_known(gmp::load<" + element_type(m_, f) + ">(" + p + ", " + endian_expr(f.endian) +
+                            "))) " + fail("UnknownEnum"));
                 break;
             case FieldKind::Bits:
-                for (const auto& b : f.bits)
-                    if (b.const_value) {
-                        w_.line("if (auto c = " + bits_type_name(m_, f) + "::check(" + p + "); !c) return gmp::fail(c.error());");
-                        break;
-                    }
+                if (bits_need_check(f))
+                    w_.line("if (auto c = " + bits_type_name(m_, f) + "::check(" + p + "); !c) return gmp::fail(c.error());");
                 break;
             case FieldKind::Message:
                 if (f.message->needs_validation)
@@ -530,10 +627,21 @@ private:
                             endian_expr(f.elem->endian) + ") != " + typed_literal(*f.elem, *f.elem->const_value) + ") " +
                             fail("BadConst"));
                     w_.close();
+                } else if (strict_enum(*f.elem)) {
+                    emit_enum_array_check(*f.elem, p, sz(f.len.fixed));
                 }
                 break;
             default: break;
         }
+    }
+
+    /// Reject undeclared values in `count` strict-enum elements starting at pointer expression `p`.
+    void emit_enum_array_check(const Field& e, const std::string& p, const std::string& count) {
+        const auto es = sz(prim_size(e.prim));
+        w_.open("for (std::size_t k = 0; k < " + count + "; ++k) {");
+        w_.line("if (!is_known(gmp::load<" + element_type(m_, e) + ">(" + p + " + k * " + es + ", " + endian_expr(e.endian) +
+                "))) " + fail("UnknownEnum"));
+        w_.close();
     }
 
     void emit_from() {
@@ -576,7 +684,7 @@ private:
             tmp.when = nullptr;
             // size if present
             switch (f.kind) {
-                case FieldKind::Scalar: case FieldKind::Enum: fixed = prim_size(f.prim); break;
+                case FieldKind::Scalar: case FieldKind::Enum: fixed = prim_size(f.prim) + (f.crc ? f.crc->size : 0); break;
                 case FieldKind::Bits: fixed = f.bits_bytes; break;
                 case FieldKind::Pad: fixed = f.len.fixed; break;
                 case FieldKind::Message: fixed = f.message->static_size; break;
@@ -658,6 +766,7 @@ private:
         if (f.len.kind == LenKind::Remaining) {
             if (es && !validate) {
                 w_.line("if ((data.size() - pos) % " + sz(*es) + " != 0) " + fail("BadLength"));
+                if (strict_enum(e)) emit_enum_array_check(e, "data.data() + pos", "(data.size() - pos) / " + sz(*es));
                 w_.line("pos = data.size();");
             } else {
                 w_.open("while (pos < data.size()) {");
@@ -672,6 +781,7 @@ private:
             w_.line("if (n < 0) " + fail("BadLength"));
             if (es && !validate) {
                 w_.line("if (static_cast<std::uint64_t>(n) * " + sz(*es) + " > data.size() - pos) " + fail("Truncated"));
+                if (strict_enum(e)) emit_enum_array_check(e, "data.data() + pos", "static_cast<std::size_t>(n)");
                 w_.line("pos += static_cast<std::size_t>(n) * " + sz(*es) + ";");
             } else {
                 w_.open("for (std::int64_t k = 0; k < n; ++k) {");
@@ -753,6 +863,15 @@ private:
         }
     }
 
+    void emit_computed_accessors() {
+        for (const auto& c : m_.computed) {
+            const auto t = prim_type(c.prim);
+            computed_doc(w_, c);
+            w_.line("[[nodiscard]] " + t + " " + ident(c.name) + "() const noexcept { return static_cast<" + t + ">(" +
+                    expr(*c.value, acc_ref_) + "); }");
+        }
+    }
+
     void emit_accessor(const Field& f) {
         if (!f.has_member()) return;
         const auto n = ident(f.name);
@@ -769,15 +888,17 @@ private:
         } else {
             w_.line("[[nodiscard]] " + t + " " + n + "() const noexcept { return " + accessor_body(f) + "; }");
         }
-        if (f.kind == FieldKind::Scalar && (f.scale || f.offset_value)) {
-            const auto scale = double_literal(f.scale.value_or(1.0));
-            const auto offv = double_literal(f.offset_value.value_or(0.0));
+        for (const auto& cv : conversions_of(f)) {
+            const auto scale = double_literal(cv.scale);
+            const auto offv = double_literal(cv.offset);
+            const auto acc = f.name + "_" + cv.suffix;
+            if (!cv.unit.empty() && cv.suffix != "scaled") w_.line("/// " + f.name + " in " + cv.unit);
             if (f.when)
-                w_.line("[[nodiscard]] std::optional<double> " + f.name + "_scaled() const noexcept { auto v = " + n +
+                w_.line("[[nodiscard]] std::optional<double> " + acc + "() const noexcept { auto v = " + n +
                         "(); if (!v) return std::nullopt; return static_cast<double>(*v) * " + scale + " + " + offv + "; }");
             else
-                w_.line("[[nodiscard]] double " + f.name + "_scaled() const noexcept { return static_cast<double>(" + n +
-                        "()) * " + scale + " + " + offv + "; }");
+                w_.line("[[nodiscard]] double " + acc + "() const noexcept { return static_cast<double>(" + n + "()) * " +
+                        scale + " + " + offv + "; }");
         }
     }
 

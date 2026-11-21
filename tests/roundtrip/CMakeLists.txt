@@ -6,7 +6,12 @@ gmp_generate(TARGET gmp_test_schemas
         ${SCHEMA_DIR}/nmea.yaml
         ${SCHEMA_DIR}/hdlc.yaml
         ${SCHEMA_DIR}/can.yaml
-        ${SCHEMA_DIR}/custom.yaml)
+        ${SCHEMA_DIR}/custom.yaml
+        ${SCHEMA_DIR}/fieldcrc.yaml
+        ${SCHEMA_DIR}/enums.yaml
+        ${SCHEMA_DIR}/computed.yaml
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/sensirion_sht4x/sht4x.yaml
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/sensirion_sht4x/sht4x_enum.yaml)
 # custom codecs referenced by hdlc.yaml
 target_include_directories(gmp_test_schemas INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -14,7 +19,11 @@ gmp_add_test(gmp_roundtrip_tests
         test_telemetry.cpp
         test_nmea.cpp
         test_hdlc_can.cpp
-        test_custom.cpp)
+        test_custom.cpp
+        test_fieldcrc.cpp
+        test_enums.cpp
+        test_computed.cpp
+        test_sht4x.cpp)
 target_link_libraries(gmp_roundtrip_tests PRIVATE gmp_test_schemas)
 
 # Embedded profile: generated code + runtime must build without exceptions / RTTI and never allocate.

@@ -1,0 +1,52 @@
+# Computed values: derived accessors, automatic setters for packing expressions, explicit `set:` setters.
+schema_version: 1
+namespace: test::computed
+defaults: { endian: big }
+
+enums:
+  Unit: { type: u8, values: { mm: 0, cm: 1 } }
+
+messages:
+  Packed:
+    fields:
+      - { name: b0, type: u8 }
+      - { name: b1, type: u8 }
+      - { name: b2, type: u8 }
+      - { name: wide, type: u32 }
+      - { name: lo, type: u16 }
+      - name: flags
+        type: bits
+        fields:
+          - { name: ready, bits: 1 }
+          - { name: level, bits: 7 }
+      - { name: unit, type: Unit }
+      - { name: n, type: u8 }
+      - { name: items, type: array, of: u8, count: "n", max: 4 }
+    computed:
+      rgb:                                  # automatic setter: three bytes packed with | and <<
+        type: u32
+        value: "(b0 << 16) | (b1 << 8) | b2"
+        unit: color
+        doc: 24-bit colour.
+      big:                                  # automatic setter with '+' and a 64-bit result
+        type: u64
+        value: "(wide << 16) + lo"
+      sum:                                  # not a packing expression: read-only
+        type: i32
+        value: "b0 + b1 - b2"
+      level_x2:                             # reads a bits member: read-only
+        type: u16
+        value: "flags.level * 2"
+      length_mm:                            # explicit setter, assigns an enum field too
+        type: i64
+        value: "lo * (1 + 9 * (unit == Unit.cm))"   # cm values are 10x mm
+        set: { lo: "value", unit: "Unit.mm" }        # always stored as mm
+      ratio:                                # floating point result
+        type: f64
+        value: "lo / 4"
+      first_two:                            # partial packing, overlap check does not apply to disjoint bytes
+        type: u16
+        value: "(b0 << 8) | b1"
+      overlapping:                          # b0 and b1 overlap: read-only
+        type: u16
+        value: "(b0 << 4) | b1"

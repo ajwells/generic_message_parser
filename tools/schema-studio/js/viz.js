@@ -36,6 +36,14 @@
     }).join('')}</div>${total % 8 ? `<div class="ty" style="color:var(--danger)">${total} bits - not a whole byte</div>` : ''}`;
   }
 
+  /** Computed values listed under a message's fields (no bytes on the wire). */
+  function computedHtml(m) {
+    const list = (m.computed || []).filter((c) => c.name);
+    if (!list.length) return '';
+    return `<div class="computed-list" style="margin-top:8px;display:flex;flex-direction:column;gap:4px">${list.map((c) =>
+      `<div class="mono" style="font-size:11.5px;color:var(--muted)"><span class="badge">computed</span> <b style="color:var(--text)">${esc(c.name)}</b> = ${esc(c.value || '?')} <span style="color:var(--faint)">· ${esc(c.type || '')}${c.set ? ' · custom setter' : ''}</span></div>`).join('')}</div>`;
+  }
+
   function fieldBlock(s, ui, row, owner, ctx, depth) {
     const f = row.field;
     const sz = row.size;
@@ -51,8 +59,12 @@
     const name = kind === 'pad' ? 'padding' : esc(f.name || '(unnamed)');
     const tags = [];
     if (f.const) tags.push(`= ${esc(f.const)}`);
-    if (f.scale || f.offset) tags.push(`×${esc(f.scale || 1)}${f.offset ? (String(f.offset).startsWith('-') ? '' : '+') + esc(f.offset) : ''}`);
+    // display only: long factors such as 175/65535 are shortened to 6 significant digits
+    const short = (v) => { const n = Number(v); return v !== '' && Number.isFinite(n) && String(v).length > 8 ? String(+n.toPrecision(6)) : String(v); };
+    if (f.scale || f.offset) tags.push(`×${esc(short(f.scale || 1))}${f.offset ? (String(f.offset).trim().startsWith('-') ? ' − ' + esc(short(String(f.offset).trim().slice(1))) : ' + ' + esc(short(f.offset))) : ''}`);
     if (f.unit) tags.push(esc(f.unit));
+    (f.conversions || []).forEach((c) => { if (c.name) tags.push(esc(c.unit || c.name)); });
+    if (f.crc && !ctx.text) tags.push(`+ ${esc(f.crc === '__crc' ? 'CRC-' + f.crcParams.width : f.crc)} (${G.checksumSize(s, f.crc, f.crcParams)} B)`);
     if (f.when) tags.push(`when ${esc(f.when)}`);
     if (f.optional && ctx.text) tags.push('optional');
 
@@ -128,7 +140,7 @@
     const sub = L.text ? `Tokens separated by “${esc(G.msgSeparator(s, m))}”` : `${G.msgEndian(s, m)} endian${m.doc ? ' · ' + esc(m.doc) : ''}`;
     return `<article class="card${sel ? ' selected' : ''}" data-action="select" data-kind="message" data-uid="${m.uid}" id="card-${m.uid}">
       <div class="card-head"><div class="card-title"><span class="kind">msg</span>${esc(m.name)}</div><div class="badges">${badges}</div></div>
-      <div class="card-body"><div class="card-sub">${sub}</div>${rowsHtml(s, ui, m, L, ctx)}</div>
+      <div class="card-body"><div class="card-sub">${sub}</div>${rowsHtml(s, ui, m, L, ctx)}${computedHtml(m)}</div>
     </article>`;
   }
 

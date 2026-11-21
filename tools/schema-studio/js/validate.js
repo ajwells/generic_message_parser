@@ -73,7 +73,7 @@
     s.protocols.forEach((p) => claim(p.name, { kind: 'protocol', uid: p.uid }, 'Protocol'));
 
     // ---- messages -----------------------------------------------------------------------------
-    s.messages.forEach((m) => checkFields(s, m, { kind: 'message', uid: m.uid }, add));
+    s.messages.forEach((m) => { checkFields(s, m, { kind: 'message', uid: m.uid }, add); checkComputed(s, m, { kind: 'message', uid: m.uid }, add); });
 
     // ---- protocols ----------------------------------------------------------------------------
     s.protocols.forEach((p) => checkProtocol(s, p, add));
@@ -140,6 +140,27 @@
       if (f.const && !G.isInt(f.const)) add('error', ft, where, 'const must be an integer literal');
       if (f.const && (kind === 'float' || !['int', 'enum', 'bool', 'char'].includes(kind))) add('error', ft, where, "'const' is only valid on integer, enum, bool or char fields");
       if ((f.scale || f.offset) && !['int', 'float'].includes(kind)) add('error', ft, where, "'scale'/'offset' need a numeric field");
+      if (f.crc) {
+        if (text) add('error', ft, where, "'crc' is not supported in text messages");
+        else if (!['int', 'float', 'enum', 'bool', 'char'].includes(kind)) add('error', ft, where, "'crc' is only valid on scalar and enum fields");
+        else if (!G.checksumSize(s, f.crc, f.crcParams)) add('error', ft, where, `unknown CRC "${f.crc}"`);
+        if (f.crc === '__crc') {
+          const w = G.parseInt(f.crcParams.width);
+          if (!(w >= 1 && w <= 64)) add('error', ft, where, 'crc width must be 1..64');
+          if (!G.isInt(f.crcParams.poly)) add('error', ft, where, 'crc poly must be an integer');
+        }
+      }
+      const convs = f.conversions || [];
+      if (convs.length && !['int', 'float'].includes(kind)) add('error', ft, where, "'conversions' are only valid on numeric scalar fields");
+      const seenConv = new Set();
+      convs.forEach((c) => {
+        if (!G.isIdent(c.name || '')) add('error', ft, where, `conversion name "${c.name || ''}" is not a valid identifier`);
+        else if (c.name === 'scaled' || c.name === 'value') add('error', ft, where, `conversion name "${c.name}" is reserved`);
+        else if (m.fields.some((o) => o.name === `${f.name}_${c.name}`)) add('error', ft, where, `conversion accessor "${f.name}_${c.name}" clashes with a field`);
+        if (seenConv.has(c.name)) add('error', ft, where, `duplicate conversion "${c.name}"`);
+        seenConv.add(c.name);
+        if (!c.scale && !c.offset) add('error', ft, where, `conversion "${c.name}" needs a scale and/or offset`);
+      });
       if (f.when && !text) checkExpr(s, m, i, f.when, ft, where, add);
 
       if (kind === 'message') {
@@ -150,6 +171,42 @@
           if (wantStruct && !G.wantsStruct(s, child)) add('error', ft, where, `nested "${child.name}" needs struct access`);
         }
       }
+    });
+  }
+
+  /** Mirrors resolve_computed() in generator/src/ir/lowering.cpp and the validator's name checks. */
+  function checkComputed(s, m, target, add) {
+    const list = m.computed || [];
+    if (!list.length) return;
+    if (G.msgFormat(s, m) === 'text') { add('error', target, m.name, 'computed values are only supported in binary messages'); return; }
+    const accessors = new Set();
+    m.fields.forEach((f) => {
+      if (f.name) accessors.add(f.name);
+      if (f.scale || f.offset) accessors.add(`${f.name}_scaled`);
+      (f.conversions || []).forEach((c) => c.name && accessors.add(`${f.name}_${c.name}`));
+    });
+    const seen = new Set();
+    list.forEach((c) => {
+      const where = `${m.name}.${c.name || '(computed)'}`;
+      if (!G.isIdent(c.name || '')) add('error', target, where, 'computed value name is not a valid identifier');
+      else if (accessors.has(c.name)) add('error', target, where, `computed value "${c.name}" clashes with a field or accessor`);
+      if (seen.has(c.name)) add('error', target, where, `duplicate computed value "${c.name}"`);
+      seen.add(c.name);
+      if (!['u8', 'u16', 'u32', 'u64', 'i8', 'i16', 'i32', 'i64', 'f32', 'f64'].includes(c.type)) add('error', target, where, 'type must be numeric');
+      if (!(c.value || '').trim()) add('error', target, where, 'needs a value expression');
+      else checkExpr(s, m, m.fields.length, c.value, target, where, add);
+      const sets = G.parseSetList(c.set);
+      const parts = String(c.set || '').split(/[;\n]/).filter((x) => x.trim());
+      if (parts.length !== sets.length) add('error', target, where, 'setter must be "field = expression; …"');
+      const targets = new Set();
+      sets.forEach(([fname, e]) => {
+        const f = m.fields.find((x) => x.name === fname);
+        if (!f) { add('error', target, where, `set target "${fname}" is not a field`); return; }
+        if (!['int', 'enum', 'float'].includes(G.fieldKind(s, f)) || f.const || f.when) add('error', target, where, `set target "${fname}" must be a plain scalar or enum field`);
+        if (targets.has(fname)) add('error', target, where, `field "${fname}" is set twice`);
+        targets.add(fname);
+        if (!G.exprSyntaxOk(e)) add('error', target, where, `invalid expression "${e}"`);
+      });
     });
   }
 

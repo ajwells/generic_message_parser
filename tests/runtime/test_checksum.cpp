@@ -17,6 +17,11 @@ TEST_CASE("CRC presets match catalogue check values") {
     CHECK(crc8::compute(check_data()) == 0xF4);
     CHECK(crc8_maxim::compute(check_data()) == 0xA1);
     CHECK(crc8_autosar::compute(check_data()) == 0xDF);
+    CHECK(crc8_nrsc5::compute(check_data()) == 0xF7);
+    {
+        const std::uint8_t beef[] = {0xBE, 0xEF};  // SHT4x datasheet, Table 7
+        CHECK(crc8_nrsc5::compute(bytes_view(beef, 2)) == 0x92);
+    }
     CHECK(crc15_can::compute(check_data()) == 0x059E);
     CHECK(crc16_ccitt::compute(check_data()) == 0x29B1);
     CHECK(crc16_xmodem::compute(check_data()) == 0x31C3);

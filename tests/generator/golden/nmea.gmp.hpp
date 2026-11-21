@@ -35,6 +35,17 @@ enum class FixQuality : std::uint8_t {
     }
 }
 
+/// True when `v` is one of the declared values.
+[[nodiscard]] constexpr bool is_known(FixQuality v) noexcept {
+    switch (v) {
+        case FixQuality::invalid:
+        case FixQuality::gps:
+        case FixQuality::dgps:
+            return true;
+        default: return false;
+    }
+}
+
 /// Global positioning system fix data.
 struct GGA {
     double utc_time{};

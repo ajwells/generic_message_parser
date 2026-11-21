@@ -265,6 +265,18 @@
       else list.push(G.newBit({ name: uniqueName('bit', list), bits: '1' }));
       refresh({ leftToo: true });
     },
+    addComputed: (el) => {
+      let list = G.getPath(state, el.dataset.path);
+      if (!Array.isArray(list)) { list = []; G.setPath(state, el.dataset.path, list); }
+      list.push(G.newComputed({ name: uniqueName('value', list) }));
+      refresh({ leftToo: true });
+    },
+    addConversion: (el) => {
+      let list = G.getPath(state, el.dataset.path);
+      if (!Array.isArray(list)) { list = []; G.setPath(state, el.dataset.path, list); }
+      list.push(G.newConversion({ name: uniqueName('alt', list) }));
+      refresh({ leftToo: true });
+    },
     addEnumValue: (el) => {
       const list = G.getPath(state, el.dataset.path);
       const next = list.length ? Math.max(...list.map((v) => G.parseInt(v.value) || 0)) + 1 : 0;

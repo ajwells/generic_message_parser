@@ -22,11 +22,37 @@ void check_ident(const std::string& name, const SourceLoc& loc, const char* what
 }
 
 void check_fields(const ir::Message& m, Diagnostics& d) {
+    std::set<std::string> names;
+    for (const auto& f : m.fields)
+        if (!f->name.empty()) names.insert(f->name);
     for (const auto& f : m.fields) {
         if (f->kind == ir::FieldKind::Pad && f->name.empty()) continue;
         check_ident(f->name, f->loc, "field", d);
         for (const auto& b : f->bits)
             if (!b.pad) check_ident(b.name, b.loc, "bit field", d);
+        // each conversion becomes an accessor named <field>_<conversion>
+        std::set<std::string> convs;
+        for (const auto& c : f->conversions) {
+            check_ident(c.name, c.loc, "conversion", d);
+            if (c.name == "scaled" || c.name == "value")
+                d.error(c.loc, "conversion name '" + c.name + "' is reserved (it would clash with " + f->name + "_" + c.name + ")");
+            if (!convs.insert(c.name).second) d.error(c.loc, "duplicate conversion '" + c.name + "' on field '" + f->name + "'");
+            if (names.contains(f->name + "_" + c.name))
+                d.error(c.loc, "conversion accessor '" + f->name + "_" + c.name + "' clashes with a field of the same name");
+        }
+    }
+    // computed values become accessors <name>() and set_<name>(); they share the field namespace
+    std::set<std::string> accessors = names;
+    for (const auto& f : m.fields) {
+        if (f->scale || f->offset_value) accessors.insert(f->name + "_scaled");
+        for (const auto& c : f->conversions) accessors.insert(f->name + "_" + c.name);
+    }
+    std::set<std::string> computed;
+    for (const auto& c : m.computed) {
+        check_ident(c.name, c.loc, "computed value", d);
+        if (accessors.contains(c.name))
+            d.error(c.loc, "computed value '" + c.name + "' clashes with a field or accessor of '" + m.name + "'");
+        if (!computed.insert(c.name).second) d.error(c.loc, "duplicate computed value '" + c.name + "' in '" + m.name + "'");
     }
 }
 

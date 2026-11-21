@@ -59,6 +59,10 @@
     switch (kind) {
       case 'int': case 'float': case 'bool': case 'char': case 'enum': case 'message': case 'custom':
         r = typeSize(s, f.type, stack);
+        if (f.crc && r.fixed != null && kind !== 'message' && kind !== 'custom') {
+          const c = G.checksumSize(s, f.crc, f.crcParams);  // field-level checksum follows the value
+          r = { ...r, fixed: r.fixed + c, crc: c };
+        }
         break;
       case 'pad': {
         const n = G.parseInt(f.padSize);
@@ -164,15 +168,7 @@
     const suffix = G.patternBytes(fr.endMode, fr.end) || [];
     const header = G.messageLayout(s, G.headerMessage(s, p));
     const headerSize = text ? 0 : header.size || 0;
-    let checksumSize = 0;
-    if (p.checksum.enabled) {
-      if (p.checksum.algo === '__crc') checksumSize = Math.ceil((G.parseInt(p.checksum.crc.width) || 0) / 8);
-      else if (G.CHECKSUMS[p.checksum.algo]) checksumSize = G.CHECKSUMS[p.checksum.algo];
-      else {
-        const c = s.customChecksums.find((x) => x.name === p.checksum.algo);
-        checksumSize = c ? G.parseInt(c.size) || 0 : 0;
-      }
-    }
+    const checksumSize = p.checksum.enabled ? G.checksumSize(s, p.checksum.algo, p.checksum.crc) : 0;
     const trailer = text ? 0 : checksumSize;
     const bodies = p.messages
       .map((n) => G.findMessage(s, n))

@@ -1,0 +1,36 @@
+# Strict enums (`strict: true` / `defaults.strict_enums`) in every position a value can be decoded from.
+schema_version: 1
+namespace: test::enums
+defaults: { endian: big, strict_enums: true }
+
+enums:
+  Color: { type: u8, values: { red: 1, green: 2, blue: 3 } }              # strict via defaults
+  Level: { type: u16, values: { low: 10, high: 20 } }                     # strict via defaults
+  Open: { type: u8, strict: false, values: { a: 1, b: 2 } }               # opts out: any value decodes
+  Mode: { type: u8, values: { idle: 0, run: 1 } }                         # strict, used in bits
+
+messages:
+  Inner:
+    fields:
+      - { name: color, type: Color }
+  Sample:
+    fields:
+      - { name: color, type: Color }
+      - { name: open, type: Open }
+      - name: flags
+        type: bits
+        fields:
+          - { name: mode, bits: 2, enum: Mode }
+          - { pad: 6 }
+      - { name: levels, type: array, of: Level, count: 2 }                # fixed count
+      - { name: inner, type: Inner }                                      # nested strict enum
+      - { name: n, type: u8 }
+      - { name: more, type: array, of: Color, count: "n", max: 4 }        # variable count
+  Tail:
+    fields:
+      - { name: rest, type: array, of: Color, count: remaining, max: 8 }  # remaining
+  Line:
+    format: text
+    fields:
+      - { name: color, type: Color }
+      - { name: open, type: Open }

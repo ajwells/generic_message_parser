@@ -15,7 +15,7 @@ window.GMP = window.GMP || {};
 
   /** Built-in checksum algorithms -> bytes on the wire (mirrors generator/src/ir/ir.cpp). */
   G.CHECKSUMS = {
-    crc8: 1, crc8_maxim: 1, crc8_autosar: 1, crc15_can: 2, crc16_ccitt: 2, crc16_xmodem: 2, crc16_kermit: 2,
+    crc8: 1, crc8_maxim: 1, crc8_autosar: 1, crc8_nrsc5: 1, crc15_can: 2, crc16_ccitt: 2, crc16_xmodem: 2, crc16_kermit: 2,
     crc16_x25: 2, crc16_modbus: 2, crc16_arc: 2, crc24_openpgp: 3, crc32: 4, crc32c: 4, crc32_mpeg2: 4,
     crc64_ecma: 8, xor8: 1, sum8: 1, lrc8: 1, sum16: 2, fletcher16: 2, fletcher8_ubx: 2,
   };
@@ -28,15 +28,36 @@ window.GMP = window.GMP || {};
     lenMode: 'fixed', lenValue: '', max: '', terminator: '0', padding: '',
     of: 'u8', ofEndian: '',
     scale: '', offset: '', unit: '', const: '', when: '', optional: false,
+    crc: '', crcParams: { width: '8', poly: '0x31', init: '0xFF', refin: false, refout: false, xorout: '0x00' },
+    conversions: [],
     base: '', width: '', precision: '', doc: '', padSize: '1',
     bits: [],
     ...over,
   });
 
   G.newBit = (over = {}) => ({ uid: G.uid(), name: '', bits: '1', type: '', const: '', scale: '', offset: '', pad: false, doc: '', ...over });
+  /** A computed value: `set` is '' (automatic setter when possible) or "field = expr; field = expr". */
+  G.newComputed = (over = {}) => ({ uid: G.uid(), name: '', type: 'u32', value: '', set: '', unit: '', doc: '', ...over });
+  /** Parse a computed setter list "a = value >> 8; b = value & 255" into [[field, expr], ...] (invalid parts skipped). */
+  G.parseSetList = (text) => String(text || '').split(/[;\n]/).map((part) => {
+    const m = /^\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.+?)\s*$/.exec(part);
+    return m ? [m[1], m[2]] : null;
+  }).filter(Boolean);
+
+  G.newConversion =(over = {}) => ({ uid: G.uid(), name: '', scale: '', offset: '', unit: '', ...over });
+
+  /** Bytes on the wire for a checksum algorithm (protocol checksum or field `crc`); 0 when unknown. */
+  G.checksumSize = (s, algo, crcParams) => {
+    if (!algo) return 0;
+    if (algo === '__crc') return Math.ceil((G.parseInt(crcParams && crcParams.width) || 0) / 8);
+    if (G.CHECKSUMS[algo]) return G.CHECKSUMS[algo];
+    const c = s.customChecksums.find((x) => x.name === algo);
+    return c ? G.parseInt(c.size) || 0 : 0;
+  };
 
   G.newMessage = (over = {}) => ({
     uid: G.uid(), name: 'Message', type_id: '', format: '', endian: '', bit_order: '', separator: '', access: '', doc: '',
+    computed: [],
     fields: [], ...over,
   });
 
@@ -57,7 +78,9 @@ window.GMP = window.GMP || {};
     ...over,
   });
 
-  G.newEnum = (over = {}) => ({ uid: G.uid(), name: 'Enum', type: 'u8', doc: '', values: [], ...over });
+  G.newEnum = (over = {}) => ({ uid: G.uid(), name: 'Enum', type: 'u8', strict: '', doc: '', values: [], ...over });
+  /** Whether decode rejects undeclared values: the enum's `strict` ('' inherits defaults.strict_enums). */
+  G.enumStrict = (s, e) => (e.strict === '' || e.strict == null ? !!s.schema.defaults.strict_enums : e.strict === 'true');
   G.newEnumValue = (name = '', value = '') => ({ uid: G.uid(), name, value });
   G.newCustomType = (over = {}) => ({ uid: G.uid(), name: 'custom_type', wire_size: '', max_wire_size: '', header: '', type: '', decode: '', encode: '', ...over });
   G.newCustomChecksum = (over = {}) => ({ uid: G.uid(), name: 'my_checksum', size: '1', header: '', function: '', ...over });
@@ -67,7 +90,7 @@ window.GMP = window.GMP || {};
     version: STATE_VERSION,  // defined in the persistence section below
     schema: {
       namespace: '',
-      defaults: { endian: 'big', bit_order: 'msb_first', format: 'binary', separator: ',', access: 'both' },
+      defaults: { endian: 'big', bit_order: 'msb_first', format: 'binary', separator: ',', access: 'both', strict_enums: false },
     },
     enums: [],
     customTypes: [],

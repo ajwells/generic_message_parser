@@ -27,9 +27,15 @@ std::string parse_call(const Message& m, const Field& f, const std::string& t) {
             if (f.prim == Prim::Bool)
                 return "gmp::text::parse_int<int>(" + t + ").transform([](int x) { return x != 0; })";
             return "gmp::text::parse_int<" + prim_type(f.prim) + ">(" + t + ", " + std::to_string(f.base) + ")";
-        case FieldKind::Enum:
-            return "gmp::text::parse_int<" + prim_type(f.enum_def->underlying) + ">(" + t + ", " + std::to_string(f.base) +
-                   ").transform([](auto x) { return static_cast<" + f.enum_def->name + ">(x); })";
+        case FieldKind::Enum: {
+            const auto& e = f.enum_def->name;
+            std::string s = "gmp::text::parse_int<" + prim_type(f.enum_def->underlying) + ">(" + t + ", " +
+                            std::to_string(f.base) + ").transform([](auto x) { return static_cast<" + e + ">(x); })";
+            if (f.enum_def->strict)
+                s += ".and_then([](" + e + " v) -> gmp::Result<" + e +
+                     "> { if (!is_known(v)) return gmp::fail(gmp::Error::UnknownEnum); return v; })";
+            return s;
+        }
         case FieldKind::Custom: return lang_value(f.custom->lang, "decode") + "(" + t + ")";
         default: (void)m; return "";
     }
@@ -115,6 +121,8 @@ void emit_struct(Ctx& c, const Message& m) {
             w.line("if (auto e = w.begin_token(); !e) return e;");
             w.line("if (auto e = " + lang_value(f.custom->lang, "encode") + "(w, " + value + "); !e) return e;");
         } else {
+            if (f.kind == FieldKind::Enum && f.enum_def->strict && !f.const_value)
+                w.line("if (!is_known(" + value + ")) return gmp::fail(gmp::Error::UnknownEnum);");
             w.line("if (auto e = " + write_call(f, value) + "; !e) return e;");
         }
         if (f.optional) w.close();
@@ -189,11 +197,14 @@ void emit_view(Ctx& c, const Message& m) {
         } else {
             w.line("[[nodiscard]] gmp::Result<" + vt + "> " + n + "() const noexcept { return " + parse_call(m, f, t) + "; }");
         }
-        if (f.kind == FieldKind::Scalar && (f.scale || f.offset_value) && !f.optional) {
-            const auto scale = double_literal(f.scale.value_or(1.0));
-            const auto off = double_literal(f.offset_value.value_or(0.0));
-            w.line("[[nodiscard]] gmp::Result<double> " + f.name + "_scaled() const noexcept { return " + n +
-                   "().transform([](auto x) { return static_cast<double>(x) * " + scale + " + " + off + "; }); }");
+        if (f.kind == FieldKind::Scalar && !f.optional) {
+            auto emit_conv = [&](const std::string& suffix, double sc, double of) {
+                w.line("[[nodiscard]] gmp::Result<double> " + f.name + "_" + suffix + "() const noexcept { return " + n +
+                       "().transform([](auto x) { return static_cast<double>(x) * " + double_literal(sc) + " + " +
+                       double_literal(of) + "; }); }");
+            };
+            if (f.scale || f.offset_value) emit_conv("scaled", f.scale.value_or(1.0), f.offset_value.value_or(0.0));
+            for (const auto& cv : f.conversions) emit_conv(cv.name, cv.scale.value_or(1.0), cv.offset_value.value_or(0.0));
         }
     }
     if (m.want_struct) {

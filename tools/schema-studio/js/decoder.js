@@ -40,6 +40,7 @@
     crc8: [8, 0x07n, 0x00n, false, false, 0x00n],
     crc8_maxim: [8, 0x31n, 0x00n, true, true, 0x00n],
     crc8_autosar: [8, 0x2Fn, 0xFFn, false, false, 0xFFn],
+    crc8_nrsc5: [8, 0x31n, 0xFFn, false, false, 0x00n],
     crc15_can: [15, 0x4599n, 0n, false, false, 0n],
     crc16_ccitt: [16, 0x1021n, 0xFFFFn, false, false, 0n],
     crc16_xmodem: [16, 0x1021n, 0n, false, false, 0n],
@@ -134,6 +135,8 @@
     exprCache.set(text, ast);
     return ast;
   }
+  /** Bitwise operators on values wider than 32 bits (JS `|`, `&`, `^`, `~` truncate to int32). */
+  const big = (x) => BigInt(Math.trunc(Number(x)));
   function evalExpr(ast, lookup) {
     if ('num' in ast) return ast.num;
     if ('ref' in ast) { const v = lookup(ast.ref); if (v === undefined) throw new Error(`"${ast.ref}" is not available`); return v; }
@@ -141,7 +144,7 @@
     switch (ast.op) {
       case 'u!': return l() ? 0 : 1;
       case 'u-': return -l();
-      case 'u~': return ~l();
+      case 'u~': return Number(~big(l()));
       case '*': return l() * r();
       case '/': { const d = r(); if (!d) throw new Error('division by zero'); return Math.trunc(l() / d); }
       case '%': { const d = r(); if (!d) throw new Error('division by zero'); return l() % d; }
@@ -149,9 +152,9 @@
       case '-': return l() - r();
       case '<<': return l() * 2 ** r();
       case '>>': return Math.floor(l() / 2 ** r());
-      case '&': return l() & r();
-      case '^': return l() ^ r();
-      case '|': return l() | r();
+      case '&': return Number(big(l()) & big(r()));
+      case '^': return Number(big(l()) ^ big(r()));
+      case '|': return Number(big(l()) | big(r()));
       case '==': return l() === r() ? 1 : 0;
       case '!=': return l() !== r() ? 1 : 0;
       case '<': return l() < r() ? 1 : 0;
@@ -217,6 +220,12 @@
     const hit = e && e.values.find((x) => G.parseInt(x.value) === toNum(v));
     return hit ? `${e.name}.${hit.name} (${toNum(v)})` : `${toNum(v)} (not a ${enumType} value)`;
   };
+  /** Error text when `v` is not declared in a strict enum (decode fails with UnknownEnum), else ''. */
+  const strictEnumError = (s, enumType, v) => {
+    const e = G.findEnum(s, enumType);
+    if (!e || !G.enumStrict(s, e)) return '';
+    return e.values.some((x) => G.parseInt(x.value) === toNum(v)) ? '' : `unknown ${enumType} value (strict enum)`;
+  };
 
   // ----------------------------------------------------------------------------------------------
   // binary message decoding
@@ -271,6 +280,20 @@
       error = e.message;
       nodes.push(node('⚠', 'error', pos, limit, { error: e.message }));
     }
+    // computed values: evaluated from the decoded fields, no bytes of their own
+    if (!error) {
+      for (const c of m.computed || []) {
+        if (!c.name || !c.value) continue;
+        const cn = node(c.name, 'computed', pos, pos, { type: `${c.type || '?'} (computed)`, note: `= ${c.value}` });
+        try {
+          const v = D.evalExpr(c.value, lookup);
+          const isFloat = c.type === 'f32' || c.type === 'f64';
+          cn.value = isFloat ? String(v) : fmtNum(BigInt(Math.trunc(v)));
+          if (c.unit) cn.value += ' ' + c.unit;
+        } catch (e) { cn.error = e.message; }
+        nodes.push(cn);
+      }
+    }
     return { nodes, pos, error };
   }
 
@@ -279,14 +302,41 @@
     const n = G.PRIM_SIZE[t];
     const v = readPrim(buf, at, t, endian);
     const nd = node(label, kind, at, at + n, { raw: D.hex(buf.slice(at, at + n)), type: typeName });
-    if (kind === 'enum') nd.value = enumName(s, typeName, v);
+    if (kind === 'enum') { nd.value = enumName(s, typeName, v); nd.error = strictEnumError(s, typeName, v); }
     else if (t === 'char') nd.value = `'${printable(Number(v))}'`;
     else nd.value = fmtNum(v);
     const sc = scaled(f, v);
     if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`;
     else if (f.unit) nd.value += ` ${f.unit}`;
+    nd.value += conversionsText(f, v);
     if (f.const && G.isInt(f.const) && toNum(v) !== G.parseInt(f.const)) nd.error = `expected const ${f.const}`;
     return { nd, v, n };
+  }
+
+  /** Extra named conversions (`conversions:`), e.g. " · 77 degF". */
+  function conversionsText(f, v) {
+    return (f.conversions || []).filter((c) => c.name && (c.scale || c.offset)).map((c) => {
+      const val = +(toNum(v) * parseFloat(c.scale || '1') + parseFloat(c.offset || '0')).toPrecision(10);
+      return ` · ${val}${c.unit ? ' ' + c.unit : ''}`;
+    }).join('');
+  }
+
+  /** Field-level checksum right after a value at buf[at, at+n): adds a child node and flags mismatches. */
+  function checkFieldCrc(s, f, nd, buf, at, n, endian, need) {
+    const c = G.checksumSize(s, f.crc, f.crcParams);
+    if (!c) return 0;
+    need(n + c, f);
+    const stored = readUint(buf, at + n, c, endian);  // stored in the field's byte order
+    const computed = D.checksum(s, { algo: f.crc, crc: f.crcParams }, buf.slice(at, at + n));
+    const label = f.crc === '__crc' ? `CRC-${f.crcParams.width}` : f.crc;
+    const hexw = (v) => '0x' + v.toString(16).toUpperCase().padStart(2 * c, '0');
+    const cn = node('crc', 'check', at + n, at + n + c, { raw: D.hex(buf.slice(at + n, at + n + c)), type: label, value: hexw(stored) });
+    if (computed === null) cn.note = 'custom checksum, not verified here';
+    else if (computed !== stored) { cn.error = `mismatch: computed ${hexw(computed)}`; nd.error = 'bad CRC'; }
+    else cn.note = '✓';
+    nd.children.push(cn);
+    nd.end = at + n + c;
+    return c;
   }
 
   function decodeField(s, m, f, kind, label, buf, getPos, setPos, limit, env, lookup, endian, bitOrder, need, depth) {
@@ -308,7 +358,8 @@
         need(n, f);
         const { nd, v } = decodeScalar(s, f, kind, label, buf, pos, endian, f.type);
         env.set(f.name, toNum(v));
-        setPos(pos + n);
+        const c = f.crc ? checkFieldCrc(s, f, nd, buf, pos, n, endian, (k) => need(k, f)) : 0;
+        setPos(pos + n + c);
         return nd;
       }
       case 'pad': {
@@ -331,7 +382,7 @@
           const child = node(b.pad ? 'pad' : b.name, b.pad ? 'pad' : 'bits', pos, pos + n, { type: `${w} bit${w > 1 ? 's' : ''} @ ${off}`, raw: '0b' + v.toString(2).padStart(w, '0') });
           let val = v;
           const t = b.pad ? '' : b.type || (w === 1 ? 'bool' : '');
-          if (G.findEnum(s, t)) child.value = enumName(s, t, v);
+          if (G.findEnum(s, t)) { child.value = enumName(s, t, v); child.error = strictEnumError(s, t, v); }
           else if (t === 'bool') child.value = v ? 'true' : 'false';
           else {
             if (t && t[0] === 'i' && w > 0 && (v >> BigInt(w - 1)) & 1n) val = v - (1n << BigInt(w));
@@ -468,8 +519,10 @@
         else {
           const v = BigInt(base === 16 ? (t.startsWith('-') ? '-0x' + t.slice(1) : '0x' + t) : t);
           nd.value = kind === 'enum' ? enumName(s, f.type, v) : fmtNum(v);
+          if (kind === 'enum') nd.error = strictEnumError(s, f.type, v);
           const sc = scaled(f, v);
           if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`;
+          if (kind === 'int') nd.value += conversionsText(f, v);
           if (f.const && G.isInt(f.const) && Number(v) !== G.parseInt(f.const)) nd.error = `expected const ${f.const}`;
           const sizeBits = BigInt(8 * (G.PRIM_SIZE[kind === 'enum' ? G.findEnum(s, f.type).type || 'u8' : f.type] || 8));
           const prim = kind === 'enum' ? G.findEnum(s, f.type).type || 'u8' : f.type;
@@ -478,7 +531,7 @@
         }
       } else if (kind === 'float') {
         if (!/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t)) nd.error = 'not a number';
-        else { const v = parseFloat(t); nd.value = String(v); const sc = scaled(f, v); if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`; }
+        else { const v = parseFloat(t); nd.value = String(v); const sc = scaled(f, v); if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`; nd.value += conversionsText(f, v); }
       } else if (kind === 'char') {
         if (tok.text.length !== 1) nd.error = 'expected a single character'; else nd.value = `'${tok.text}'`;
       } else if (kind === 'bool') {
@@ -667,7 +720,7 @@
         const r = decodeText(s, msg, buf, bodyStart, bodyEnd);
         const mn = node(msg.name, 'message', bodyStart, bodyEnd, { children: r.nodes, value: `type_id ${q(id)}`, type: 'message' });
         frame.nodes.push(mn);
-        if (r.nodes.some((n) => n.error)) err('field errors');
+        if (r.nodes.some((n) => n.error)) err(fieldErrors(r.nodes));
       }
       if (ckNode) frame.nodes.push(ckNode);
       remap(frame.nodes.slice(pre ? 1 : 0), origin, fend - suf);
@@ -722,7 +775,7 @@
           : null;
         inner.splice(p.header.length ? 1 : 0, 0, ...(trailing ? [mn, trailing] : [mn]));
         if (r.error) err(r.error);
-        else if (hasError(r.nodes)) err('field errors');
+        else if (hasError(r.nodes)) err(fieldErrors(r.nodes));
       }
       remap(inner, origin, fend - suf);
       frame.nodes.push(...inner);
@@ -732,6 +785,13 @@
     return frame;
   }
   const hasError = (nodes) => nodes.some((n) => n.error || hasError(n.children));
+  /** Summary for a frame whose fields have errors, e.g. "temperature: bad CRC". */
+  const fieldErrors = (nodes) => {
+    const out = [];
+    const walk = (ns) => ns.forEach((n) => { if (n.error && n.kind !== 'check') out.push(`${n.name}: ${n.error}`); walk(n.children); });
+    walk(nodes);
+    return out.length ? out.slice(0, 3).join('; ') + (out.length > 3 ? `; +${out.length - 3} more` : '') : 'field errors';
+  };
 
   // ----------------------------------------------------------------------------------------------
   // entry points
@@ -779,10 +839,10 @@
       let end = input.length;
       while (end > 0 && (input[end - 1] === 10 || input[end - 1] === 13)) end--;
       const r = decodeText(s, m, input, 0, end);
-      return { items: [{ type: 'frame', start: 0, end, message: m.name, errors: hasError(r.nodes) ? ['field errors'] : [], nodes: [node(m.name, 'message', 0, end, { children: r.nodes, type: 'message' })] }] };
+      return { items: [{ type: 'frame', start: 0, end, message: m.name, errors: hasError(r.nodes) ? [fieldErrors(r.nodes)] : [], nodes: [node(m.name, 'message', 0, end, { children: r.nodes, type: 'message' })] }] };
     }
     const r = decodeBinary(s, m, input, 0, input.length);
-    const errors = r.error ? [r.error] : hasError(r.nodes) ? ['field errors'] : [];
+    const errors = r.error ? [r.error] : hasError(r.nodes) ? [fieldErrors(r.nodes)] : [];
     const items = [{ type: 'frame', start: 0, end: r.pos, message: m.name, errors, nodes: [node(m.name, 'message', 0, r.pos, { children: r.nodes, type: 'message' })] }];
     if (r.pos < input.length && !r.error) items.push({ type: 'garbage', start: r.pos, end: input.length, error: 'trailing bytes (ignored by decode)' });
     return { items };

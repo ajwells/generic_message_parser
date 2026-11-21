@@ -28,7 +28,8 @@ A local web app for building GMP YAML schemas visually.
      - enum names and scaled engineering values
      - bit fields with their bit positions
      - conditional fields, with the reason they are absent
-     - the checksum (stored vs. computed)
+     - the checksum (stored vs. computed), including per-field `crc` checksums
+     - extra `conversions` next to the scaled value (e.g. `25 degC · 77 degF`)
      - the byte range of each field
    - Hovering a field highlights its bytes, and hovering a byte highlights its field.
 

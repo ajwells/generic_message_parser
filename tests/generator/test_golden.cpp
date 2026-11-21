@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <utility>
 
 #include "backend/backend.hpp"
 #include "ir/lowering.hpp"
@@ -42,9 +43,14 @@ std::string generate(const fs::path& schema) {
 
 TEST_CASE("generated C++ matches golden files") {
     const bool update = std::getenv("GMP_UPDATE_GOLDEN") != nullptr;
-    for (const char* name : {"telemetry", "nmea", "hdlc", "can", "custom"}) {
+    const auto schemas = fs::path(GMP_SCHEMA_DIR), examples = fs::path(GMP_EXAMPLES_DIR);
+    const std::pair<fs::path, const char*> cases[] = {
+        {schemas, "telemetry"}, {schemas, "nmea"}, {schemas, "hdlc"}, {schemas, "can"}, {schemas, "custom"},
+        {schemas, "fieldcrc"}, {schemas, "enums"}, {schemas, "computed"}, {examples / "sensirion_sht4x", "sht4x"}, {examples / "sensirion_sht4x", "sht4x_enum"},
+    };
+    for (const auto& [dir, name] : cases) {
         INFO("schema: " << name);
-        const auto out = generate(fs::path(GMP_SCHEMA_DIR) / (std::string(name) + ".yaml"));
+        const auto out = generate(dir / (std::string(name) + ".yaml"));
         const auto golden = fs::path(GMP_GOLDEN_DIR) / (std::string(name) + ".gmp.hpp");
         if (update) {
             fs::create_directories(golden.parent_path());

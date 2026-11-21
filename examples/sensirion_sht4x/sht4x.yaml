@@ -1,0 +1,99 @@
+# Sensirion SHT4x relative humidity & temperature sensor (SHT40/41/43/45).
+# Source: SHT4x datasheet, version 5 (January 2023), sections 4.3 - 4.7.
+#
+# The sensor is an I2C slave at 0x44 (SHT4x-A), 0x45 (SHT4x-B) or 0x46 (SHT40-C). I2C addressing,
+# the R/W bit and ACK/NACK are handled by your bus driver; this schema describes the bytes that are
+# written to and read from the sensor:
+#
+#   1. write one command byte                    -> encode a command message (e.g. MeasureHighPrecision)
+#   2. wait for the command (see `doc` below)    -> the sensor NACKs reads until it is done
+#   3. read 6 bytes                              -> decode with MeasurementResponse or SerialNumberResponse,
+#                                                   depending on the command that was sent
+#
+# Every 16-bit word the sensor sends is followed by a CRC-8 (poly 0x31, init 0xFF, no reflection,
+# xorout 0x00; CRC(0xBEEF) = 0x92). That is the CRC-8/NRSC-5 preset, applied per field with `crc:`.
+schema_version: 1
+namespace: sensirion::sht4x
+defaults: { endian: big }
+
+messages:
+  # ---------------------------------------------------------------------------------------------
+  # Commands (master -> sensor): one byte each (datasheet Table 8)
+  # ---------------------------------------------------------------------------------------------
+  MeasureHighPrecision:
+    doc: Measure T & RH with high repeatability. Read a Measurement after 8.3 ms (max).
+    fields: [ { name: command, type: u8, const: 0xFD } ]
+  MeasureMediumPrecision:
+    doc: Measure T & RH with medium repeatability. Read a Measurement after 4.5 ms (max).
+    fields: [ { name: command, type: u8, const: 0xF6 } ]
+  MeasureLowPrecision:
+    doc: Measure T & RH with low repeatability. Read a Measurement after 1.6 ms (max).
+    fields: [ { name: command, type: u8, const: 0xE0 } ]
+  ReadSerialNumber:
+    doc: Read the unique serial number. Read a SerialNumber next.
+    fields: [ { name: command, type: u8, const: 0x89 } ]
+  SoftReset:
+    doc: Soft reset; the sensor is idle again after 1 ms (max). No response.
+    fields: [ { name: command, type: u8, const: 0x94 } ]
+  Heater200mW1s:
+    doc: Heater at 200 mW for 1 s, then a high-precision measurement. Read a Measurement after 1.1 s (max).
+    fields: [ { name: command, type: u8, const: 0x39 } ]
+  Heater200mW100ms:
+    doc: Heater at 200 mW for 0.1 s, then a high-precision measurement. Read a Measurement after 0.11 s (max).
+    fields: [ { name: command, type: u8, const: 0x32 } ]
+  Heater110mW1s:
+    doc: Heater at 110 mW for 1 s, then a high-precision measurement. Read a Measurement after 1.1 s (max).
+    fields: [ { name: command, type: u8, const: 0x2F } ]
+  Heater110mW100ms:
+    doc: Heater at 110 mW for 0.1 s, then a high-precision measurement. Read a Measurement after 0.11 s (max).
+    fields: [ { name: command, type: u8, const: 0x24 } ]
+  Heater20mW1s:
+    doc: Heater at 20 mW for 1 s, then a high-precision measurement. Read a Measurement after 1.1 s (max).
+    fields: [ { name: command, type: u8, const: 0x1E } ]
+  Heater20mW100ms:
+    doc: Heater at 20 mW for 0.1 s, then a high-precision measurement. Read a Measurement after 0.11 s (max).
+    fields: [ { name: command, type: u8, const: 0x15 } ]
+
+  # ---------------------------------------------------------------------------------------------
+  # Responses (sensor -> master)
+  # ---------------------------------------------------------------------------------------------
+  Measurement:
+    doc: |-
+      Response to the measure and heater commands (datasheet 4.3, 4.6).
+      Humidity is not cropped: values slightly below 0 or above 100 %RH are possible; clamp if needed.
+    fields:
+      - name: temperature
+        type: u16
+        crc: crc8_nrsc5
+        scale: 0.0026703288319218739     # 175 / 65535
+        offset: -45
+        unit: degC
+        conversions:
+          degf: { scale: 0.0048065918974593731, offset: -49, unit: degF }   # 315 / 65535
+      - name: humidity
+        type: u16
+        crc: crc8_nrsc5
+        scale: 0.0019073777370870527     # 125 / 65535
+        offset: -6
+        unit: "%RH"
+  SerialNumber:
+    doc: Response to ReadSerialNumber (datasheet 4.7) - two 16-bit words, each followed by its CRC.
+    fields:
+      - { name: serial_high, type: u16, crc: crc8_nrsc5 }
+      - { name: serial_low, type: u16, crc: crc8_nrsc5 }
+    computed:
+      serial:                                   # serial() on struct and view, set_serial() on the struct
+        type: u32
+        value: "(serial_high << 16) | serial_low"
+
+protocols:
+  # The response bytes do not identify themselves, so each response layout is its own protocol;
+  # decode with the one matching the command you sent.
+  MeasurementResponse:
+    doc: 6 bytes read after a measure or heater command.
+    framing: { type: fixed, size: 6 }
+    messages: [Measurement]
+  SerialNumberResponse:
+    doc: 6 bytes read after ReadSerialNumber.
+    framing: { type: fixed, size: 6 }
+    messages: [SerialNumber]
