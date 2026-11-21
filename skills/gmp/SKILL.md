@@ -152,6 +152,11 @@ link.on<&App::on_status>(app)                     // slot chosen from the last p
     .on<&App::on_drop>(app);                      // (HeaderView, View) gets the header, (View) does not
 link.feed(chunk);
 
+// Or pull: ask for the next message (views valid until the next push/poll/feed; Debug builds check it)
+parser.push(chunk);
+while (auto m = parser.poll()) { std::visit(handlers, *m); }   // also poll_frame() (header), poll_message()
+auto reply = link.poll_for<acme::link::StatusView>();          // (struct copy), poll_event(), poll_for<V>()
+
 // A message on its own, no framing
 auto st = acme::link::Status::decode(bytes);     // gmp::Result<Status>
 auto view = acme::link::StatusView::from(bytes); // gmp::Result<StatusView>
@@ -194,7 +199,7 @@ Errors are values (`gmp::Result<T>` = `std::expected<T, gmp::Error>`): `Truncate
 - **Stored handlers:** `make_stream(h)` / `StreamWith<H>` keep a compile-time handler; `CallbackStream` keeps runtime
   listeners (one per message, plus `AnyView` for every frame and `gmp::FrameError`; registering again replaces).
   Contexts passed to `on<Fn>(ctx)` must outlive the registration. Messages and enums can't be named `Header`,
-  `HeaderView`, `AnyView`, `AnyMessage`, `Frame`, `Stream`, `StreamWith`, `Callbacks` or `CallbackStream` (the
+  `HeaderView`, `AnyView`, `AnyMessage`, `Frame`, `Stream`, `StreamWith`, `Callbacks`, `CallbackStream` or `Received` (the
   names declared inside each generated protocol struct).
 
 ## When modelling a new protocol

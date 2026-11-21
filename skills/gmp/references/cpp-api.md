@@ -71,6 +71,7 @@ Bits groups are small structs with one member per bit field, `unpack`/`pack`/`ch
 | `template <size_t Cap = max_frame> using Stream` | The stream parser for this protocol; the handler is passed on each call (see [Streaming](#streaming)). |
 | `StreamWith<H, Cap>`, `make_stream(handler)` | Stream parser that stores a handler: `feed(bytes)` / `next()` take no handler ([Storing the handler](#storing-the-handler)). |
 | `Callbacks`, `CallbackStream<Cap>` | Runtime callbacks: `on<&App::fn>(app)` per message, for every frame (`AnyView`) and for `gmp::FrameError`. |
+| `Received` | What `Stream::poll_frame()` returns: `header` (protocols with a header), `message` (`AnyView`) and the frame `bytes` ([Pulling messages](#pulling-messages-poll)). |
 | `scan`, `open`, `visit_frame`, `select_message`, `process` | Building blocks. `scan` finds a frame boundary. `open` validates a frame and splits it into `Frame{header, body}` (binary) or `Frame{type_id, body}` (text, where `type_id` is the first token). `visit_frame`/`select_message` pick the message type. `process` is the hook used by the stream parser. |
 
 ---
@@ -103,6 +104,44 @@ parser.feed(chunk, gmp::overloaded{
   or call `to_struct()`.
 - Handlers run synchronously inside `feed()` / `next()`. If `feed()` is called from an interrupt, the handlers run there
   too.
+
+### Pulling messages (`poll`)
+
+Instead of being called back, code can ask for the next message. This suits a main loop, a state machine, or a
+request/response exchange:
+
+```cpp
+parser.push(bytes);
+while (auto m = parser.poll()) {                 // next valid message; empty = more input needed
+    std::visit(gmp::overloaded{
+        [](const demo::StatusView& v) { ... },
+        [](const demo::CommandView& v) { ... },
+    }, *m);
+}
+```
+
+| call | returns |
+|------|---------|
+| `poll()` | `Polled<AnyView>`: the next valid message. |
+| `poll_frame()` | `Polled<Received>`: `{ header, message, bytes }`. `header` exists only on protocols with a header; `bytes` is the frame. For protocols with escaping, it has been unescaped in place, so only the header and body are meaningful. |
+| `poll_message()` | `std::optional<AnyMessage>`: the decoded struct, a copy that stays valid. A frame whose struct decode fails (e.g. more than `max` elements) is dropped like any bad frame. |
+| `poll_event()` | `Polled<std::variant<AnyView, gmp::FrameError>>`: messages and errors inline, in stream order. |
+| `poll_for<V>()` | `Polled<V>`: wait (without blocking) for one message type, e.g. a reply. Only on parsers with a stored handler (`CallbackStream`, `make_stream`): other messages that arrive meanwhile go to that handler. |
+
+- **Errors:**
+  - Garbage and bad frames are skipped and counted in `stats()`, and `last_error()` holds the most recent one.
+  - On a parser with a stored handler, `poll()`, `poll_frame()`, `poll_message()` and `poll_for()` pass errors to
+    its `FrameError` listener.
+  - `poll_event()` returns errors instead of passing them on.
+  - `poll` never calls message listeners. `poll_for` calls them only for the other message types.
+- **View lifetime:** a polled view points into the parser buffer. It is valid until the next `push`, `poll*`,
+  `feed`, `next` or `reset` on that parser.
+  - `gmp::Polled<T>` works like `std::optional` and has `valid()`.
+  - In Debug builds, `*`, `->` and `value()` assert that the view hasn't expired. Define
+    `GMP_ASSERT(cond, msg)` to route that check elsewhere.
+  - Copy what you need, or use `poll_message()`.
+- `push` and `poll` can be mixed freely with `feed` and `next`. Each frame is consumed by whichever call reaches it
+  first.
 
 ### Storing the handler
 

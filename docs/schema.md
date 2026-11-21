@@ -144,7 +144,7 @@ non-conditional fields (`count`, `flags.mode`), enum constants (`Mode.fault`), a
 ## protocols
 
 Messages and enums can't be named `Header`, `HeaderView`, `AnyView`, `AnyMessage`, `Frame`, `Stream`, `StreamWith`,
-`Callbacks` or `CallbackStream` when the schema has a protocol, because every generated protocol struct declares
+`Callbacks`, `CallbackStream` or `Received` when the schema has a protocol, because every generated protocol struct declares
 these names.
 
 A protocol ties messages to a wire framing:

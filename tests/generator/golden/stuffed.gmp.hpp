@@ -308,6 +308,12 @@ struct SyncLink {
     /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
     template <std::size_t Capacity = max_frame, class Handler>
     static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
+    /// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).
+    struct Received {
+        HeaderView header{};
+        AnyView message;
+        gmp::bytes_view bytes{};  ///< the frame in the buffer (unescaped in place: only header and body are meaningful)
+    };
 
     static constexpr gmp::LengthPrefixedConfig framing_config{gmp::Pattern{{0x80}, 1}, 2, 1, gmp::Endian::big, 5, 5, max_frame, gmp::make_index_escape(0x81, {0x80, 0x81}), suffix_size};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_length_prefixed(b, framing_config); }
@@ -620,6 +626,12 @@ struct WireChecksum {
     /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
     template <std::size_t Capacity = max_frame, class Handler>
     static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
+    /// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).
+    struct Received {
+        HeaderView header{};
+        AnyView message;
+        gmp::bytes_view bytes{};  ///< the frame in the buffer (unescaped in place: only header and body are meaningful)
+    };
 
     static constexpr gmp::LengthPrefixedConfig framing_config{gmp::Pattern{{0x80}, 1}, 2, 1, gmp::Endian::big, 5, 5, max_frame, gmp::make_index_escape(0x81, {0x80, 0x81}), suffix_size};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_length_prefixed(b, framing_config); }
@@ -949,6 +961,12 @@ struct WireLength {
     /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
     template <std::size_t Capacity = max_frame, class Handler>
     static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
+    /// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).
+    struct Received {
+        HeaderView header{};
+        AnyView message;
+        gmp::bytes_view bytes{};  ///< the frame in the buffer (unescaped in place: only header and body are meaningful)
+    };
 
     static constexpr gmp::LengthPrefixedConfig framing_config{gmp::Pattern{{0x80}, 1}, 2, 1, gmp::Endian::big, 0, 5, max_frame, gmp::make_index_escape(0x81, {0x80, 0x81}), suffix_size, true, header_size, trailer_size, false};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_length_prefixed(b, framing_config); }
@@ -1261,6 +1279,12 @@ struct CrcLength {
     /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
     template <std::size_t Capacity = max_frame, class Handler>
     static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
+    /// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).
+    struct Received {
+        HeaderView header{};
+        AnyView message;
+        gmp::bytes_view bytes{};  ///< the frame in the buffer (unescaped in place: only header and body are meaningful)
+    };
 
     static constexpr gmp::LengthPrefixedConfig framing_config{gmp::Pattern{{0x80}, 1}, 2, 1, gmp::Endian::big, 3, 5, max_frame, gmp::make_index_escape(0x81, {0x80, 0x81}), suffix_size};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_length_prefixed(b, framing_config); }
@@ -1573,6 +1597,12 @@ struct WireCrcLength {
     /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
     template <std::size_t Capacity = max_frame, class Handler>
     static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
+    /// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).
+    struct Received {
+        HeaderView header{};
+        AnyView message;
+        gmp::bytes_view bytes{};  ///< the frame in the buffer (unescaped in place: only header and body are meaningful)
+    };
 
     static constexpr gmp::LengthPrefixedConfig framing_config{gmp::Pattern{{0x80}, 1}, 2, 1, gmp::Endian::big, 0, 5, max_frame, gmp::make_index_escape(0x81, {0x80, 0x81}), suffix_size, true, header_size, trailer_size, true};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_length_prefixed(b, framing_config); }
@@ -1897,6 +1927,12 @@ struct WireCrcOverWire {
     /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
     template <std::size_t Capacity = max_frame, class Handler>
     static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
+    /// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).
+    struct Received {
+        HeaderView header{};
+        AnyView message;
+        gmp::bytes_view bytes{};  ///< the frame in the buffer (unescaped in place: only header and body are meaningful)
+    };
 
     static constexpr gmp::LengthPrefixedConfig framing_config{gmp::Pattern{{0x80}, 1}, 2, 1, gmp::Endian::big, 0, 5, max_frame, gmp::make_index_escape(0x81, {0x80, 0x81}), suffix_size, true, header_size, trailer_size, true};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_length_prefixed(b, framing_config); }
@@ -2163,6 +2199,11 @@ struct FixedLink {
     /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
     template <std::size_t Capacity = max_frame, class Handler>
     static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
+    /// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).
+    struct Received {
+        AnyView message;
+        gmp::bytes_view bytes{};  ///< the frame in the buffer (unescaped in place: only header and body are meaningful)
+    };
 
     static constexpr gmp::FixedFrameConfig framing_config{gmp::Pattern{{0x80}, 1}, 6, gmp::make_index_escape(0x81, {0x80, 0x81, 0x00}, 0x10), suffix_size};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_fixed(b, framing_config); }
@@ -2430,6 +2471,12 @@ struct Delimited {
     /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
     template <std::size_t Capacity = max_frame, class Handler>
     static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
+    /// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).
+    struct Received {
+        HeaderView header{};
+        AnyView message;
+        gmp::bytes_view bytes{};  ///< the frame in the buffer (unescaped in place: only header and body are meaningful)
+    };
 
     static constexpr gmp::DelimitedConfig framing_config{gmp::Pattern{{0x80}, 1}, gmp::Pattern{{0x0D}, 1}, gmp::make_index_escape(0x81, {0x80, 0x81, 0x0D}), max_frame};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_delimited(b, framing_config); }

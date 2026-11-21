@@ -472,6 +472,12 @@ struct FixedLink {
     /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
     template <std::size_t Capacity = max_frame, class Handler>
     static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
+    /// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).
+    struct Received {
+        HeaderView header{};
+        AnyView message;
+        gmp::bytes_view bytes{};  ///< the whole frame as received
+    };
 
     static constexpr gmp::FixedFrameConfig framing_config{gmp::Pattern{{0xA5, 0xA5}, 2}, 10};
     static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_fixed(b, framing_config); }

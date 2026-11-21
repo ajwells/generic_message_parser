@@ -625,6 +625,17 @@ link.on<&App::on_status>(app)      // (StatusView): one listener per message
     .on<&App::on_drop>(app);       // (gmp::FrameError): garbage, bad checksums, unknown ids
 link.feed(chunk);`)}
       ${note('The listener is chosen from the function\'s last parameter. Free functions taking <code>(App&amp;, View)</code>, captureless lambdas, and C-style <code>void cb(void* ctx, const View&amp;)</code> pointers work too. Registering again replaces the listener; <code>off&lt;View&gt;()</code> removes it.')}
+      <h3>Pulling messages</h3>
+      <p>Or ask for the next message yourself, which suits a main loop or a request/response exchange. A polled
+      view is valid until the parser is used again (Debug builds check this).</p>
+      ${code(`parser.push(chunk);
+while (auto m = parser.poll()) {                          // empty: more input needed
+    std::visit(handlers, *m);
+}
+auto r = parser.poll_frame();      // { header, message, bytes }
+auto s = parser.poll_message();    // decoded struct copy
+auto e = parser.poll_event();      // message or gmp::FrameError, in stream order
+auto reply = link.poll_for<demo::StatusView>();   // others go to the listeners meanwhile`)}
       ${demo('stream')}`;
   }
 

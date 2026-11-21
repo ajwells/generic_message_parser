@@ -22,7 +22,7 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 - Toolchain PATH (Git Bash):
   `export PATH="/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/mingw/bin:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/ninja/win/x64:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin:$PATH"`
   (MinGW GCC 15, Ninja, CMake; yaml-cpp and Catch2 via FetchContent).
-- Debug build + tests: `cmake --build build && ctest --test-dir build` (131 tests, all passing).
+- Debug build + tests: `cmake --build build && ctest --test-dir build` (140 tests, all passing).
 - Release build: `cmake --build build-release` (Release, bench ON, tests and examples OFF; it is a compile check only).
 - Regenerate golden files after an intentional generator change:
   `GMP_UPDATE_GOLDEN=1 ctest --test-dir build -R golden`, then check that only the expected files changed.
@@ -69,8 +69,8 @@ Schema / generator:
 - Length coverage: `body`, `body_checksum`, `header_body`, `all`; `adjust`.
 - Stored stream handlers. Per protocol: `StreamWith<H, Cap>` / `make_stream(h)` (compile-time handler), plus
   `Callbacks` and `CallbackStream<Cap>` (runtime listeners, `on<Fn>(ctx)`). Names declared inside protocol structs
-  (`Header`, `HeaderView`, `AnyView`, `AnyMessage`, `Frame`, `Stream`, `StreamWith`, `Callbacks`, `CallbackStream`)
-  are reserved for messages and enums; this is checked by the C++ backend.
+  (`Header`, `HeaderView`, `AnyView`, `AnyMessage`, `Frame`, `Stream`, `StreamWith`, `Callbacks`, `CallbackStream`,
+  `Received`) are reserved for messages and enums; this is checked by the C++ backend.
 - Byte stuffing `escape:` on delimited, fixed and length_prefixed framing: styles `xor` / `index` (with `base`) / `map`,
   up to 16 reserved bytes, `checksum.over: wire`, `length.counts: wire` (only with `covers: body | body_checksum`, and
   `body_checksum` then needs `checksum.covers: body`).
@@ -80,6 +80,18 @@ Schema / generator:
 Runtime:
 - `StreamParser<Protocol, Cap, Handler = void>` with resync, stats, `feed` / `push` + `next`. A non-void Handler
   (a value, or a reference such as `Callbacks&`) is stored, and then `feed(bytes)` / `next()` take no handler.
+- Pull API on `StreamParser`:
+  - `poll()` returns `Polled<AnyView>`
+  - `poll_frame()` returns `Polled<Received>`, with header (if any), message and bytes
+  - `poll_message()` returns `optional<AnyMessage>`
+  - `poll_event()` returns `Polled<variant<AnyView, FrameError>>`
+  - `poll_for<V>()` exists only with a stored handler: other messages go to it
+  - `last_error()`
+
+  Errors go to the stored handler's FrameError overload, except in `poll_event`, which returns them inline. Message
+  listeners are never called by `poll`. `next()` and `poll*` share one `step()`. A frame stays held until the next
+  call that changes the parser, and each release bumps a generation counter. `gmp/polled.hpp` `Polled<T>` (optional-like,
+  `valid()`) asserts in Debug builds that a view is still valid, via an overridable `GMP_ASSERT`.
 - `gmp/callbacks.hpp`: `CallbackSlot<Args...>` (function pointer + context + trampoline, no heap) and
   `callback_traits` / `callback_message_t`. A bound function may take all the slot's arguments or only the last one,
   so the header is passed only when asked for.
@@ -166,7 +178,7 @@ AI skill: `skills/gmp/` (see section 7).
 | ASCII numeric fields in binary messages | `{ type: u16, encoding: ascii, size: 4 }`, usable as length/count sources |
 | Field value ranges | min/max *value* limits (not `max`, which is capacity): reject or clamp, raw or scaled, encode too |
 | Bad length handling | per-message size check from the type id; `flush_partial()` for idle links; optional header checksum |
-| Stream I/O + callbacks | decided: do all four, one at a time. **A** stored handler / callbacks: **done**. Next: **C** ISR-safe ring buffer → **B** `poll()` pull API (views and/or structs, `wait_for<Reply>`) → **D** endpoint with source/sink adapters and `send(msg)` |
+| Stream I/O + callbacks | decided: do all four, one at a time. **A** stored handler / callbacks: **done**. **C** ISR-safe ring buffer: design presented, **tabled** (open questions C1–C6 in the memory note). **B** pull API: **done**. Remaining: **C** (when resumed) and **D**, an endpoint with source/sink adapters, `send(msg)` and a blocking `wait_for<V>(timeout)` / `transact`. |
 | Studio test suite | commit the headless-Edge harnesses (see known issues), including the print cross-check |
 | Guide language selector | the guide is C++-specific today; when other target languages get backends, add a language picker to `guide.html` so code, API names and notes match the chosen language (schema content stays shared) |
 
@@ -174,6 +186,21 @@ Each planned task has a detailed note (with open questions to ask the user) in t
 project.
 
 ## 8. Session history
+
+### 2026-11-21 (stream I/O, part B: pull API)
+- Tabled C (ISR ring buffer) after presenting its design; the open questions are in the memory note.
+- B decisions:
+  - both `poll()` and `poll_event()`
+  - `poll_frame()` for the header
+  - views and struct copies
+  - `poll_for<V>()`, which sends other messages to the listeners
+  - poll calls the error listener only
+  - a Debug check for expired views
+
+  The blocking `wait_for(timeout)` was moved to D.
+- `next()` was refactored onto the shared `step()`. Its behaviour is unchanged, and the existing tests pass.
+- Tests: `test_stream_poll.cpp` (9 cases) and the embedded profile. Docs: README "Pulling messages (`poll`)", the
+  Guide, the skill, and `Received` added to the reserved names.
 
 ### 2026-11-21 (stream I/O, part A: stored handlers)
 - Discussed stream I/O directions A–D; the user chose to do all of them, one at a time.

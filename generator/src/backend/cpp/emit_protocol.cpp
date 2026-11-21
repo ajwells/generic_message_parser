@@ -100,12 +100,12 @@ private:
     /// shadowed inside the struct (e.g. `encode(const Callbacks&)` would refer to the nested type).
     void check_reserved_names() {
         static const std::set<std::string> reserved = {"Header", "HeaderView", "AnyView", "AnyMessage", "Frame", "Stream",
-                                                       "StreamWith", "Callbacks", "CallbackStream"};
+                                                       "StreamWith", "Callbacks", "CallbackStream", "Received"};
         auto check = [&](const std::string& name, const SourceLoc& loc, const char* what) {
             if (reserved.contains(name))
                 c_.diag.error(loc, std::string(what) + " '" + name + "' clashes with a name generated inside protocol '" +
                                        p_.name + "' (reserved: Header, HeaderView, AnyView, AnyMessage, Frame, Stream, "
-                                       "StreamWith, Callbacks, CallbackStream); rename it");
+                                       "StreamWith, Callbacks, CallbackStream, Received); rename it");
         };
         for (const auto& m : c_.schema.messages)
             if (!m->is_header) check(m->name, m->loc, "message");
@@ -146,6 +146,13 @@ private:
             w_.line("/// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).");
             w_.line("template <std::size_t Capacity = max_frame, class Handler>");
             w_.line("static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }");
+            w_.line("/// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).");
+            w_.open("struct Received {");
+            if (has_header_) w_.line("HeaderView header{};");
+            w_.line("AnyView message;");
+            w_.line(escape_ ? "gmp::bytes_view bytes{};  ///< the frame in the buffer (unescaped in place: only header and body are meaningful)"
+                            : "gmp::bytes_view bytes{};  ///< the whole frame as received");
+            w_.close("};");
         }
         w_.line();
     }

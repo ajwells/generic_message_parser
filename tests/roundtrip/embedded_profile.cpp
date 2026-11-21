@@ -68,6 +68,14 @@ int main() {
     BinaryLink::CallbackStream<> cbs;
     cbs.on<&Counter::on_status>(counter);
     if (cbs.feed(gmp::bytes_view(frame.data(), *n)) != 1 || counter.frames != 1) return 9;
+    // pull API
+    BinaryLink::Stream<> pull;
+    pull.push(gmp::bytes_view(frame.data(), *n));
+    auto polled = pull.poll_frame();
+    if (!polled || !std::holds_alternative<StatusView>(polled->message)) return 10;
+    pull.push(gmp::bytes_view(frame.data(), *n));
+    auto copy = pull.poll_message();
+    if (!copy || std::get<Status>(*copy).samples.size() != 4) return 11;
     g_armed = false;
     if (delivered != 1) return 4;
     std::puts("embedded profile OK: no exceptions, no RTTI, no heap");
