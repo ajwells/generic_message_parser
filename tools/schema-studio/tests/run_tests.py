@@ -38,6 +38,7 @@ CROSSREF_SCHEMAS = {
     "can": "tests/schemas/can.yaml",
     "computed": "tests/schemas/computed.yaml",
     "fieldcrc": "tests/schemas/fieldcrc.yaml",
+    "framing": "tests/schemas/framing.yaml",
     "enums": "tests/schemas/enums.yaml",
     "stuffed": "tests/schemas/stuffed.yaml",
     "nmea": "tests/schemas/nmea.yaml",

@@ -54,6 +54,9 @@ if (Python3_Interpreter_FOUND AND TARGET gmpc)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/schema-studio/tests/run_tests.py
             --gmpc $<TARGET_FILE:gmpc> --crossref $<TARGET_FILE:gmp_studio_crossref>)
     set_tests_properties(gmp_studio_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+    # Studio's committed gmpc.js (exact decode engine) must be built from the current generator sources
+    add_test(NAME gmp_studio_gmpc_fresh
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/schema-studio/gmpc/build.py --check)
 else ()
     message(STATUS "GMP: Python 3 not found, Schema Studio tests are not registered")
 endif ()

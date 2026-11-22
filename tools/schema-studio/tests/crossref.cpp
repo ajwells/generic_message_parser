@@ -16,6 +16,7 @@
 #include "computed.gmp.hpp"
 #include "enums.gmp.hpp"
 #include "fieldcrc.gmp.hpp"
+#include "framing.gmp.hpp"
 #include "nmea.gmp.hpp"
 #include "sht4x.gmp.hpp"
 #include "stuffed.gmp.hpp"
@@ -267,6 +268,25 @@ int main() {
         Noisy<s::WireCrcOverWire>{"stuffed", "protocol:WireCrcOverWire", {}}.add(d).corrupt(d).add(p2).done();
         Noisy<s::FixedLink>{"stuffed", "protocol:FixedLink", {}}.add(p).noise({0x42}).corrupt(p2).add(p2).done();
         Noisy<s::Delimited>{"stuffed", "protocol:Delimited", {}}.add(d).noise({0x0D, 0x55}).corrupt(p).add(p).add(d).done();
+    }
+    // ---- framing options: length adjust and coverage, little-endian length / checksum, end after escaping -------
+    {
+        namespace f = test::framing;
+        f::Reading r;
+        r.channel = 3;
+        r.value = -123456;
+        f::Reading r2;
+        r2.channel = 0x7E;  // reserved on the escaped links
+        r2.value = 0x0D7D7EC0;
+        f::Note n;
+        n.text = "hi \x7E\x0D";  // reserved bytes inside the string
+        n.n = 5;
+        message("framing", "message:Reading", r);
+        message("framing", "message:Note", n);
+        Noisy<f::Adjusted>{"framing", "protocol:Adjusted", {}}.add(r).noise({0x00, 0xA5}).corrupt(n).add(n).add(r2).done();
+        Noisy<f::WholeFrame>{"framing", "protocol:WholeFrame", {}}.add(n).noise({0x55}).add(r).corrupt(r2).add(r2).done();
+        Noisy<f::EscapedWithEnd>{"framing", "protocol:EscapedWithEnd", {}}.add(r2).noise({0x0D, 0x7D}).add(n).corrupt(r).add(r).done();
+        Noisy<f::FixedWithEnd>{"framing", "protocol:FixedWithEnd", {}}.add(r).noise({0xC1}).corrupt(r2).add(r2).add(r).done();
     }
     // ---- NMEA text ---------------------------------------------------------------------------------
     {

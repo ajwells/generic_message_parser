@@ -1,10 +1,18 @@
-// decoder.js - decodes raw bytes against the schema, mirroring the C++ runtime (gmp/*.hpp) and the
-// generated code: framers, escaping, checksums, message_type selection, binary and text field decoding.
-// DOM-free. Produces a tree of nodes with byte ranges (in input coordinates) for highlighting.
+// decoder.js - the Quick engine of the decode tester: decodes raw bytes against the schema as it is being edited, with
+// no gmpc. Checksums, framers, escaping, number reading and text parsing come from the shared JavaScript runtime
+// (runtime-js/gmsg.js, the runtime of `gmpc --lang js` output); this file interprets the schema the way the generated
+// code does (field order, lengths, conditions, message_type selection) and builds a tree of nodes with byte ranges
+// (in input coordinates) for highlighting. DOM-free.
 (function (G) {
   'use strict';
 
   const D = (G.decoder = {});
+  const gmsg = window.gmsg;
+  const Err = gmsg.Err;
+  /** Run fn; returns [0, value] or [GmpError code, undefined]. */
+  const attempt = (fn) => {
+    try { return [0, fn()]; } catch (e) { if (e instanceof gmsg.GmpError) return [e.code, undefined]; throw e; }
+  };
 
   // ----------------------------------------------------------------------------------------------
   // input parsing
@@ -34,63 +42,27 @@
   D.ascii = (bytes) => Array.from(bytes, printable).join('');
 
   // ----------------------------------------------------------------------------------------------
-  // checksums (mirrors runtime/include/gmp/checksum.hpp)
+  // checksums (gmsg.checksum)
   // ----------------------------------------------------------------------------------------------
-  const CRC_PRESETS = {
-    crc8: [8, 0x07n, 0x00n, false, false, 0x00n],
-    crc8_maxim: [8, 0x31n, 0x00n, true, true, 0x00n],
-    crc8_autosar: [8, 0x2Fn, 0xFFn, false, false, 0xFFn],
-    crc8_nrsc5: [8, 0x31n, 0xFFn, false, false, 0x00n],
-    crc15_can: [15, 0x4599n, 0n, false, false, 0n],
-    crc16_ccitt: [16, 0x1021n, 0xFFFFn, false, false, 0n],
-    crc16_xmodem: [16, 0x1021n, 0n, false, false, 0n],
-    crc16_kermit: [16, 0x1021n, 0n, true, true, 0n],
-    crc16_x25: [16, 0x1021n, 0xFFFFn, true, true, 0xFFFFn],
-    crc16_modbus: [16, 0x8005n, 0xFFFFn, true, true, 0n],
-    crc16_arc: [16, 0x8005n, 0n, true, true, 0n],
-    crc24_openpgp: [24, 0x864CFBn, 0xB704CEn, false, false, 0n],
-    crc32: [32, 0x04C11DB7n, 0xFFFFFFFFn, true, true, 0xFFFFFFFFn],
-    crc32c: [32, 0x1EDC6F41n, 0xFFFFFFFFn, true, true, 0xFFFFFFFFn],
-    crc32_mpeg2: [32, 0x04C11DB7n, 0xFFFFFFFFn, false, false, 0n],
-    crc64_ecma: [64, 0x42F0E1EBA9EA3693n, 0n, false, false, 0n],
-  };
-  const reflect = (v, w) => { let r = 0n; for (let i = 0; i < w; i++) { r = (r << 1n) | (v & 1n); v >>= 1n; } return r; };
+  /** A schema integer literal as BigInt ('0x1021', '4129', '0b1'); 0n when it is not an integer. */
+  const bigOf = (v) => { try { return BigInt(String(v == null ? '' : v).trim() || '0'); } catch (_) { return 0n; } };
 
-  /** Bitwise Rocksoft-model CRC (any width 1..64). */
-  D.crc = (width, poly, init, refin, refout, xorout, data) => {
-    const w = BigInt(width), mask = (1n << w) - 1n;
-    let reg = init & mask;
-    for (const byte of data) {
-      let b = BigInt(byte);
-      if (refin) b = reflect(b, 8);
-      for (let k = 7n; k >= 0n; k--) {
-        const bit = ((reg >> (w - 1n)) & 1n) ^ ((b >> k) & 1n);
-        reg = (reg << 1n) & mask;
-        if (bit) reg ^= poly;
-      }
+  /** The gmsg algorithm of a protocol checksum / field crc ({ algo, crc }), or null for a custom function. */
+  D.algorithm = (s, ck) => {
+    if (ck.algo === '__crc') {
+      const c = ck.crc || {};
+      const width = G.parseInt(c.width) || 8;
+      const n = (v) => (width > 32 ? bigOf(v) : Number(bigOf(v)));
+      return gmsg.checksum.crc({ width, poly: n(c.poly), init: n(c.init), refin: !!c.refin, refout: !!c.refout, xorout: n(c.xorout) });
     }
-    if (refout) reg = reflect(reg, width);
-    return (reg ^ xorout) & mask;
+    const a = gmsg.checksum[ck.algo];
+    return a && typeof a.compute === 'function' ? a : null;
   };
 
   /** Compute a checksum. Returns BigInt, or null when it cannot be computed here (custom function). */
   D.checksum = (s, ck, data) => {
-    if (ck.algo === '__crc') {
-      const c = ck.crc;
-      const n = (v) => BigInt(G.parseInt(v) || 0);
-      return D.crc(G.parseInt(c.width) || 8, n(c.poly), n(c.init), !!c.refin, !!c.refout, n(c.xorout), data);
-    }
-    if (CRC_PRESETS[ck.algo]) return D.crc(...CRC_PRESETS[ck.algo], data);
-    let a = 0, b = 0;
-    switch (ck.algo) {
-      case 'xor8': for (const x of data) a ^= x; return BigInt(a);
-      case 'sum8': for (const x of data) a = (a + x) & 0xff; return BigInt(a);
-      case 'lrc8': for (const x of data) a = (a + x) & 0xff; return BigInt((-a) & 0xff);
-      case 'sum16': for (const x of data) a = (a + x) & 0xffff; return BigInt(a);
-      case 'fletcher16': for (const x of data) { a = (a + x) % 255; b = (b + a) % 255; } return BigInt((b << 8) | a);
-      case 'fletcher8_ubx': for (const x of data) { a = (a + x) & 0xff; b = (b + a) & 0xff; } return BigInt((a << 8) | b);
-      default: return null;
-    }
+    const a = D.algorithm(s, ck);
+    return a ? BigInt(a.compute(Uint8Array.from(data))) : null;
   };
 
   // ----------------------------------------------------------------------------------------------
@@ -171,34 +143,14 @@
   // ----------------------------------------------------------------------------------------------
   // primitive reads
   // ----------------------------------------------------------------------------------------------
-  function readUint(buf, off, n, endian) {
-    let v = 0n;
-    if (endian === 'big') for (let i = 0; i < n; i++) v = (v << 8n) | BigInt(buf[off + i]);
-    else for (let i = n - 1; i >= 0; i--) v = (v << 8n) | BigInt(buf[off + i]);
-    return v;
-  }
+  /** Unsigned integer of n bytes as BigInt (checksums, length and type fields). */
+  const readUint = (buf, off, n, endian) => (n === 8 ? new gmsg.Reader(buf, off).u64(endian) : BigInt(gmsg.loadUint(buf, off, n, endian)));
+  /** A primitive value: BigInt for integer types and char, boolean for bool, Number for floats. */
   function readPrim(buf, off, type, endian) {
-    const n = G.PRIM_SIZE[type];
-    if (type === 'f32' || type === 'f64') {
-      const dv = new DataView(new ArrayBuffer(n));
-      for (let i = 0; i < n; i++) dv.setUint8(i, buf[off + (endian === 'big' ? i : n - 1 - i)]);
-      return type === 'f32' ? dv.getFloat32(0) : dv.getFloat64(0);
-    }
-    let v = readUint(buf, off, n, endian);
-    if (type[0] === 'i') { const bits = BigInt(n * 8); if (v >> (bits - 1n)) v -= 1n << bits; }
-    if (type === 'bool') return v !== 0n;
-    return v;
+    const v = new gmsg.Reader(buf, off).read(type === 'char' ? 'u8' : type, endian);
+    return typeof v === 'number' && type !== 'f32' && type !== 'f64' ? BigInt(v) : v;
   }
-  function extractBits(buf, off, bitOff, nbits, order) {
-    let v = 0n;
-    for (let i = 0; i < nbits; i++) {
-      const b = bitOff + i;
-      const byte = buf[off + (b >> 3)];
-      if (order === 'msb_first') v = (v << 1n) | BigInt((byte >> (7 - (b & 7))) & 1);
-      else v |= BigInt((byte >> (b & 7)) & 1) << BigInt(i);
-    }
-    return v;
-  }
+  const extractBits = (buf, off, bitOff, nbits, order) => BigInt(gmsg.extractBits(buf.subarray(off), bitOff, nbits, order));
   const toNum = (v) => (typeof v === 'bigint' ? Number(v) : typeof v === 'boolean' ? (v ? 1 : 0) : v);
   /** Quote text that D.ascii() already escaped (no second round of escaping). */
   const q = (t) => '"' + t + '"';
@@ -305,16 +257,26 @@
     const n = G.PRIM_SIZE[t];
     const v = readPrim(buf, at, t, endian);
     const nd = node(label, kind, at, at + n, { raw: D.hex(buf.slice(at, at + n)), type: typeName, v });
-    if (kind === 'enum') { nd.value = enumName(s, typeName, v); nd.error = strictEnumError(s, typeName, v); }
-    else if (t === 'char') nd.value = `'${printable(Number(v))}'`;
-    else nd.value = fmtNum(v);
-    const sc = scaled(f, v);
-    if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`;
-    else if (f.unit) nd.value += ` ${f.unit}`;
-    nd.value += conversionsText(f, v);
+    nd.value = D.scalarText(s, f, kind, typeName, v);
+    if (kind === 'enum') nd.error = strictEnumError(s, typeName, v);
     if (f.const && G.isInt(f.const) && toNum(v) !== G.parseInt(f.const)) nd.error = `expected const ${f.const}`;
     return { nd, v, n };
   }
+
+  /** Display text of a scalar / enum value v (BigInt for integers and chars, Number, boolean), with its scaled
+   *  value, unit and conversions. Also used by the exact engine (exact.js) for values of the generated code. */
+  D.scalarText = (s, f, kind, typeName, v) => {
+    const t = kind === 'enum' ? (G.findEnum(s, typeName).type || 'u8') : typeName;
+    let text;
+    if (kind === 'enum') text = enumName(s, typeName, v);
+    else if (t === 'char') text = `'${printable(Number(v))}'`;
+    else text = fmtNum(v);
+    const sc = scaled(f, v);
+    if (sc !== null) text += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`;
+    else if (f.unit) text += ` ${f.unit}`;
+    return text + conversionsText(f, v);
+  };
+  D.printable = (b) => printable(b);
 
   /** Extra named conversions (`conversions:`), e.g. " · 77 degF". */
   function conversionsText(f, v) {
@@ -490,7 +452,7 @@
     const toks = [];
     let s0 = start;
     for (let i = start; i <= end; i++) {
-      if (i === end || buf[i] === sep) { toks.push({ start: s0, end: i, text: D.ascii(buf.slice(s0, i)) }); s0 = i + 1; }
+      if (i === end || buf[i] === sep) { toks.push({ start: s0, end: i, text: D.ascii(buf.slice(s0, i)), raw: gmsg.latin1String(buf, s0, i) }); s0 = i + 1; }
     }
     return toks;
   }
@@ -509,8 +471,8 @@
         ti += n;
         continue;
       }
-      const tok = toks[ti] || { start: end, end, text: '' };
-      const nd = node(f.name, kind, tok.start, tok.end, { raw: q(tok.text), type: f.type + (f.optional ? ' (optional)' : ''), field: f, token: tok.text });
+      const tok = toks[ti] || { start: end, end, text: '', raw: '' };
+      const nd = node(f.name, kind, tok.start, tok.end, { raw: q(tok.text), type: f.type + (f.optional ? ' (optional)' : ''), field: f, token: tok.raw });
       ti++;
       if (tok.text === '') {
         if (f.optional) { nd.value = '— (empty, optional)'; nd.absent = true; }
@@ -519,13 +481,14 @@
         nodes.push(nd);
         continue;
       }
-      const t = tok.text.replace(/^\+/, '');
       const base = G.parseInt(f.base) === 16 ? 16 : 10;
       if (kind === 'int' || kind === 'enum') {
-        const ok = base === 16 ? /^-?[0-9a-f]+$/i.test(t) : /^-?\d+$/.test(t);
-        if (!ok) nd.error = `not a base-${base} integer`;
+        const prim = kind === 'enum' ? G.findEnum(s, f.type).type || 'u8' : f.type;
+        const [code, val] = attempt(() => gmsg.text.parseInt(tok.raw, prim, base));
+        if (code === Err.OutOfRange) nd.error = `out of range for ${prim}`;
+        else if (code) nd.error = `not a base-${base} integer`;
         else {
-          const v = BigInt(base === 16 ? (t.startsWith('-') ? '-0x' + t.slice(1) : '0x' + t) : t);
+          const v = BigInt(val);
           nd.v = v;
           nd.value = kind === 'enum' ? enumName(s, f.type, v) : fmtNum(v);
           if (kind === 'enum') nd.error = strictEnumError(s, f.type, v);
@@ -533,18 +496,27 @@
           if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`;
           if (kind === 'int') nd.value += conversionsText(f, v);
           if (f.const && G.isInt(f.const) && Number(v) !== G.parseInt(f.const)) nd.error = `expected const ${f.const}`;
-          const sizeBits = BigInt(8 * (G.PRIM_SIZE[kind === 'enum' ? G.findEnum(s, f.type).type || 'u8' : f.type] || 8));
-          const prim = kind === 'enum' ? G.findEnum(s, f.type).type || 'u8' : f.type;
-          const lo = prim[0] === 'i' ? -(1n << (sizeBits - 1n)) : 0n, hi = prim[0] === 'i' ? (1n << (sizeBits - 1n)) - 1n : (1n << sizeBits) - 1n;
-          if (v < lo || v > hi) nd.error = `out of range for ${prim}`;
         }
       } else if (kind === 'float') {
-        if (!/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t)) nd.error = 'not a number';
-        else { const v = parseFloat(t); nd.v = v; nd.value = String(v); const sc = scaled(f, v); if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`; nd.value += conversionsText(f, v); }
+        const isF32 = f.type === 'f32';
+        const [code, v] = attempt(() => gmsg.text.parseFloat(tok.raw, isF32));
+        if (code === Err.OutOfRange) nd.error = `out of range for ${f.type}`;
+        else if (code) nd.error = 'not a number';
+        else {
+          nd.v = v;
+          nd.value = gmsg.formatFloat(v, -1, isF32);
+          const sc = scaled(f, v);
+          if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`;
+          nd.value += conversionsText(f, v);
+        }
       } else if (kind === 'char') {
-        if (tok.text.length !== 1) nd.error = 'expected a single character'; else { nd.value = `'${tok.text}'`; nd.v = tok.text.charCodeAt(0); }
+        const [code] = attempt(() => gmsg.text.parseChar(tok.raw));
+        if (code) nd.error = 'expected a single character'; else { nd.value = `'${printable(tok.raw.charCodeAt(0))}'`; nd.v = tok.raw.charCodeAt(0); }
       } else if (kind === 'bool') {
-        if (!/^-?\d+$/.test(t)) nd.error = 'expected an integer'; else { nd.value = Number(t) ? 'true' : 'false'; nd.v = Number(t) !== 0; }
+        const [code, v] = attempt(() => gmsg.text.parseInt(tok.raw, 'i32'));  // as generated code: parse_int<int> != 0
+        if (code === Err.OutOfRange) nd.error = 'out of range for int';
+        else if (code) nd.error = 'expected an integer';
+        else { nd.value = v ? 'true' : 'false'; nd.v = v !== 0; }
       } else if (kind === 'string') {
         nd.value = q(tok.text);
         if (G.isInt(f.max) && tok.text.length > G.parseInt(f.max)) nd.note = `exceeds max ${f.max} (struct decode would fail)`;
@@ -559,160 +531,89 @@
   }
 
   // ----------------------------------------------------------------------------------------------
-  // framing (mirrors runtime/include/gmp/framing/*.hpp)
+  // framing: the gmsg scanners with the configuration gmpc generates (backend emit_framing)
   // ----------------------------------------------------------------------------------------------
-  function findPatternAtStart(buf, from, to, pat) {
-    if (!pat.length) return { matched: true };
-    for (let i = from; i < to; i++) {
-      const avail = Math.min(pat.length, to - i);
-      let ok = true;
-      for (let k = 0; k < avail; k++) if (buf[i + k] !== pat[k]) { ok = false; break; }
-      if (!ok) continue;
-      if (i > from) return { kind: 'skip', size: i - from, error: 'bad sync' };
-      if (avail < pat.length) return { kind: 'need_more' };
-      return { matched: true };
-    }
-    return to > from ? { kind: 'skip', size: to - from, error: 'bad sync' } : { kind: 'need_more' };
-  }
-  const matchesAt = (buf, at, to, pat) => {
-    if (at + pat.length > to) return false;
-    for (let k = 0; k < pat.length; k++) if (buf[at + k] !== pat[k]) return false;
-    return true;
-  };
-
-  function escapeCfg(s, p) {
+  /** The gmsg escape configuration of a protocol (null without escaping). */
+  function escapeOf(s, p) {
     if (!['delimited', 'fixed', 'length_prefixed'].includes(p.framing.type)) return null;
-    return G.escapeTable(s, p);
+    const et = G.escapeTable(s, p);
+    if (!et) return null;
+    if (et.style === 'xor') return gmsg.xorEscape(et.esc, et.xor, et.reserved.filter((b) => b !== et.esc));
+    return gmsg.mapEscape(et.esc, et.table.map(([r]) => r), et.table.map(([, c]) => c));
   }
 
   /**
-   * Walk escaped bytes from `at` until `n` unescaped bytes were produced (generator: walk_escaped).
-   * Returns { kind: 'done' | 'need_more' | 'bad', wire, bytes, error }.
+   * The frame scanner of protocol p: { scan(bytes) -> { kind, size, consume, onError, want, error }, escape } where
+   * error is a description ('' for a silent skip) and want the frame size when known.
    */
-  function walkEscaped(buf, at, to, n, esc) {
-    let i = at;
-    const bytes = [];
-    for (let u = 0; u < n; u++) {
-      if (i >= to) return { kind: 'need_more', wire: i, bytes };
-      let b = buf[i];
-      if (b === esc.esc) {
-        if (i + 1 >= to) return { kind: 'need_more', wire: i, bytes };
-        const d = esc.decode(buf[i + 1]);
-        if (d === null) return { kind: 'bad', wire: i, bytes, error: `invalid escape code ${G.hex2(buf[i + 1])}` };
-        b = d; i += 2;
-      } else if (esc.isReserved(b)) {
-        return { kind: 'bad', wire: i, bytes, error: `reserved byte ${G.hex2(b)} inside a frame (truncated frame)` };
-      } else i++;
-      bytes.push(b);
-    }
-    return { kind: 'done', wire: i, bytes };
-  }
-
-  function scanFrame(s, p, L, buf, from, to) {
+  function framer(s, p, L) {
     const fr = p.framing;
+    const esc = escapeOf(s, p);
+    const escape = esc || gmsg.NO_ESCAPE;
     const maxFrame = L.maxFrame || Infinity;
-    if (fr.type === 'none' || fr.type === 'custom') return { kind: 'frame', size: to - from, consume: to - from, onError: to - from };
-    const sync = L.prefix;
-    const r = findPatternAtStart(buf, from, to, sync);
-    if (!r.matched) return r;
-    const esc = escapeCfg(s, p);
+    const sync = Uint8Array.from(L.prefix), suffix = Uint8Array.from(L.suffix);
+    const whole = (b) => ({ kind: 'frame', size: b.length, consume: b.length, onError: b.length });
+    if (fr.type === 'none' || fr.type === 'custom') return { scan: whole, escape: esc };
+    let raw, lengthInfo = null;
     if (fr.type === 'fixed') {
       const sizes = L.bodies.map((b) => b.layout.size);
       const size = G.parseInt(fr.size) || (sizes.length && sizes.every((x) => x != null) ? L.overhead + Math.max(...sizes) : L.maxFrame);
-      if (!size) return { kind: 'skip', size: to - from, error: 'fixed frame size unknown' };
-      if (esc) {
-        const w = walkEscaped(buf, from + sync.length, to, size - sync.length - L.suffix.length, esc);
-        if (w.kind === 'need_more') return { kind: 'need_more' };
-        if (w.kind === 'bad') return { kind: 'skip', size: Math.max(1, w.wire - from), error: w.error };
-        const n = w.wire - from + L.suffix.length;
-        if (to - from < n) return { kind: 'need_more', want: n };
-        return { kind: 'frame', size: n, consume: n, onError: sync.length ? 1 : n };
-      }
-      if (to - from < size) return { kind: 'need_more' };
-      return { kind: 'frame', size, consume: size, onError: sync.length ? 1 : size };
-    }
-    if (fr.type === 'length_prefixed') {
+      if (!size) return { scan: (b) => ({ kind: 'skip', size: b.length, error: 'fixed frame size unknown' }), escape: esc };
+      const cfg = { sync, frameSize: size, escape, suffixLen: suffix.length };
+      raw = (b) => gmsg.scanFixed(b, cfg);
+    } else if (fr.type === 'length_prefixed') {
       const hm = G.headerMessage(s, p);
-      const lay = G.messageLayout(s, hm);
-      const row = lay.rows.find((x) => x.field.name === fr.lengthField);
-      if (!row) return { kind: 'skip', size: to - from, error: 'length field not found' };
-      const lsize = G.PRIM_SIZE[row.field.type] || 1;
-      const loff = L.prefix.length + row.offset;
-      let value;
-      const lend = row.field.endian || G.protoEndian(s, p);
-      if (esc) {
-        const w = walkEscaped(buf, from + L.prefix.length, to, row.offset + lsize, esc);
-        if (w.kind === 'need_more') return { kind: 'need_more' };
-        if (w.kind === 'bad') return { kind: 'skip', size: Math.max(1, w.wire - from), error: w.error };
-        value = Number(readUint(Uint8Array.from(w.bytes), row.offset, lsize, lend));
-      } else {
-        if (to - from < loff + lsize) return { kind: 'need_more' };
-        value = Number(readUint(buf, from + loff, lsize, lend));
-      }
-      if (esc && fr.counts === 'wire') {
-        // body size on the wire: walk the escaped header, take `value` wire bytes, walk the escaped checksum
-        const pre = from + L.prefix.length;
-        const hw = walkEscaped(buf, pre, to, L.headerSize, esc);
-        if (hw.kind === 'need_more') return { kind: 'need_more' };
-        if (hw.kind === 'bad') return { kind: 'skip', size: Math.max(1, hw.wire - from), error: hw.error };
-        const withTrailer = fr.covers === 'body_checksum';
-        const bodyWire = value + (G.parseInt(fr.adjust) || 0);
-        const bodyEnd = hw.wire + bodyWire;
-        if (bodyWire < 0 || bodyEnd - from + L.suffix.length > maxFrame) return { kind: 'skip', size: 1, error: `bad length (${value} wire bytes of body${withTrailer ? ' + checksum' : ''})` };
-        for (let i = hw.wire; i < bodyEnd; i++) {
-          if (i >= to) return { kind: 'need_more' };
-          if (buf[i] === esc.esc) {
-            if (i + 1 >= bodyEnd) return { kind: 'skip', size: 1, error: `bad length: ${value} wire bytes ends inside an escape pair` };
-            i++;
-          } else if (esc.isReserved(buf[i])) return { kind: 'skip', size: Math.max(1, i - from), error: `reserved byte ${G.hex2(buf[i])} inside a frame (truncated frame)` };
-        }
-        let end = bodyEnd;
-        if (!withTrailer) {
-          const tw = walkEscaped(buf, bodyEnd, to, L.trailer, esc);
-          if (tw.kind === 'need_more') return { kind: 'need_more' };
-          if (tw.kind === 'bad') return { kind: 'skip', size: Math.max(1, tw.wire - from), error: tw.error };
-          end = tw.wire;
-        }
-        const n = end - from + L.suffix.length;
-        if (to - from < n) return { kind: 'need_more', want: n };
-        return { kind: 'frame', size: n, consume: n, onError: 1 };
-      }
-      let add = (G.parseInt(fr.adjust) || 0) + L.suffix.length;
-      if (fr.covers === 'header_body') add += L.prefix.length + L.trailer;
+      const row = G.messageLayout(s, hm).rows.find((x) => x.field.name === fr.lengthField);
+      if (!row) return { scan: (b) => ({ kind: 'skip', size: b.length, error: 'length field not found' }), escape: esc };
+      const lengthSize = G.PRIM_SIZE[row.field.type] || 1;
+      const lengthOffset = L.prefix.length + row.offset;
+      const lengthEndian = row.field.endian || G.protoEndian(s, p);
+      const adjust = G.parseInt(fr.adjust) || 0;
+      const countsWire = !!esc && fr.counts === 'wire';
+      let add = adjust + L.suffix.length;
+      if (countsWire) add = adjust;  // body wire size = value + adjust
+      else if (fr.covers === 'header_body') add += L.prefix.length + L.trailer;
       else if (fr.covers === 'body_checksum') add += L.prefix.length + L.headerSize;
       else if (fr.covers !== 'all') add += L.prefix.length + L.headerSize + L.trailer;
-      const total = value + add;
-      if (total < L.overhead || total > maxFrame || total <= 0) return { kind: 'skip', size: 1, error: `bad length (${value} → frame of ${total} bytes)` };
-      if (esc) {
-        const w = walkEscaped(buf, from + L.prefix.length, to, total - L.prefix.length - L.suffix.length, esc);
-        if (w.kind === 'need_more') return w.wire - from > maxFrame ? { kind: 'skip', size: 1, error: 'frame exceeds max_frame' } : { kind: 'need_more' };
-        if (w.kind === 'bad') return { kind: 'skip', size: Math.max(1, w.wire - from), error: w.error };
-        const n = w.wire - from + L.suffix.length;
-        if (to - from < n) return { kind: 'need_more', want: n };
-        return { kind: 'frame', size: n, consume: n, onError: 1 };
-      }
-      if (to - from < total) return { kind: 'need_more', want: total };
-      return { kind: 'frame', size: total, consume: total, onError: 1 };
+      const cfg = {
+        sync, lengthOffset, lengthSize, lengthEndian, add, minFrame: L.overhead, maxFrame, escape, suffixLen: suffix.length,
+        countsWire, headerLen: L.headerSize, trailerLen: L.trailer, wireIncludesTrailer: fr.covers === 'body_checksum',
+      };
+      raw = (b) => gmsg.scanLengthPrefixed(b, cfg);
+      lengthInfo = { lengthOffset, lengthSize, lengthEndian, add, countsWire };
+    } else {
+      const cfg = { start: sync, end: suffix, escape, maxFrame };
+      raw = (b) => gmsg.scanDelimited(b, cfg);
     }
-    // delimited
-    const end = L.suffix, start = L.prefix;
-    const shared = start.length && start.length === end.length && start.every((b, i) => b === end[i]);
-    const s0 = start.length;
-    for (let i = from + s0; i < to; i++) {
-      if (i - from + 1 > maxFrame) return { kind: 'skip', size: s0 || i - from, error: 'no end delimiter within max_frame' };
-      if (esc && buf[i] === esc.esc) { i++; continue; }
-      if (matchesAt(buf, i, to, end)) {
-        const n = i + end.length - from;
-        if (shared) {
-          if (i === from + s0) return { kind: 'skip', size: s0, error: '' };
-          return { kind: 'frame', size: n, consume: n - end.length, onError: n - end.length };
-        }
-        return { kind: 'frame', size: n, consume: n, onError: n };
+    const describe = (b, r) => {
+      const at = r.size;
+      switch (r.error) {
+        case Err.None: return '';
+        case Err.BadSync: return 'bad sync';
+        case Err.InvalidValue: return `invalid escape code ${G.hex2(b[at + 1])}`;
+        case Err.BadDelimiter:
+          return fr.type === 'delimited' ? 'start delimiter inside frame (truncated frame)'
+            : `reserved byte ${G.hex2(b[at])} inside a frame (truncated frame)`;
+        case Err.BadLength:
+          if (fr.type === 'delimited') return 'no end delimiter within max_frame';
+          if (lengthInfo && !esc && b.length >= lengthInfo.lengthOffset + lengthInfo.lengthSize) {
+            const v = gmsg.loadUint(b, lengthInfo.lengthOffset, lengthInfo.lengthSize, lengthInfo.lengthEndian);
+            return `bad length (${v} → frame of ${v + lengthInfo.add} bytes)`;
+          }
+          return lengthInfo && lengthInfo.countsWire ? 'bad length (body wire size out of range, or it ends inside an escape pair)'
+            : 'bad length (frame size out of range or larger than max_frame)';
+        default: return gmsg.errorText(r.error);
       }
-      if (!shared && s0 && matchesAt(buf, i, to, start)) return { kind: 'skip', size: i - from, error: 'start delimiter inside frame (truncated frame)' };
-    }
-    if (to - from >= maxFrame) return { kind: 'skip', size: s0 || to - from, error: 'no end delimiter within max_frame' };
-    return { kind: 'need_more' };
+    };
+    return {
+      escape: esc,
+      scan(b) {
+        const r = raw(b);
+        if (r.kind === 'frame') return { kind: 'frame', size: r.size, consume: r.consume, onError: r.consumeOnError };
+        if (r.kind === 'skip') return { kind: 'skip', size: r.size, error: describe(b, r) };
+        return { kind: 'need_more', want: r.size > b.length ? r.size : 0 };
+      },
+    };
   }
 
   // ----------------------------------------------------------------------------------------------
@@ -731,7 +632,7 @@
     }
   }
 
-  function processFrame(s, p, L, input, fstart, fend) {
+  function processFrame(s, p, L, F, input, fstart, fend) {
     const fr = p.framing, ck = p.checksum;
     const frame = { start: fstart, end: fend, nodes: [], errors: [], message: null };
     const err = (m) => frame.errors.push(m);
@@ -742,7 +643,7 @@
     // interior, unescaped if needed (origin[i] = input offset of working byte i)
     let work = Array.from(input.slice(fstart + pre, fend - suf));
     let origin = work.map((_, i) => fstart + pre + i);
-    const esc = escapeCfg(s, p);
+    const esc = F.escape;
     if (esc) {
       const w2 = [], o2 = [];
       for (let i = 0; i < work.length; i++) {
@@ -751,7 +652,7 @@
         if (b === esc.esc) {
           if (++i >= work.length) { err('escape byte at end of frame'); return frame; }
           const d = esc.decode(work[i]);
-          if (d === null) { err(`invalid escape code ${G.hex2(work[i])}`); return frame; }
+          if (d < 0) { err(`invalid escape code ${G.hex2(work[i])}`); return frame; }
           b = d;
         }
         w2.push(b); o2.push(o);
@@ -887,13 +788,15 @@
   // ----------------------------------------------------------------------------------------------
   /** Decode `input` as a stream of frames of protocol p. */
   D.decodeProtocol = (s, p, input) => {
+    input = gmsg.toBytes(input);
     const L = G.protocolLayout(s, p);
+    const F = framer(s, p, L);
     const items = [];
     let pos = 0;
     let guard = 0;
     let failedEnd = 0;
     while (pos < input.length && guard++ < 10000) {
-      const sc = scanFrame(s, p, L, input, pos, input.length);
+      const sc = F.scan(input.subarray(pos));
       if (sc.kind === 'need_more') {
         // A lone closing flag shared with a (not yet received) next frame is not an error.
         const rest = input.length - pos;
@@ -914,7 +817,7 @@
         pos += n;
         continue;
       }
-      const fr = processFrame(s, p, L, input, pos, pos + sc.size);
+      const fr = processFrame(s, p, L, F, input, pos, pos + sc.size);
       items.push({ type: 'frame', ...fr });
       if (fr.errors.length) failedEnd = Math.max(failedEnd, pos + sc.size);
       pos += fr.errors.length ? sc.onError : sc.consume;
@@ -924,6 +827,7 @@
 
   /** Decode `input` as a single message (no framing). */
   D.decodeMessage = (s, m, input) => {
+    input = gmsg.toBytes(input);
     if (G.msgFormat(s, m) === 'text') {
       let end = input.length;
       while (end > 0 && (input[end - 1] === 10 || input[end - 1] === 13)) end--;

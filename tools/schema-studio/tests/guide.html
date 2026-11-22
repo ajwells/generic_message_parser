@@ -111,6 +111,30 @@
     T.eq(errors.join('\n'), '', 'JavaScript errors');
   });
 
+  T.test('language selector: JavaScript samples, names and API reference', async () => {
+    const btn = (l) => d.querySelector(`#guide-lang button[data-lang="${l}"]`);
+    const codeText = () => Array.from(d.querySelectorAll('.g-code')).map((p) => p.textContent).join('\n');
+    T.ok(btn('js'), 'JavaScript button');
+    btn('js').click();
+    await T.until(() => /Generated JavaScript and errors/.test(d.getElementById('cpp').textContent), 3000, 'JavaScript section title');
+    const c = codeText();
+    for (const want of ['demo.Link.stream()', 'gmsg.print', 'demo.StatusView.from(bytes)', '--lang js', 'parser.pollEvent()', "parser.on('Status'"])
+      T.ok(c.includes(want), `JavaScript sample has ${want}`);
+    T.ok(!/gmp::|std::|gmsg_\w+\(/.test(c), 'no C++ or C left in the code samples');
+    T.ok(d.getElementById('cpp').textContent.includes('gmsg.Err.BadChecksum'), 'JavaScript error names');
+    const api = d.getElementById('api').textContent;
+    for (const x of ['demo.Status.decode(bytes)', 's.encode()', 'demo.Link.parse(frame)', 'parser.pollEvent()', 'gmsg.checksum.crc32.compute(bytes)', 'demo.Link.maxFrame', 'parser.messages(chunk)'])
+      T.ok(api.includes(x), `JavaScript reference has ${x}`);
+    T.ok(!/gmp::|std::|demo_status_/.test(api), 'no C++ or C names in the JavaScript reference');
+    T.ok(!/\bnull\b|undefined</.test(api), 'no missing cells (JavaScript)');
+    const demos = () => Array.from(d.querySelectorAll('[data-demo]'));
+    await T.until(() => demos().length && demos().every((el) => el.querySelector('.g-demo-head, .callout')), 10000, 'demos after the switch');
+    T.ok(Array.from(d.querySelectorAll('.g-run-head')).some((h) => h.textContent.includes('console.log(String(report))')), 'JavaScript print demo label');
+    btn('cpp').click();
+    await T.until(() => /Generated C\+\+ and errors/.test(d.getElementById('cpp').textContent), 3000, 'back to C++');
+    T.eq(errors.join('\n'), '', 'JavaScript errors');
+  });
+
   T.run();
 })();
 </script>

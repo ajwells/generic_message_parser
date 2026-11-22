@@ -6,10 +6,12 @@ custom:
     nmea_coord:
       cpp: { header: "test_codecs.hpp", type: "double", decode: "test::decode_coord", encode: "test::encode_coord" }
       c: { header: "test_codecs_c.h", type: "double", decode: "test_coord_decode", encode: "test_coord_encode" }
+      js: { module: "./test_codecs.js", decode: decodeCoord, encode: encodeCoord }
   framers:
     len_byte:
       cpp: { header: "test_codecs.hpp", type: "test::LengthByteFramer" }
       c: { header: "test_codecs_c.h", scan: "test_len_byte_scan" }
+      js: { module: "./test_codecs.js", scan: lenByteScan }
 
 messages:
   Pos:

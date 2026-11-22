@@ -14,6 +14,12 @@ option(GMP_BUILD_BENCH "Build GMP benchmarks" OFF)
 
 include(FetchContent)
 
+# Emscripten (the WebAssembly build of gmpc for Schema Studio): yaml-cpp and the generator use C++ exceptions.
+if (EMSCRIPTEN)
+    add_compile_options(-fexceptions)
+    add_link_options(-fexceptions)
+endif ()
+
 # ---------------------------------------------------------------------------
 # Runtime: header-only, standard library only, embedded safe.
 # ---------------------------------------------------------------------------

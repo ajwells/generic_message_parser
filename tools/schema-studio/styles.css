@@ -550,3 +550,11 @@ pre.g-input { margin: 0 0 10px; background: var(--panel); border: 1px solid var(
   .guide-main { padding: 20px 16px 60px; }
   .g-cov { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* gmpc engine and Code tab */
+.pill.engine { background: var(--accent-soft); color: var(--accent-text); }
+.callout.warn { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+.callout.warn.engine-diff { margin: 8px 0; }
+.code-file { margin-bottom: 14px; }
+pre.yaml.code { max-height: 70vh; overflow: auto; }
+.seg button[disabled] { opacity: .45; cursor: not-allowed; }

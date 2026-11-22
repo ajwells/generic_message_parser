@@ -11,6 +11,10 @@
 #
 # Languages whose output is headers only (cpp: <schema-stem>.gmp.hpp) give an INTERFACE library;
 # languages that also emit source files get a STATIC library built from them.
+# LANG js writes <schema-stem>.gmp.js modules and copies the runtime (runtime-js/gmsg.js) next to them, so
+# require('./gmsg.js') resolves; <name> is then a custom target (property GMP_GENERATED_DIR: the output directory).
+
+set(_GMP_SOURCE_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
 
 # Output layout and runtime target of each backend. Add a branch here when a backend is added to
 # generator/src/backend/registry.cpp; the file names must match what the backend writes.
@@ -26,8 +30,13 @@ function(_gmp_language_layout lang)
         set(headers ".gmp.h")
         set(sources ".gmp.c")
         set(runtime gmp::runtime_c)
+    elseif (lang STREQUAL "js")
+        # JavaScript modules (UMD) using runtime-js/gmsg.js; nothing to compile
+        set(headers "")
+        set(sources ".gmp.js")
+        set(runtime "")
     else ()
-        message(FATAL_ERROR "gmp_generate: unsupported LANG '${lang}' (known: cpp, c)")
+        message(FATAL_ERROR "gmp_generate: unsupported LANG '${lang}' (known: cpp, c, js)")
     endif ()
     set(_GMP_HEADERS "${headers}" PARENT_SCOPE)
     set(_GMP_SOURCES "${sources}" PARENT_SCOPE)
@@ -91,6 +100,20 @@ function(gmp_generate)
                 COMMENT "gmpc (${GMP_LANG}): generating code for ${stem}"
                 VERBATIM)
     endforeach ()
+
+    if (GMP_LANG STREQUAL "js")
+        set(runtime_js "${_GMP_SOURCE_ROOT}/runtime-js/gmsg.js")
+        add_custom_command(
+                OUTPUT "${GMP_OUT_DIR}/gmsg.js"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${runtime_js}" "${GMP_OUT_DIR}/gmsg.js"
+                DEPENDS "${runtime_js}"
+                COMMENT "gmp: copying the JavaScript runtime"
+                VERBATIM)
+        add_custom_target(${GMP_TARGET} ALL DEPENDS ${sources} "${GMP_OUT_DIR}/gmsg.js")
+        set_property(TARGET ${GMP_TARGET} PROPERTY GMP_GENERATED_SOURCES "${sources}")
+        set_property(TARGET ${GMP_TARGET} PROPERTY GMP_GENERATED_DIR "${GMP_OUT_DIR}")
+        return()
+    endif ()
 
     add_custom_target(${GMP_TARGET}_codegen DEPENDS ${headers} ${sources})
     if (sources)

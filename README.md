@@ -1,10 +1,10 @@
 # generic_message_parser (GMP)
 
-Describe a wire protocol in YAML and get efficient C++ (or C) decode/encode code. GMP is like protobuf, but the schema
+Describe a wire protocol in YAML and get efficient C++ (or C, or JavaScript) decode/encode code. GMP is like protobuf, but the schema
 describes **existing** protocols: binary or ASCII, any framing, any bit layout. It does not impose its own format.
 
-- **Generator** `gmpc`: YAML → language-neutral IR → backend: C++23 (default) or C99 / C11 (`--lang c`, see
-  [C output](#c-output)); more can be added.
+- **Generator** `gmpc`: YAML → language-neutral IR → backend: C++23 (default), C99 / C11 (`--lang c`, see
+  [C output](#c-output)) or JavaScript (`--lang js`, see [JavaScript output](#javascript-output)); more can be added.
 - **Runtime** `gmp::runtime`: header-only and standard-library only. No heap, no exceptions, no RTTI.
 - **Two input modes**: whole buffer per message (`Proto::parse(buf)`) or streaming
   (`Proto::Stream<>::feed(chunk, handler)`) with resync on garbage.
@@ -22,7 +22,7 @@ describes **existing** protocols: binary or ASCII, any framing, any bit layout. 
   - [bit fields](#bit-fields) · [lengths and counts](#lengths-and-counts) · [expressions](#expressions)
   - [text messages](#text-messages) · [protocols](#protocols) · [framing](#framing) · [checksum](#checksum)
   - [message_type](#message_type) · [custom extensions](#custom-extensions)
-- [Generated C++ API](#generated-c-api) · [Streaming](#streaming) · [Printing](#printing) · [Errors](#errors) · [C output](#c-output)
+- [Generated C++ API](#generated-c-api) · [Streaming](#streaming) · [Printing](#printing) · [Errors](#errors) · [C output](#c-output) · [JavaScript output](#javascript-output)
 - [Building](#building) · [CMake integration](#cmake-integration) · [gmpc command line](#gmpc-command-line)
 - [Project layout](#project-layout) · [Adding a language backend](#adding-a-language-backend)
 
@@ -87,8 +87,10 @@ have a C version (`main.c`, see [C output](#c-output)).
 **Prefer a visual editor?** Open [`tools/schema-studio/index.html`](tools/schema-studio) in a browser. You build
 schemas with forms on the left and see a size-proportional layout of every message and frame on the right, then
 download the YAML. Its **Decode tester** tab decodes pasted raw frames against the schema, so you can check them before
-generating code. New to GMP? Open [`tools/schema-studio/guide.html`](tools/schema-studio/guide.html) for a visual
-tour of every feature, with live decoded examples.
+generating code: its **Quick** engine decodes as you edit, and its **gmpc** engine runs the real generator (compiled
+to WebAssembly) and the generated JavaScript. The **Code** tab shows the C++, C and JavaScript gmpc generates. New to
+GMP? Open [`tools/schema-studio/guide.html`](tools/schema-studio/guide.html) for a visual tour of every feature, with
+live decoded examples.
 
 ---
 
@@ -658,6 +660,28 @@ output uses, so a schema written for C++ still generates C until it uses them:
 The generated `.c` file checks these with `_Static_assert` + `_Generic`. On a view, a custom field's accessor decodes
 on demand: `gmsg_error <view>_<field>(const view*, T* out)`.
 
+For the JavaScript backend (`--lang js`) add a `js:` block: the module that exports the functions (the generated
+module `require`s it as written; in a browser page it is looked up in the global object `gmsgExtensions`) and their
+names. As for C, it is needed only for the custom items the output uses:
+
+```yaml
+    bcd_time:
+      wire_size: 3
+      js: { module: "./my_codecs.js", decode: decodeBcdTime, encode: encodeBcdTime, print: printTime }
+    add16: { size: 2, js: { module: "./my_codecs.js", function: add16 } }
+    len_byte: { js: { module: "./my_codecs.js", scan: lenByteScan } }
+```
+
+| extension (JavaScript) | signature |
+|------------------------|-----------|
+| binary decoder | `decode(reader: gmsg.Reader) → value`; throw `gmsg.GmpError` on bad input |
+| binary encoder | `encode(writer: gmsg.Writer, value)` |
+| text decoder | `decode(token: string) → value` |
+| text encoder | `encode(writer: gmsg.text.TextWriter, value)`: write the token content with `writer.raw(text)` |
+| checksum | `fn(covered: Uint8Array) → number \| BigInt` |
+| framer | `scan(bytes: Uint8Array) → gmsg.FrameScan.needMore(hint) / .frame(size, consume, consumeOnError) / .skip(n, error)` |
+| printing (optional) | `print(printer: gmsg.Printer, value)`. Without it numbers, BigInts and strings print as such, other values as `<?>` |
+
 ---
 
 ## Generated C++ API
@@ -1110,6 +1134,71 @@ Floats in text messages and print (`GMSG_FLOAT_TEXT`):
 
 ---
 
+## JavaScript output
+
+`gmpc --lang js` (or `gmp_generate(... LANG js)`) writes one module per schema, `<schema>.gmp.js`, using the
+runtime [`runtime-js/gmsg.js`](runtime-js/gmsg.js) (one file, no dependencies). Both are UMD modules: `require()` them
+in Node.js, import them through a bundler, or load them with `<script>` tags in a browser page (also from `file://`),
+where the runtime is the global `gmsg` and the generated module the global named after the namespace
+(`acme::telemetry` → `acme_telemetry`; `--opt global=NAME` picks another). The generated module requires the runtime as
+`./gmsg.js`, so put the two side by side, or set `--opt runtime=<module id>`. `gmp_generate(... LANG js)` copies the
+runtime into its output directory.
+
+```js
+const gmsg = require('./gmsg.js');
+const tm = require('./telemetry.gmp.js');
+
+const s = new tm.Status({ voltage: 12600, samples: [10, -20, 30] });   // plain fields; count is filled in
+s.voltage_scaled = 12.6;                       // scale / conversions / computed values are getters and setters
+const frame = tm.BinaryLink.encode(s);         // Uint8Array: sync, header, body, CRC
+
+const stream = tm.BinaryLink.stream();         // gmsg.StreamParser, buffer of maxFrame bytes
+stream.on('Status', (view, header) => console.log(String(view)));   // same text as gmp::print
+stream.on('error', (e) => console.warn(e.message, e.bytes));        // gmsg.GmpError
+stream.feed(chunk);                            // any chunk size; or push() + poll() / pollEvent() / messages()
+
+const v = tm.StatusView.from(bytes);           // zero-copy view: fields are getters over the bytes
+v.voltage_scaled; v.ranges();                  // ranges(): where each field is in the bytes
+```
+
+The generated code has everything the C++ backend generates (binary and text messages, every framing and escaping,
+checksums, protocols, streams, printing, custom extensions), written the way JavaScript code usually is:
+
+| | C++ | JavaScript |
+|-|-----|------------|
+| errors | `gmp::Result<T>` | thrown `gmsg.GmpError` (`e.code` is a `gmsg.Err` value with the same name, `e.message` the same text) |
+| integers | `std::uint16_t`, ... | Number; BigInt for `u64` / `i64` |
+| bool, char, floats | `bool`, `char`, `float` / `double` | boolean, one-character string, Number (`f32` values rounded with `Math.fround`) |
+| bytes, strings | `static_vector`, `static_string` (capacity `max`) | `Uint8Array`, string with one character per byte (latin1); more than `max` throws `OutOfRange` on encode |
+| conditional / optional fields | `std::optional` | `undefined` when absent |
+| struct | `struct M` with `decode` / `encode` | `class M` with static `decode(bytes)` / `encode(m)` (plain objects work too) and `m.encode()` |
+| view | `MView::from(bytes)`, accessor functions | `MView.from(bytes)`, getters; `ranges()` lists each field's byte range |
+| enums | `enum class`, `to_string`, `is_known` | frozen `{ name: value }` object with `nameOf(v)`, `isKnown(v)` |
+| encode | into your buffer | returns a new `Uint8Array` |
+| stream callbacks | `Callbacks` / `CallbackStream`, overload sets | `stream.on('Status' \| 'frame' \| 'error', fn)` (returns a function that removes it) |
+| pull API | `poll()`, `poll_frame()`, `poll_message()`, `poll_event()`, `poll_for<V>()` | `poll()`, `pollFrame()`, `pollMessage()`, `pollEvent()`, `pollFor('Status')`, iterators `messages(chunk)` / `events(chunk)`; polled views own a copy of their frame, so they never expire |
+| printing | `gmp::print(v, sink, opts)` | `gmsg.print(v, opts)` / `v.toString(opts)` return a string |
+
+The runtime is a port of the C++ runtime with the same behaviour: CRCs, framers, escaping, stream resync, exact float
+text (`to_chars` / `from_chars` results) and printing. Its tests compare it with the C++ runtime on random input, and the
+generated JavaScript for every test schema is compared with the generated C++ on valid, mutated and truncated
+messages and on noisy streams (errors, `gmp::print` text, re-encoded bytes, stream events and statistics). Known
+differences:
+- a frame of a byte-stuffed protocol that fails validation is not unescaped in the stream buffer, so the parser
+  resynchronises over the bytes as received (the C++ and C parsers unescape in place and resynchronise over the
+  unescaped bytes)
+- signalling NaNs of `f32` fields become quiet NaNs (JavaScript cannot keep their payload), so they re-encode
+  differently
+- a huge float in a text field with a `precision` (fixed notation longer than 127 characters) encodes; C++ reports
+  `InvalidValue`, C encodes it too
+
+Schema Studio uses the same runtime: its decode tester's **Quick** engine interprets the schema with `gmsg.js`, and its
+**gmpc** engine generates the JavaScript with gmpc compiled to WebAssembly (`tools/schema-studio/gmpc/gmpc.js`, built
+by `tools/schema-studio/gmpc/build.py` with [emsdk](https://emscripten.org); a test fails when it is older than the
+generator sources).
+
+---
+
 ## Building
 
 Requires CMake ≥ 3.25 and a C++23 compiler with `<expected>` (GCC 13+, Clang 17+, MSVC 19.36+). The generator pulls in
@@ -1128,13 +1217,16 @@ ctest --test-dir build
 | `GMP_BUILD_EXAMPLES` | `ON` when top level | Programs in `examples/`. |
 | `GMP_BUILD_BENCH` | `OFF` | Throughput benchmark `gmp_bench` (build in Release). |
 
+The JavaScript tests run under Node.js, found on `PATH` or in an emsdk install (`EMSDK`, or `~/emsdk`); without Node
+they are not registered.
+
 ## CMake integration
 
 ```cmake
 gmp_generate(TARGET <name>
              SCHEMAS <file.yaml>...
              [OUT_DIR <dir>]          # default ${CMAKE_CURRENT_BINARY_DIR}/gmp_generated/<name>
-             [LANG <backend>]         # default cpp
+             [LANG <backend>]         # default cpp; c; js
              [C_RUNTIME header|library]  # LANG c: gmp::runtime_c (default) or gmp::runtime_c_lib
              [GENERATOR <path>])      # default: the in-tree gmpc target
 ```
@@ -1144,6 +1236,9 @@ This creates a library `<name>` (INTERFACE for C++; STATIC for `LANG c`, built f
 - `gmp::runtime` (C++) or `gmp::runtime_c` (C; `gmp::runtime_c_lib` with `C_RUNTIME library`) linked in
 - a build dependency that regenerates whenever a schema or `gmpc` changes
 
+With `LANG js` it is a custom target instead: the `.gmp.js` modules and a copy of `runtime-js/gmsg.js` in `OUT_DIR`
+(target property `GMP_GENERATED_DIR`), regenerated when a schema or `gmpc` changes.
+
 If your custom codec headers live elsewhere, add their directory with
 `target_include_directories(<name> INTERFACE ...)`.
 
@@ -1151,11 +1246,12 @@ If your custom codec headers live elsewhere, add their directory with
 
 ```
 gmpc [options] schema.yaml...
-  --lang NAME        output language backend: cpp (default) or c (C99 or later, see C output)
+  --lang NAME        output language backend: cpp (default), c (C99 or later, see C output) or js (JavaScript)
   --out DIR          output directory (default: current directory)
   --check            validate schemas only, write nothing
   --stdout           print generated code instead of writing files
-  --opt KEY=VALUE    backend specific option (c: prefix=NAME_ sets the C name prefix)
+  --opt KEY=VALUE    backend specific option (c: prefix=NAME_ sets the C name prefix;
+                     js: runtime=MODULE_ID, global=NAME)
   --list-backends    list available backends
   -h, --help         show help
 ```
@@ -1169,9 +1265,11 @@ gmpc [options] schema.yaml...
 runtime/include/gmp/     header-only runtime: framing, stream parser, checksums, bit/byte codecs, text, containers, print
 runtime-c/include/gmp/c/ C runtime for the C backend: endian, bits, byte reader/writer, checksums, framing, stream, text, print
 runtime-c/src/           the C runtime's library build (gmp::runtime_c_lib); runtime-c/tools/crc_tables.py
+runtime-js/gmsg.js       JavaScript runtime for the JavaScript backend (and Schema Studio)
 generator/src/           schema loader, expression parser, IR + lowering, validator, backends
 cmake/GmpGenerate.cmake  gmp_generate() build integration
-tests/                   runtime unit tests (C++ and C), generator golden + diagnostics tests, round-trip tests
+tests/                   runtime unit tests (C++, C, JavaScript), generator golden + diagnostics tests, round-trip tests
+tools/schema-studio/     Schema Studio and its Guide; gmpc/ holds gmpc compiled to WebAssembly
 examples/  bench/  docs/
 ```
 
@@ -1203,7 +1301,8 @@ refresh the bundled references.
    output reserves) to the `Diagnostics` it is given.
 2. Register the backend in `backend/registry.cpp`.
 3. Add its output file suffixes and runtime target to `_gmp_language_layout` in `cmake/GmpGenerate.cmake`. Header-only
-   output gives an INTERFACE library; output with source files gives a STATIC library.
+   output gives an INTERFACE library; output with source files gives a STATIC library (`js` is handled as a custom
+   target).
 4. Put language-specific schema settings in a block named after the backend inside `custom` entries
    (e.g. `py: {...}`).
 5. Add a `check_goldens("<name>")` test case to `tests/generator/test_golden.cpp`. Goldens live in

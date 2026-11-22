@@ -154,6 +154,8 @@
 
   /** The C binding (`c:` block) of a custom item; empty until edited. */
   const cl = (c) => (c.lang && c.lang.c) || {};
+  /** The JavaScript binding (`js:` block) of a custom item; empty until edited. */
+  const jl = (c) => (c.lang && c.lang.js) || {};
 
   function customEditor(s, uid) {
     let i = s.customTypes.findIndex((c) => c.uid === uid);
@@ -179,7 +181,14 @@
           ${field('Encode function', input(`${b}.lang.c.encode`, cl(c).encode, { placeholder: 'my_encode_time', mono: true }))}
           ${field('Print function', input(`${b}.lang.c.print`, cl(c).print, { placeholder: 'optional', mono: true }), 'else prints <?>', 'span-2')}
         </div>
-        <p class="callout" style="margin:12px 0 0">Only needed for <code>gmpc --lang c</code>; written as a <code>c:</code> block.<br>Binary: <code>gmsg_error decode(gmsg_reader*, T*)</code>, <code>gmsg_error encode(gmsg_writer*, const T*)</code>.<br>Text: <code>gmsg_error decode(const char*, size_t, T*)</code>, <code>gmsg_error encode(gmsg_text_writer*, const T*)</code>.<br>Print: <code>void print(gmsg_printer*, const T*)</code>.</p>`);
+        <p class="callout" style="margin:12px 0 0">Only needed for <code>gmpc --lang c</code>; written as a <code>c:</code> block.<br>Binary: <code>gmsg_error decode(gmsg_reader*, T*)</code>, <code>gmsg_error encode(gmsg_writer*, const T*)</code>.<br>Text: <code>gmsg_error decode(const char*, size_t, T*)</code>, <code>gmsg_error encode(gmsg_text_writer*, const T*)</code>.<br>Print: <code>void print(gmsg_printer*, const T*)</code>.</p>`) +
+        section('JavaScript binding', `<div class="grid">
+          ${field('Module', input(`${b}.lang.js.module`, jl(c).module, { placeholder: './my_codecs.js', mono: true }), 'required as written', 'span-2')}
+          ${field('Decode function', input(`${b}.lang.js.decode`, jl(c).decode, { placeholder: 'decodeTime', mono: true }))}
+          ${field('Encode function', input(`${b}.lang.js.encode`, jl(c).encode, { placeholder: 'encodeTime', mono: true }))}
+          ${field('Print function', input(`${b}.lang.js.print`, jl(c).print, { placeholder: 'optional', mono: true }), 'else numbers / strings print as such', 'span-2')}
+        </div>
+        <p class="callout" style="margin:12px 0 0">Only needed for <code>gmpc --lang js</code>; written as a <code>js:</code> block. The functions are exports of the module and throw <code>gmsg.GmpError</code> on bad input.<br>Binary: <code>decode(reader) → value</code>, <code>encode(writer, value)</code>. Text: <code>decode(string) → value</code>, <code>encode(textWriter, value)</code>. Print: <code>print(printer, value)</code>.</p>`);
     }
     i = s.customChecksums.findIndex((c) => c.uid === uid);
     if (i >= 0) {
@@ -194,6 +203,10 @@
         section('C binding', `<div class="grid">
           ${field('Header', input(`${b}.lang.c.header`, cl(c).header, { placeholder: 'my_codecs.h', mono: true }))}
           ${field('Function', input(`${b}.lang.c.function`, cl(c).function, { placeholder: 'my_crc', mono: true }), '<unsigned> fn(const uint8_t*, size_t)')}
+        </div>`) +
+        section('JavaScript binding', `<div class="grid">
+          ${field('Module', input(`${b}.lang.js.module`, jl(c).module, { placeholder: './my_codecs.js', mono: true }))}
+          ${field('Function', input(`${b}.lang.js.function`, jl(c).function, { placeholder: 'myCrc', mono: true }), 'fn(Uint8Array) → number | BigInt')}
         </div>`);
     }
     i = s.customFramers.findIndex((c) => c.uid === uid);
@@ -208,6 +221,10 @@
         section('C binding', `<div class="grid">
           ${field('Header', input(`${b}.lang.c.header`, cl(c).header, { placeholder: 'my_codecs.h', mono: true }))}
           ${field('Scan function', input(`${b}.lang.c.scan`, cl(c).scan, { placeholder: 'my_scan', mono: true }), 'gmsg_frame_scan fn(const uint8_t*, size_t)')}
+        </div>`) +
+        section('JavaScript binding', `<div class="grid">
+          ${field('Module', input(`${b}.lang.js.module`, jl(c).module, { placeholder: './my_codecs.js', mono: true }))}
+          ${field('Scan function', input(`${b}.lang.js.scan`, jl(c).scan, { placeholder: 'myScan', mono: true }), 'fn(Uint8Array) → gmsg.FrameScan.*')}
         </div>`);
     }
     return '';

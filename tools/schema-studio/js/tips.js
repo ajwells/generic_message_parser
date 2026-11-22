@@ -67,6 +67,14 @@
     'customChecksum.lang.c.header': { t: 'C header', k: 'c.header', d: 'C header declaring the function (C output only).' },
     'customChecksum.lang.c.function': { t: 'C function', k: 'c.function', d: 'An unsigned integer fn(const uint8_t* data, size_t size) returning the checksum of the covered bytes (uint8_t ... uint64_t).' },
     'customFramer.lang.c.header': { t: 'C header', k: 'c.header', d: 'C header declaring the scan function (C output only).' },
+    'customType.lang.js.module': { t: 'JavaScript module', k: 'js.module', d: 'Module id that the generated JavaScript requires for the functions below, e.g. ./my_codecs.js (JavaScript output only: gmpc --lang js). In a browser page the module is looked up in the global gmsgExtensions object.' },
+    'customType.lang.js.decode': { t: 'JavaScript decode function', k: 'js.decode', d: 'Export of the module: decode(reader) for binary (a gmsg.Reader positioned at the value) or decode(text) for text; returns the value and throws gmsg.GmpError on bad input.' },
+    'customType.lang.js.encode': { t: 'JavaScript encode function', k: 'js.encode', d: 'Export of the module: encode(writer, value) writes the value with a gmsg.Writer (binary) or gmsg.text.TextWriter (text). Needed when structs are generated.' },
+    'customType.lang.js.print': { t: 'JavaScript print function', k: 'js.print', d: 'Optional: print(printer, value) for gmsg.print / toString(). Without it numbers, BigInts and strings print as such, other values as <?>.' },
+    'customChecksum.lang.js.module': { t: 'JavaScript module', k: 'js.module', d: 'Module id the generated JavaScript requires for the checksum function (JavaScript output only).' },
+    'customChecksum.lang.js.function': { t: 'JavaScript function', k: 'js.function', d: 'Export of the module: fn(bytes: Uint8Array) returning the checksum of the covered bytes as a Number or BigInt.' },
+    'customFramer.lang.js.module': { t: 'JavaScript module', k: 'js.module', d: 'Module id the generated JavaScript requires for the scan function (JavaScript output only).' },
+    'customFramer.lang.js.scan': { t: 'JavaScript scan function', k: 'js.scan', d: 'Export of the module: scan(bytes: Uint8Array) returning gmsg.FrameScan.needMore(hint), .frame(size, consume, consumeOnError) or .skip(n, error).' },
     'customFramer.lang.c.scan': { t: 'C scan function', k: 'c.scan', d: 'gmsg_frame_scan fn(const uint8_t* data, size_t size): says where the next frame starts and ends (gmsg_scan_frame / _need_more / _skip).' },
 
     // ---------------------------------------------------------------- messages

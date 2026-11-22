@@ -1,6 +1,7 @@
 #include "backend/backend.hpp"
 #include "backend/c/c_backend.hpp"
 #include "backend/cpp/cpp_backend.hpp"
+#include "backend/js/js_backend.hpp"
 
 namespace gmpc {
 
@@ -9,6 +10,7 @@ const std::vector<std::unique_ptr<Backend>>& backends() {
         std::vector<std::unique_ptr<Backend>> v;
         v.push_back(make_cpp_backend());
         v.push_back(make_c_backend());
+        v.push_back(make_js_backend());
         // Register additional language backends here.
         return v;
     }();

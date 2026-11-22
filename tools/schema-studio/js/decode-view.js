@@ -34,6 +34,12 @@
             <option value="crlf"${dui.newline === 'crlf' ? ' selected' : ''}>as \\r\\n</option>
             <option value="lf"${dui.newline === 'lf' ? ' selected' : ''}>as \\n</option>
             <option value="ignore"${dui.newline === 'ignore' ? ' selected' : ''}>ignore</option></select></label>` : ''}
+        <div class="field-label"><span class="lbl">Engine</span>
+          <div class="seg" id="decode-engine">
+            <button data-engine="quick" class="${dui.engine !== 'gmpc' ? 'on' : ''}">Quick</button>
+            <button data-engine="gmpc" class="${dui.engine === 'gmpc' ? 'on' : ''}"${G.exact && G.exact.available() ? '' : ' disabled'}>gmpc</button>
+          </div>
+        </div>
         <div class="field-label"><span class="lbl">View</span>
           <div class="seg" id="decode-view">
             <button data-view="fields" class="${dui.view !== 'print' && dui.view !== 'line' ? 'on' : ''}">Fields</button>
@@ -62,7 +68,8 @@
   };
 
   // ----------------------------------------------------------------------------------------------
-  function runDecode(s, dui) {
+  function runDecode(s, dui, engine) {
+    const X = engine === 'gmpc' ? G.exact : D;
     let text = dui.input;
     if (dui.format === 'text') {
       // textareas normalise line breaks to \n; map them to what the protocol expects
@@ -76,20 +83,43 @@
     if (kind === 'protocol') {
       const p = s.protocols.find((x) => x.name === name);
       if (!p) return { parseError: 'select something to decode as', bytes: parsed.bytes };
-      result = D.decodeProtocol(s, p, parsed.bytes);
+      result = X.decodeProtocol(s, p, parsed.bytes);
     } else {
       const m = s.messages.find((x) => x.name === name);
       if (!m) return { parseError: 'select something to decode as', bytes: parsed.bytes };
-      result = D.decodeMessage(s, m, parsed.bytes);
+      result = X.decodeMessage(s, m, parsed.bytes);
     }
     return { bytes: parsed.bytes, ...result };
   }
 
   G.renderDecodeResults = (s, dui) => {
     if (!dui.input.trim()) return `<div class="decode-empty">Paste a raw message above. Fields are decoded live as you type.</div>`;
+    const exact = dui.engine === 'gmpc';
+    let engineNote = '';
+    if (exact) {
+      const X = G.exact;
+      if (!X || !X.available()) return `<div class="callout bad">The gmpc engine is not available: gmpc/gmpc.js is missing (build it with <code>py tools/schema-studio/gmpc/build.py</code>).</div>`;
+      if (X.failed()) return `<div class="callout bad">The gmpc engine could not be loaded: ${esc(X.failed())}</div>`;
+      if (!X.ready()) {
+        X.load();
+        return `<div class="decode-empty">Loading gmpc (the real generator, ${Math.round((window.GMP_GMPC.size || 0) / 1048576 * 10) / 10} MB)…</div>`;
+      }
+    }
     let r;
-    try { r = runDecode(s, dui); } catch (e) { return `<div class="callout bad">Decoder error: ${esc(e.message)}</div>`; }
+    try { r = runDecode(s, dui, exact ? 'gmpc' : 'quick'); } catch (e) { return `<div class="callout bad">Decoder error: ${esc(e.message)}</div>`; }
     if (r.parseError) return `<div class="callout bad">Input error: ${esc(r.parseError)}</div>`;
+    if (r.compileErrors) {
+      return `<div class="callout bad">gmpc does not accept this schema, so there is no generated code to decode with:<ul>${r.compileErrors
+        .map((d) => `<li>${d.line ? `YAML line ${d.line}: ` : ''}${esc(d.message)}</li>`).join('')}</ul>Switch to <b>Quick</b> to decode anyway.</div>`;
+    }
+    if (exact) {
+      // run the Quick engine too: frames where the two disagree point at a Studio decoder bug
+      let diff = [];
+      try { diff = G.exact.compare(s, runDecode(s, dui, 'quick'), r); } catch (e) { diff = ['Quick engine error: ' + e.message]; }
+      engineNote = diff.length
+        ? `<div class="callout warn engine-diff">The Quick decoder disagrees with gmpc here (please report it): ${diff.map(esc).join('; ')}.</div>`
+        : '';
+    }
     const bytes = r.bytes;
 
     // assign ids; the deepest node wins each byte
@@ -121,7 +151,8 @@
       ${frames.length - good ? `<span class="pill bad">${frames.length - good} with errors</span>` : ''}
       ${skipped ? `<span class="pill muted">${skipped} byte${skipped === 1 ? '' : 's'} skipped</span>` : ''}
       <span class="pill muted">${bytes.length} bytes in</span>
-    </div>`;
+      ${exact ? '<span class="pill engine" title="Decoded by the generated JavaScript (gmpc --lang js), running on the shared runtime">engine: gmpc</span>' : ''}
+    </div>${engineNote}`;
 
     // byte view grouped per item
     const textView = dui.format === 'text';
@@ -168,7 +199,7 @@
       const printed = printing ? G.printer.frame(s, it, dui.view === 'line' ? 'single' : 'multi') : null;
       const body = !printing ? '' : printed !== null
         ? `<pre class="print-out">${esc(printed)}</pre>`
-        : '<div class="frame-note">Nothing to print: decoding this frame fails, so the C++ code never gets a message.</div>';
+        : '<div class="frame-note">Nothing to print: decoding this frame fails, so the generated code never gets a message.</div>';
       return `<div class="frame-card ${ok ? 'ok' : 'bad'}" data-item="${k}">
         <div class="frame-title"><span>${ok ? '✓' : '✗'} ${esc(it.message || 'Frame')}</span><span class="mono">${it.end - it.start} bytes @ ${it.start}</span></div>
         ${it.errors.length ? `<div class="frame-errs">${it.errors.map(esc).join(' · ')}</div>` : ''}

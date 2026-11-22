@@ -8,8 +8,11 @@
 <script src="../js/layout.js"></script>
 <script src="../js/validate.js"></script>
 <script src="../js/yaml.js"></script>
+<script src="../../../runtime-js/gmsg.js"></script>
 <script src="../js/decoder.js"></script>
 <script src="../js/print.js"></script>
+<script src="../gmpc/gmpc-info.js"></script>
+<script src="../js/exact.js"></script>
 <script>
 // Data written by run_tests.py (loaded from ?data=<file URL>):
 //   schemas:   { name: yaml }               schemas used by the C++ reference program
@@ -85,6 +88,33 @@
       exported[r.path] = once;
     });
   }
+  // ---- the gmpc engine (gmpc.wasm -> generated JS) on the same references ------------------------------------
+  let exactOk = true;
+  try { await G.exact.load(); } catch (_) { exactOk = false; }
+  const needExact = () => { needYaml(); if (!exactOk) T.skip('gmpc/gmpc.js could not be loaded'); };
+  data.crossref.messages.forEach((c, i) => {
+    T.test(`gmpc engine: message ${c.schema} ${c.target} #${i}`, () => {
+      needExact();
+      const s = state(c.schema);
+      const m = s.messages.find((x) => 'message:' + x.name === c.target);
+      const fr = G.exact.decodeMessage(s, m, bytes(c.hex)).items.find((x) => x.type === 'frame');
+      T.ok(fr && !fr.errors.length, 'decode errors: ' + (fr ? fr.errors.join('; ') : 'no frame'));
+      T.eq(G.printer.frame(s, fr, 'multi'), c.multi, 'multi-line print');
+      T.eq(G.printer.frame(s, fr, 'single'), c.single, 'single-line print');
+    });
+  });
+  data.crossref.streams.forEach((c, i) => {
+    T.test(`gmpc engine: stream ${c.schema} ${c.target} #${i}`, () => {
+      needExact();
+      const s = state(c.schema);
+      const p = s.protocols.find((x) => 'protocol:' + x.name === c.target);
+      const r = G.exact.decodeProtocol(s, p, bytes(c.hex));
+      T.ok(!r.compileErrors, 'gmpc errors: ' + JSON.stringify(r.compileErrors));
+      const valid = r.items.filter((x) => x.type === 'frame' && !x.errors.length);
+      T.eqList(valid.map((f) => G.printer.frame(s, f, 'multi')), c.frames, 'valid frames (gmp::print text)');
+      T.eqList(G.exact.compare(s, D.decodeProtocol(s, p, bytes(c.hex)), r), [], 'Quick and gmpc agree');
+    });
+  });
   T.output('roundtrip', exported);
   T.run();
 })();

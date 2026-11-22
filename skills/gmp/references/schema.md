@@ -253,7 +253,7 @@ uppercase hex (NMEA style).
 
 ## custom extensions
 
-Language-specific settings live in a block named after the backend (`cpp:`, `c:`).
+Language-specific settings live in a block named after the backend (`cpp:`, `c:`, `js:`).
 
 ```yaml
 custom:
@@ -317,3 +317,20 @@ output uses, so a schema written for C++ still generates C until it uses them:
 
 The generated `.c` file checks these with `_Static_assert` + `_Generic`. On a view, a custom field's accessor decodes
 on demand: `gmsg_error <view>_<field>(const view*, T* out)`.
+
+For the JavaScript backend (`--lang js`) add a `js:` block: the module exporting the functions (required as written;
+in a browser page looked up in the global `gmsgExtensions`) and their names. Only the items the output uses need one:
+
+```yaml
+    bcd_time: { wire_size: 3, js: { module: "./my_codecs.js", decode: decodeBcdTime, encode: encodeBcdTime, print: printTime } }
+    add16: { size: 2, js: { module: "./my_codecs.js", function: add16 } }
+    len_byte: { js: { module: "./my_codecs.js", scan: lenByteScan } }
+```
+
+| extension (JavaScript) | signature |
+|------------------------|-----------|
+| binary decoder / encoder | `decode(reader: gmsg.Reader) → value`, `encode(writer: gmsg.Writer, value)`; throw `gmsg.GmpError` on bad input |
+| text decoder / encoder | `decode(token: string) → value`, `encode(writer: gmsg.text.TextWriter, value)` (write with `writer.raw(text)`) |
+| checksum | `fn(covered: Uint8Array) → number or BigInt` |
+| framer | `scan(bytes: Uint8Array) → gmsg.FrameScan.needMore(hint) / .frame(size, consume, consumeOnError) / .skip(n, error)` |
+| printing (optional) | `print(printer: gmsg.Printer, value)`; without it numbers, BigInts and strings print as such, anything else as `<?>` |

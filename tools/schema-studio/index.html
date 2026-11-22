@@ -33,12 +33,14 @@
         <button class="tab active" data-tab="layout" role="tab">Layout</button>
         <button class="tab" data-tab="yaml" role="tab">YAML</button>
         <button class="tab" data-tab="decode" role="tab">Decode tester</button>
+        <button class="tab" data-tab="code" role="tab" title="The code gmpc generates for this schema (C++, C, JavaScript)">Code</button>
         <div class="tabs-spacer"></div>
         <div class="legend" id="legend"></div>
       </nav>
       <div class="tab-body" id="tab-layout"></div>
       <div class="tab-body hidden" id="tab-yaml"></div>
       <div class="tab-body hidden" id="tab-decode"></div>
+      <div class="tab-body hidden" id="tab-code"></div>
       <footer class="issues" id="issues"></footer>
     </section>
   </main>
@@ -52,7 +54,10 @@
   <script src="js/tips.js"></script>
   <script src="js/editor.js"></script>
   <script src="js/viz.js"></script>
+  <script src="../../runtime-js/gmsg.js"></script>
   <script src="js/decoder.js"></script>
+  <script src="gmpc/gmpc-info.js" onerror="void 0"></script>
+  <script src="js/exact.js"></script>
   <script src="js/print.js"></script>
   <script src="js/decode-view.js"></script>
   <script src="js/app.js"></script>

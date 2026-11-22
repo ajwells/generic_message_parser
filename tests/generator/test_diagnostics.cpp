@@ -541,3 +541,44 @@ TEST_CASE("C backend: names use the namespace, the file stem or --opt prefix") {
     CHECK(files.empty());
     CHECK(text.find("not a valid C identifier prefix") != std::string::npos);
 }
+
+TEST_CASE("JavaScript backend: js: entries of custom items, reserved names, module options") {
+    auto run = [](const std::string& yaml, const gmpc::BackendOptions& opts, std::string& text) {
+        gmpc::Diagnostics d;
+        auto s = gmpc::load_schema_string(yaml, "test.yaml", d);
+        std::vector<gmpc::OutputFile> files;
+        if (s && gmpc::lower_schema(*s, d)) files = gmpc::find_backend("js")->generate(*s, opts, d);
+        std::ostringstream os;
+        d.print(os);
+        text = os.str();
+        return files;
+    };
+    std::string text;
+    // custom items used by generated code need module + decode (+ encode with a struct), function, scan
+    CHECK(run("custom:\n  types:\n    t: { wire_size: 2, cpp: { type: int, decode: d, encode: e } }\n"
+              "messages:\n  A: { fields: [ { name: x, type: t } ] }\n", {}, text).empty());
+    CHECK(text.find("custom type 't' needs a 'js: { module: ... }' entry for the JavaScript backend") != std::string::npos);
+    CHECK(run("custom:\n  types:\n    t: { wire_size: 2, js: { module: './c.js', decode: d } }\n"
+              "messages:\n  A: { fields: [ { name: x, type: t } ] }\n", {}, text).empty());
+    CHECK(text.find("custom type 't' needs a 'js: { encode: ... }' entry") != std::string::npos);
+    CHECK(run("custom:\n  checksums:\n    k: { size: 1, js: { module: './c.js' } }\nmessages:\n  A: { type_id: 1, fields: [ { name: x, type: u8 } ] }\n"
+              "protocols:\n  P:\n    header: [ { name: id, type: u8 } ]\n    framing: { type: fixed, sync: [0xAA] }\n"
+              "    checksum: { algo: k }\n    message_type: { field: id }\n    messages: [A]\n", {}, text).empty());
+    CHECK(text.find("custom checksum 'k' needs a 'js: { function: ... }' entry") != std::string::npos);
+    // a message named like a JavaScript global the module relies on
+    CHECK(run("messages:\n  Map: { fields: [ { name: x, type: u8 } ] }\n", {}, text).empty());
+    CHECK(text.find("message 'Map' clashes with a JavaScript name") != std::string::npos);
+    // module options: the runtime module id and the browser global
+    gmpc::BackendOptions opts;
+    opts.values["runtime"] = "@acme/gmsg";
+    opts.values["global"] = "acmeLink";
+    auto files = run("namespace: acme::link\nmessages:\n  A: { fields: [ { name: x, type: u8 } ] }\n", opts, text);
+    REQUIRE(files.size() == 1);
+    CHECK(files[0].name == "test.gmp.js");
+    CHECK(files[0].content.find("factory(require('@acme/gmsg'))") != std::string::npos);
+    CHECK(files[0].content.find("root.acmeLink = factory(root.gmsg)") != std::string::npos);
+    files = run("namespace: acme::link\nmessages:\n  A: { fields: [ { name: x, type: u8 } ] }\n", {}, text);
+    REQUIRE(files.size() == 1);
+    CHECK(files[0].content.find("root.acme_link = factory(root.gmsg)") != std::string::npos);
+    CHECK(files[0].content.find("return Object.freeze({ A, AView });") != std::string::npos);
+}

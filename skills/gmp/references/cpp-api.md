@@ -454,6 +454,71 @@ Floats in text messages and print (`GMSG_FLOAT_TEXT`):
 
 ---
 
+## JavaScript output
+
+`gmpc --lang js` (or `gmp_generate(... LANG js)`) writes one module per schema, `<schema>.gmp.js`, using the
+runtime [`runtime-js/gmsg.js`](runtime-js/gmsg.js) (one file, no dependencies). Both are UMD modules: `require()` them
+in Node.js, import them through a bundler, or load them with `<script>` tags in a browser page (also from `file://`),
+where the runtime is the global `gmsg` and the generated module the global named after the namespace
+(`acme::telemetry` → `acme_telemetry`; `--opt global=NAME` picks another). The generated module requires the runtime as
+`./gmsg.js`, so put the two side by side, or set `--opt runtime=<module id>`. `gmp_generate(... LANG js)` copies the
+runtime into its output directory.
+
+```js
+const gmsg = require('./gmsg.js');
+const tm = require('./telemetry.gmp.js');
+
+const s = new tm.Status({ voltage: 12600, samples: [10, -20, 30] });   // plain fields; count is filled in
+s.voltage_scaled = 12.6;                       // scale / conversions / computed values are getters and setters
+const frame = tm.BinaryLink.encode(s);         // Uint8Array: sync, header, body, CRC
+
+const stream = tm.BinaryLink.stream();         // gmsg.StreamParser, buffer of maxFrame bytes
+stream.on('Status', (view, header) => console.log(String(view)));   // same text as gmp::print
+stream.on('error', (e) => console.warn(e.message, e.bytes));        // gmsg.GmpError
+stream.feed(chunk);                            // any chunk size; or push() + poll() / pollEvent() / messages()
+
+const v = tm.StatusView.from(bytes);           // zero-copy view: fields are getters over the bytes
+v.voltage_scaled; v.ranges();                  // ranges(): where each field is in the bytes
+```
+
+The generated code has everything the C++ backend generates (binary and text messages, every framing and escaping,
+checksums, protocols, streams, printing, custom extensions), written the way JavaScript code usually is:
+
+| | C++ | JavaScript |
+|-|-----|------------|
+| errors | `gmp::Result<T>` | thrown `gmsg.GmpError` (`e.code` is a `gmsg.Err` value with the same name, `e.message` the same text) |
+| integers | `std::uint16_t`, ... | Number; BigInt for `u64` / `i64` |
+| bool, char, floats | `bool`, `char`, `float` / `double` | boolean, one-character string, Number (`f32` values rounded with `Math.fround`) |
+| bytes, strings | `static_vector`, `static_string` (capacity `max`) | `Uint8Array`, string with one character per byte (latin1); more than `max` throws `OutOfRange` on encode |
+| conditional / optional fields | `std::optional` | `undefined` when absent |
+| struct | `struct M` with `decode` / `encode` | `class M` with static `decode(bytes)` / `encode(m)` (plain objects work too) and `m.encode()` |
+| view | `MView::from(bytes)`, accessor functions | `MView.from(bytes)`, getters; `ranges()` lists each field's byte range |
+| enums | `enum class`, `to_string`, `is_known` | frozen `{ name: value }` object with `nameOf(v)`, `isKnown(v)` |
+| encode | into your buffer | returns a new `Uint8Array` |
+| stream callbacks | `Callbacks` / `CallbackStream`, overload sets | `stream.on('Status' \| 'frame' \| 'error', fn)` (returns a function that removes it) |
+| pull API | `poll()`, `poll_frame()`, `poll_message()`, `poll_event()`, `poll_for<V>()` | `poll()`, `pollFrame()`, `pollMessage()`, `pollEvent()`, `pollFor('Status')`, iterators `messages(chunk)` / `events(chunk)`; polled views own a copy of their frame, so they never expire |
+| printing | `gmp::print(v, sink, opts)` | `gmsg.print(v, opts)` / `v.toString(opts)` return a string |
+
+The runtime is a port of the C++ runtime with the same behaviour: CRCs, framers, escaping, stream resync, exact float
+text (`to_chars` / `from_chars` results) and printing. Its tests compare it with the C++ runtime on random input, and the
+generated JavaScript for every test schema is compared with the generated C++ on valid, mutated and truncated
+messages and on noisy streams (errors, `gmp::print` text, re-encoded bytes, stream events and statistics). Known
+differences:
+- a frame of a byte-stuffed protocol that fails validation is not unescaped in the stream buffer, so the parser
+  resynchronises over the bytes as received (the C++ and C parsers unescape in place and resynchronise over the
+  unescaped bytes)
+- signalling NaNs of `f32` fields become quiet NaNs (JavaScript cannot keep their payload), so they re-encode
+  differently
+- a huge float in a text field with a `precision` (fixed notation longer than 127 characters) encodes; C++ reports
+  `InvalidValue`, C encodes it too
+
+Schema Studio uses the same runtime: its decode tester's **Quick** engine interprets the schema with `gmsg.js`, and its
+**gmpc** engine generates the JavaScript with gmpc compiled to WebAssembly (`tools/schema-studio/gmpc/gmpc.js`, built
+by `tools/schema-studio/gmpc/build.py` with [emsdk](https://emscripten.org); a test fails when it is older than the
+generator sources).
+
+---
+
 ## Building
 
 Requires CMake ≥ 3.25 and a C++23 compiler with `<expected>` (GCC 13+, Clang 17+, MSVC 19.36+). The generator pulls in
@@ -472,13 +537,16 @@ ctest --test-dir build
 | `GMP_BUILD_EXAMPLES` | `ON` when top level | Programs in `examples/`. |
 | `GMP_BUILD_BENCH` | `OFF` | Throughput benchmark `gmp_bench` (build in Release). |
 
+The JavaScript tests run under Node.js, found on `PATH` or in an emsdk install (`EMSDK`, or `~/emsdk`); without Node
+they are not registered.
+
 ## CMake integration
 
 ```cmake
 gmp_generate(TARGET <name>
              SCHEMAS <file.yaml>...
              [OUT_DIR <dir>]          # default ${CMAKE_CURRENT_BINARY_DIR}/gmp_generated/<name>
-             [LANG <backend>]         # default cpp
+             [LANG <backend>]         # default cpp; c; js
              [C_RUNTIME header|library]  # LANG c: gmp::runtime_c (default) or gmp::runtime_c_lib
              [GENERATOR <path>])      # default: the in-tree gmpc target
 ```
@@ -488,6 +556,9 @@ This creates a library `<name>` (INTERFACE for C++; STATIC for `LANG c`, built f
 - `gmp::runtime` (C++) or `gmp::runtime_c` (C; `gmp::runtime_c_lib` with `C_RUNTIME library`) linked in
 - a build dependency that regenerates whenever a schema or `gmpc` changes
 
+With `LANG js` it is a custom target instead: the `.gmp.js` modules and a copy of `runtime-js/gmsg.js` in `OUT_DIR`
+(target property `GMP_GENERATED_DIR`), regenerated when a schema or `gmpc` changes.
+
 If your custom codec headers live elsewhere, add their directory with
 `target_include_directories(<name> INTERFACE ...)`.
 
@@ -495,11 +566,12 @@ If your custom codec headers live elsewhere, add their directory with
 
 ```
 gmpc [options] schema.yaml...
-  --lang NAME        output language backend: cpp (default) or c (C99 or later, see C output)
+  --lang NAME        output language backend: cpp (default), c (C99 or later, see C output) or js (JavaScript)
   --out DIR          output directory (default: current directory)
   --check            validate schemas only, write nothing
   --stdout           print generated code instead of writing files
-  --opt KEY=VALUE    backend specific option (c: prefix=NAME_ sets the C name prefix)
+  --opt KEY=VALUE    backend specific option (c: prefix=NAME_ sets the C name prefix;
+                     js: runtime=MODULE_ID, global=NAME)
   --list-backends    list available backends
   -h, --help         show help
 ```

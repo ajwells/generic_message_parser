@@ -4,7 +4,7 @@ A local web app for building GMP YAML schemas visually.
 
 - **Left pane:** every schema option. This covers settings and defaults, messages and their fields (including bit
   fields), protocols (header, framing, checksum, message_type, carried messages), enums, and custom extensions
-  (with a C++ binding and a C binding each: the `cpp:` and `c:` blocks).
+  (with a C++, a C and a JavaScript binding each: the `cpp:`, `c:` and `js:` blocks).
   **Hover any option** for a tooltip: what it does, the YAML key it writes, and for drop-downs what each choice means.
 - **Right pane:** a vertical, size-proportional picture of each message and protocol frame. It shows byte offsets, bit
   layouts, nested messages, conditional and variable-length fields, plus side bars marking checksum and length-field
@@ -13,11 +13,13 @@ A local web app for building GMP YAML schemas visually.
 - **Issues bar:** live validation that mirrors `gmpc`'s rules. Click an issue to jump to it.
 - **Decode tester:** paste raw bytes (hex) or text and see them decoded live against the schema, like a regex
   tester for messages (see below).
+- **Code tab:** the C++, C and JavaScript that gmpc generates for the current schema, with Copy and Download. It runs
+  gmpc compiled to WebAssembly (`gmpc/gmpc.js`), so it is the real generator's output.
 
 - **Guide** (`guide.html`, the Guide button in the top bar): a visual tour of every GMP feature. Each example is a
   real schema shown as YAML, laid out as Studio cards and decoded with the decode tester. **Open in Studio** loads it
   into the editor (after asking, because it replaces the current schema). The **C++ / C** switch in its top bar
-  changes the code samples, API names and error names to the chosen language (remembered; `guide.html?lang=c` also
+  (and JavaScript) changes the code samples, API names and error names to the chosen language (remembered; `guide.html?lang=c` also
   works); schemas and decoded examples are the same for both. Its **API reference** section lists every generated
   and runtime function grouped by task (decode, views, field access, encode, text, enums and bit groups, protocols,
   streaming, pull API, printing, sizes, errors, checksums), with a filter box and jump links.
@@ -42,7 +44,15 @@ A local web app for building GMP YAML schemas visually.
      - extra `conversions` next to the scaled value (e.g. `25 degC · 77 degF`)
      - the byte range of each field
    - Hovering a field highlights its bytes, and hovering a byte highlights its field.
-4. **View** switches the right column between the field table (**Fields**) and the text `gmp::print` produces for
+4. **Engine** picks what decodes:
+   - **Quick** (default): `js/decoder.js` interprets the schema as you edit it, on the shared JavaScript runtime
+     (`runtime-js/gmsg.js`). It works on incomplete schemas.
+   - **gmpc**: gmpc compiled to WebAssembly (`gmpc/gmpc.js`, about 2 MB, loaded on first use) generates JavaScript
+     for the schema (`gmpc --lang js`), and that code decodes the input on the same runtime: exactly what an
+     application using the generated code gets. It needs a schema gmpc accepts; its diagnostics join the Issues bar.
+     The Quick engine runs too, and a warning lists any frame where the two disagree. Custom codecs do not run in
+     either engine.
+5. **View** switches the right column between the field table (**Fields**) and the text `gmp::print` produces for
    each decoded message (**Print**, or **One line** for `PrintStyle::single_line`). `js/print.js` mirrors the C++
    printer, so the text matches what the generated code logs. Frames that fail to decode have nothing to print.
 
@@ -79,9 +89,11 @@ them.
 |------|------|
 | `js/state.js` | data model, constructors, example schema, persistence, byte-pattern helpers |
 | `js/layout.js` | size / offset computation (mirrors `generator/src/ir/lowering.cpp`) |
-| `js/decoder.js` | DOM-free decoder: framers, escaping, checksums, message_type, binary + text fields (mirrors `runtime/include/gmp`) |
+| `js/decoder.js` | the Quick engine: interprets the schema (fields, lengths, conditions, message_type) on `runtime-js/gmsg.js`, which provides framers, escaping, checksums and number text |
+| `js/exact.js` | the gmpc engine: loads `gmpc/gmpc.js`, generates JavaScript for the schema, decodes with it and builds the same result tree; gmpc diagnostics; the Code tab's output |
+| `gmpc/` | `gmpc.js` (gmpc compiled to WebAssembly, committed), `gmpc-info.js`, `gmpc.stamp`; `build.py` rebuilds them with emsdk, `build.py --check` tests that they match the generator sources |
 | `js/decode-view.js` | decode tester tab rendering |
-| `js/print.js` | mirror of `gmp::print` (the decode tester's Print / One line view and the guide demos) |
+| `js/print.js` | walks a decoded frame like the generated `print_to` (on `gmsg.Printer`): the Print / One line view and the guide demos |
 | `js/validate.js` | client-side diagnostics |
 | `js/yaml.js` | YAML emitter (no dependency) and importer (js-yaml) |
 | `js/editor.js` | left pane rendering |

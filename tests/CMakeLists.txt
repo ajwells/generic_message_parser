@@ -30,10 +30,16 @@ endfunction()
 set(GMP_C_WARNINGS $<$<C_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow
         -Wstrict-prototypes -Wmissing-prototypes -Werror>)
 
+# Node.js for the JavaScript tests: PATH, or the copy that comes with emsdk (EMSDK, or ~/emsdk).
+file(GLOB _gmp_emsdk_node_dirs "$ENV{EMSDK}/node/*" "$ENV{USERPROFILE}/emsdk/node/*" "$ENV{HOME}/emsdk/node/*")
+find_program(GMP_NODE NAMES node PATHS ${_gmp_emsdk_node_dirs} PATH_SUFFIXES bin)
+
 add_subdirectory(runtime)
 add_subdirectory(runtime_c)
+add_subdirectory(runtime_js)
 if (GMP_BUILD_GENERATOR)
     add_subdirectory(generator)
     add_subdirectory(roundtrip)
     add_subdirectory(roundtrip_c)
+    add_subdirectory(roundtrip_js)
 endif ()
