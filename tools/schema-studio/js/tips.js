@@ -45,7 +45,7 @@
     'enum.values.value': { t: 'Value', k: 'values.<name>: <n>', d: 'Number stored on the wire for this enumerator (decimal or 0x hex).' },
 
     // ---------------------------------------------------------------- custom extensions
-    'customType.name': { t: 'Custom type name', k: 'custom.types.<name>', d: 'Use this name as a field type; your C++ functions decode and encode it.' },
+    'customType.name': { t: 'Custom type name', k: 'custom.types.<name>', d: 'Use this name as a field type; your own functions (C++ and / or C) decode and encode it.' },
     'customType.wire_size': { t: 'Wire size', k: 'wire_size', d: 'Bytes on the wire if the size is fixed. Leave empty for variable size.' },
     'customType.max_wire_size': { t: 'Max wire size', k: 'max_wire_size', d: 'Upper bound for variable-size custom types, so frame sizes stay bounded.' },
     'customType.header': { t: 'Header', k: 'cpp.header', d: 'C++ header to #include that declares the type and functions.' },
@@ -59,6 +59,15 @@
     'customFramer.name': { t: 'Framer name', k: 'custom.framers.<name>', d: 'Select it with framing type "custom".' },
     'customFramer.header': { t: 'Header', k: 'cpp.header', d: 'C++ header declaring the framer.' },
     'customFramer.type': { t: 'C++ type', k: 'cpp.type', d: 'A type with static gmp::FrameScan scan(gmp::bytes_view): says where the next frame starts and ends.' },
+    'customType.lang.c.header': { t: 'C header', k: 'c.header', d: 'C header to #include that declares the type and functions (C output only: gmpc --lang c).' },
+    'customType.lang.c.type': { t: 'C type', k: 'c.type', d: 'The C value type stored in structs, e.g. my_time (a typedef). A standard scalar type such as double prints like a number.' },
+    'customType.lang.c.decode': { t: 'C decode function', k: 'c.decode', d: 'gmsg_error fn(gmsg_reader*, T*) for binary, or gmsg_error fn(const char*, size_t, T*) for text. The signature is checked at compile time.' },
+    'customType.lang.c.encode': { t: 'C encode function', k: 'c.encode', d: 'gmsg_error fn(gmsg_writer*, const T*) (binary) or gmsg_error fn(gmsg_text_writer*, const T*) (text). Needed when structs are generated.' },
+    'customType.lang.c.print': { t: 'C print function', k: 'c.print', d: 'Optional: void fn(gmsg_printer*, const T*), used by the generated _print functions (write with gmsg_print_text). Without it the value prints as <?>.' },
+    'customChecksum.lang.c.header': { t: 'C header', k: 'c.header', d: 'C header declaring the function (C output only).' },
+    'customChecksum.lang.c.function': { t: 'C function', k: 'c.function', d: 'An unsigned integer fn(const uint8_t* data, size_t size) returning the checksum of the covered bytes (uint8_t ... uint64_t).' },
+    'customFramer.lang.c.header': { t: 'C header', k: 'c.header', d: 'C header declaring the scan function (C output only).' },
+    'customFramer.lang.c.scan': { t: 'C scan function', k: 'c.scan', d: 'gmsg_frame_scan fn(const uint8_t* data, size_t size): says where the next frame starts and ends (gmsg_scan_frame / _need_more / _skip).' },
 
     // ---------------------------------------------------------------- messages
     'message.name': { t: 'Message name', k: 'messages.<Name>', d: 'Generates struct <Name>, view <Name>View and decode/encode functions. Also usable as a nested field type.' },
@@ -146,7 +155,7 @@
     'protocol.framing.syncMode': { t: 'Pattern format', k: '', d: 'Write the pattern as hex bytes (AA 55) or as text with escapes ($, \\r\\n).', v: { hex: 'Hex bytes, e.g. AA 55.', text: 'Characters, e.g. $ or \\r\\n.' } },
     'protocol.framing.endMode': { t: 'Pattern format', k: '', d: 'Write the pattern as hex bytes or as text.', v: { hex: 'Hex bytes, e.g. 0D 0A.', text: 'Characters, e.g. \\r\\n.' } },
     'protocol.framing.sync': { t: 'Sync / start', k: 'framing.sync / start', d: 'Bytes at the start of every frame (up to 8). After garbage the parser skips ahead to the next match (BadSync).' },
-    'protocol.framing.end': { t: 'End delimiter', k: 'framing.end', d: 'Bytes that end every frame. When start and end are equal (HDLC 0x7E) one flag can close a frame and open the next.' },
+    'protocol.framing.end': { t: 'End delimiter', k: 'framing.end', d: 'Bytes that end every frame: required for delimited framing, optional after fixed and length-prefixed frames (never escaped). When start and end are equal (HDLC 0x7E) one flag can close a frame and open the next.' },
     'protocol.framing.size': { t: 'Frame size', k: 'framing.size', d: 'Total bytes per frame, before escaping. Empty = derived when all messages have the same fixed size. Shorter bodies are zero padded.' },
     'protocol.framing.lengthField': { t: 'Length field', k: 'framing.length.field', d: 'Header field (unsigned integer) holding the size. Filled in automatically on encode.' },
     'protocol.framing.covers': {
@@ -198,9 +207,9 @@
     addProtocol: 'Add a protocol: framing, header, checksum and the messages it carries.',
     addMessage: 'Add a message: a named list of fields.',
     addEnum: 'Add an enum: named integer values usable as field types.',
-    addCustomType: 'Add a custom field type decoded by your own C++ functions.',
-    addCustomChecksum: 'Add a checksum implemented by your own C++ function.',
-    addCustomFramer: 'Add a framer implemented in C++, for framing GMP does not describe.',
+    addCustomType: 'Add a custom field type decoded by your own C++ or C functions.',
+    addCustomChecksum: 'Add a checksum implemented by your own C++ or C function.',
+    addCustomFramer: 'Add a framer implemented in your own code (C++ or C), for framing GMP does not describe.',
     addField: 'Add a field at the end of the list.',
     addBit: 'Add a bit field (or padding bits) to this group.',
     addConversion: 'Add another unit conversion for this field, e.g. °F next to °C.',
@@ -218,7 +227,7 @@
     protocol: 'A protocol: how frames are found and which message each frame carries.',
     message: 'A message: its fields define the byte layout.',
     enum: 'An enum: named integer values.',
-    custom: 'A custom extension implemented in your C++ code.',
+    custom: 'A custom extension implemented in your own C++ or C code.',
   };
 
   /** messages.3.fields.0.scale -> field.scale, protocols.0.framing.type -> protocol.framing.type, … */

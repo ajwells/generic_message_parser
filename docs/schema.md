@@ -172,8 +172,8 @@ protocols:
 | `type` | keys | description |
 |--------|------|-------------|
 | `none` | | The whole buffer is one frame (datagrams, CAN payloads). No stream parser. |
-| `fixed` | `sync`, `size`, `escape` | Fixed-size frames, optionally starting with a sync pattern. Without `size`, all messages must share one fixed size. Shorter messages are zero padded. |
-| `length_prefixed` | `sync`, `length: { field, covers, adjust, counts }`, `escape` | The size comes from a header field. `covers`: `body` (default), `body_checksum` (body and checksum), `header_body` or `all` (prefix through checksum). Covered length = value + `adjust`. |
+| `fixed` | `sync`, `size`, `end`, `escape` | Fixed-size frames, optionally starting with a sync pattern and ending with an `end` pattern (never escaped). Without `size`, all messages must share one fixed size. Shorter messages are zero padded. |
+| `length_prefixed` | `sync`, `length: { field, covers, adjust, counts }`, `end`, `escape` | The size comes from a header field. `covers`: `body` (default), `body_checksum` (body and checksum), `header_body` or `all` (prefix through checksum). Covered length = value + `adjust`. |
 | `delimited` | `start`, `end`, `escape` | Bounded by delimiters (`start` is optional). Identical start and end bytes (HDLC `0x7E`) may share a flag between frames. |
 | `custom` | `framer` | User type from `custom.framers` providing `static gmp::FrameScan scan(gmp::bytes_view)`. |
 
@@ -251,7 +251,7 @@ uppercase hex (NMEA style).
 
 ## custom extensions
 
-Language-specific settings live in a block named after the backend (`cpp:`), so other backends can add theirs later.
+Language-specific settings live in a block named after the backend (`cpp:`, `c:`).
 
 ```yaml
 custom:
@@ -291,3 +291,27 @@ A `FrameScan` is one of three results:
 
 `consume_on_error` controls resynchronisation after a corrupt frame. Use 1 to rescan from the next byte, or `size` to
 drop the whole frame.
+
+For the C backend (`--lang c`) add a `c:` block with C names. It is needed only for the custom items that the C
+output uses, so a schema written for C++ still generates C until it uses them:
+
+```yaml
+    bcd_time:
+      wire_size: 3
+      c: { header: "my_codecs.h", type: "my_time", decode: "my_time_decode", encode: "my_time_encode", print: "my_time_print" }
+    add16: { size: 2, c: { header: "my_codecs.h", function: "my_add16" } }
+    len_byte: { c: { header: "my_codecs.h", scan: "my_len_byte_scan" } }
+```
+
+| extension (C) | signature |
+|---------------|-----------|
+| binary decoder | `gmsg_error decode(gmsg_reader* r, T* out)` |
+| binary encoder | `gmsg_error encode(gmsg_writer* w, const T* v)` |
+| text decoder | `gmsg_error decode(const char* s, size_t n, T* out)` (the token, not NUL terminated) |
+| text encoder | `gmsg_error encode(gmsg_text_writer* w, const T* v)`: write the token content with `gmsg_text_raw(w, s, n)`; the separator is already written |
+| checksum | `<uint8_t / uint16_t / uint32_t / uint64_t> fn(const uint8_t* data, size_t n)` |
+| framer | `gmsg_frame_scan scan(const uint8_t* buf, size_t n)` (key `scan`, not `type`) |
+| printing (optional) | `void print(gmsg_printer* p, const T* v)` (key `print`), used by the generated `_print` functions; write with `gmsg_print_text(p, s, n)`. Without it a value whose C type is a standard scalar (`double`, `uint16_t`, ...) prints as that number, anything else as `<?>` |
+
+The generated `.c` file checks these with `_Static_assert` + `_Generic`. On a view, a custom field's accessor decodes
+on demand: `gmsg_error <view>_<field>(const view*, T* out)`.

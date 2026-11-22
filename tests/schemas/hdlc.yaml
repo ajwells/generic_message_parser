@@ -7,10 +7,12 @@ custom:
     bcd_time:
       wire_size: 3
       cpp: { header: "test_codecs.hpp", type: "test::Time", decode: "test::decode_bcd_time", encode: "test::encode_bcd_time" }
+      c: { header: "test_codecs_c.h", type: "test_time", decode: "test_bcd_time_decode", encode: "test_bcd_time_encode", print: "test_time_print" }
   checksums:
     add16:
       size: 2
       cpp: { header: "test_codecs.hpp", function: "test::add16" }
+      c: { header: "test_codecs_c.h", function: "test_add16" }
 
 messages:
   Reading:

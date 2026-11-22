@@ -2,13 +2,40 @@
 #              SCHEMAS <file.yaml>...
 #              [OUT_DIR <dir>]          # default: ${CMAKE_CURRENT_BINARY_DIR}/gmp_generated/<name>
 #              [LANG <backend>]         # default: cpp
+#              [C_RUNTIME header|library]  # LANG c: link gmp::runtime_c (header-only, default) or
+#                                          # gmp::runtime_c_lib (compiled library, CRC tables)
 #              [GENERATOR <exe>])       # default: the in-tree gmpc target
 #
-# Creates an INTERFACE library <name> exposing the generated headers (<schema-stem>.gmp.hpp) and
-# linking gmp::runtime. Code is regenerated whenever a schema or the generator changes.
+# Creates a library <name> exposing the generated code and linking the language's GMP runtime.
+# Code is regenerated whenever a schema or the generator changes.
+#
+# Languages whose output is headers only (cpp: <schema-stem>.gmp.hpp) give an INTERFACE library;
+# languages that also emit source files get a STATIC library built from them.
+
+# Output layout and runtime target of each backend. Add a branch here when a backend is added to
+# generator/src/backend/registry.cpp; the file names must match what the backend writes.
+#   _GMP_HEADERS / _GMP_SOURCES: file name suffixes appended to the schema stem
+#   _GMP_RUNTIME: runtime library target to link
+function(_gmp_language_layout lang)
+    if (lang STREQUAL "cpp")
+        set(headers ".gmp.hpp")
+        set(sources "")
+        set(runtime gmp::runtime)
+    elseif (lang STREQUAL "c")
+        # C99 or later: <stem>.gmp.h + <stem>.gmp.c, using runtime-c (gmp/c/runtime.h)
+        set(headers ".gmp.h")
+        set(sources ".gmp.c")
+        set(runtime gmp::runtime_c)
+    else ()
+        message(FATAL_ERROR "gmp_generate: unsupported LANG '${lang}' (known: cpp, c)")
+    endif ()
+    set(_GMP_HEADERS "${headers}" PARENT_SCOPE)
+    set(_GMP_SOURCES "${sources}" PARENT_SCOPE)
+    set(_GMP_RUNTIME "${runtime}" PARENT_SCOPE)
+endfunction()
 
 function(gmp_generate)
-    cmake_parse_arguments(GMP "" "TARGET;OUT_DIR;LANG;GENERATOR" "SCHEMAS" ${ARGN})
+    cmake_parse_arguments(GMP "" "TARGET;OUT_DIR;LANG;GENERATOR;C_RUNTIME" "SCHEMAS" ${ARGN})
     if (NOT GMP_TARGET)
         message(FATAL_ERROR "gmp_generate: TARGET is required")
     endif ()
@@ -28,25 +55,54 @@ function(gmp_generate)
         set(GMP_GENERATOR $<TARGET_FILE:gmpc>)
         set(GMP_GENERATOR_DEP gmpc)
     endif ()
+    _gmp_language_layout(${GMP_LANG})
+    if (GMP_C_RUNTIME)
+        if (NOT GMP_LANG STREQUAL "c")
+            message(FATAL_ERROR "gmp_generate: C_RUNTIME is only for LANG c")
+        elseif (GMP_C_RUNTIME STREQUAL "library")
+            if (NOT TARGET gmp::runtime_c_lib)
+                message(FATAL_ERROR "gmp_generate: C_RUNTIME library needs gmp::runtime_c_lib (enable the C language "
+                        "before adding GMP)")
+            endif ()
+            set(_GMP_RUNTIME gmp::runtime_c_lib)
+        elseif (NOT GMP_C_RUNTIME STREQUAL "header")
+            message(FATAL_ERROR "gmp_generate: C_RUNTIME must be header or library, not '${GMP_C_RUNTIME}'")
+        endif ()
+    endif ()
 
-    set(outputs)
+    set(headers)
+    set(sources)
     foreach (schema IN LISTS GMP_SCHEMAS)
         get_filename_component(abs "${schema}" ABSOLUTE)
         get_filename_component(stem "${schema}" NAME_WE)
-        set(out "${GMP_OUT_DIR}/${stem}.gmp.hpp")
+        set(schema_outputs)
+        foreach (suffix IN LISTS _GMP_HEADERS)
+            list(APPEND schema_outputs "${GMP_OUT_DIR}/${stem}${suffix}")
+            list(APPEND headers "${GMP_OUT_DIR}/${stem}${suffix}")
+        endforeach ()
+        foreach (suffix IN LISTS _GMP_SOURCES)
+            list(APPEND schema_outputs "${GMP_OUT_DIR}/${stem}${suffix}")
+            list(APPEND sources "${GMP_OUT_DIR}/${stem}${suffix}")
+        endforeach ()
         add_custom_command(
-                OUTPUT "${out}"
+                OUTPUT ${schema_outputs}
                 COMMAND ${GMP_GENERATOR} --lang ${GMP_LANG} --out "${GMP_OUT_DIR}" "${abs}"
                 DEPENDS "${abs}" ${GMP_GENERATOR_DEP}
-                COMMENT "gmpc: generating ${stem}.gmp.hpp"
+                COMMENT "gmpc (${GMP_LANG}): generating code for ${stem}"
                 VERBATIM)
-        list(APPEND outputs "${out}")
     endforeach ()
 
-    add_custom_target(${GMP_TARGET}_codegen DEPENDS ${outputs})
-    add_library(${GMP_TARGET} INTERFACE)
+    add_custom_target(${GMP_TARGET}_codegen DEPENDS ${headers} ${sources})
+    if (sources)
+        add_library(${GMP_TARGET} STATIC ${sources})
+        set(scope PUBLIC)
+    else ()
+        add_library(${GMP_TARGET} INTERFACE)
+        set(scope INTERFACE)
+    endif ()
     add_dependencies(${GMP_TARGET} ${GMP_TARGET}_codegen)
-    target_include_directories(${GMP_TARGET} INTERFACE "${GMP_OUT_DIR}")
-    target_link_libraries(${GMP_TARGET} INTERFACE gmp::runtime)
-    set_property(TARGET ${GMP_TARGET} PROPERTY GMP_GENERATED_HEADERS "${outputs}")
+    target_include_directories(${GMP_TARGET} ${scope} "${GMP_OUT_DIR}")
+    target_link_libraries(${GMP_TARGET} ${scope} ${_GMP_RUNTIME})
+    set_property(TARGET ${GMP_TARGET} PROPERTY GMP_GENERATED_HEADERS "${headers}")
+    set_property(TARGET ${GMP_TARGET} PROPERTY GMP_GENERATED_SOURCES "${sources}")
 endfunction()

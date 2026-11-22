@@ -1,9 +1,10 @@
 # generic_message_parser (GMP)
 
-Describe a wire protocol in YAML and get efficient C++ decode/encode code. GMP is like protobuf, but the schema
+Describe a wire protocol in YAML and get efficient C++ (or C) decode/encode code. GMP is like protobuf, but the schema
 describes **existing** protocols: binary or ASCII, any framing, any bit layout. It does not impose its own format.
 
-- **Generator** `gmpc`: YAML → language-neutral IR → backend (C++ today, more can be added).
+- **Generator** `gmpc`: YAML → language-neutral IR → backend: C++23 (default) or C99 / C11 (`--lang c`, see
+  [C output](#c-output)); more can be added.
 - **Runtime** `gmp::runtime`: header-only and standard-library only. No heap, no exceptions, no RTTI.
 - **Two input modes**: whole buffer per message (`Proto::parse(buf)`) or streaming
   (`Proto::Stream<>::feed(chunk, handler)`) with resync on garbage.
@@ -21,7 +22,7 @@ describes **existing** protocols: binary or ASCII, any framing, any bit layout. 
   - [bit fields](#bit-fields) · [lengths and counts](#lengths-and-counts) · [expressions](#expressions)
   - [text messages](#text-messages) · [protocols](#protocols) · [framing](#framing) · [checksum](#checksum)
   - [message_type](#message_type) · [custom extensions](#custom-extensions)
-- [Generated C++ API](#generated-c-api) · [Streaming](#streaming) · [Printing](#printing) · [Errors](#errors)
+- [Generated C++ API](#generated-c-api) · [Streaming](#streaming) · [Printing](#printing) · [Errors](#errors) · [C output](#c-output)
 - [Building](#building) · [CMake integration](#cmake-integration) · [gmpc command line](#gmpc-command-line)
 - [Project layout](#project-layout) · [Adding a language backend](#adding-a-language-backend)
 
@@ -80,7 +81,8 @@ stream.feed(chunk, gmp::overloaded{
 Working programs are in [examples/](examples): `binary_telemetry`, `nmea_text`, `bitpacked_can`, `custom_codec`,
 `sensirion_sht4x` (an I²C humidity sensor with per-word CRCs, built from its datasheet; `sht4x.yaml` has one message per
 command, `sht4x_enum.yaml` has the commands as an enum) and `reserved_sync` (a serial link where `0x80` is reserved as the
-sync byte, escaped as `81 00` / `81 01` everywhere else).
+sync byte, escaped as `81 00` / `81 01` everywhere else). `binary_telemetry`, `nmea_text` and `custom_codec` also
+have a C version (`main.c`, see [C output](#c-output)).
 
 **Prefer a visual editor?** Open [`tools/schema-studio/index.html`](tools/schema-studio) in a browser. You build
 schemas with forms on the left and see a size-proportional layout of every message and frame on the right, then
@@ -469,8 +471,8 @@ a protocol; `gmpc` reports such a clash.
 | `type` | keys | how frames are found |
 |--------|------|----------------------|
 | `none` | | The whole buffer is one frame. Use it for datagrams, CAN payloads, or anything already split by a lower layer. Whole-buffer mode only; there is no stream parser. |
-| `fixed` | `sync`, `size`, `escape` | Every frame is `size` bytes, optionally starting with a `sync` pattern. Without `size`, every message must have the same fixed size and the frame size is derived. Bodies shorter than the frame are zero padded on encode. Without `sync` the parser cannot resynchronise, so a bad frame is dropped whole. |
-| `length_prefixed` | `sync`, `length`, `escape` | A header field gives the size. `length.field` names the header field (unsigned integer). `length.covers` says what the value measures: `body` (default), `body_checksum` (body and checksum), `header_body`, or `all` (prefix through checksum). `length.adjust` is added to the value: covered size = value + adjust. With `escape`, `length.counts: wire` makes the value the body size on the wire (see below). On encode the field is filled in automatically. |
+| `fixed` | `sync`, `size`, `end`, `escape` | Every frame is `size` bytes, optionally starting with a `sync` pattern and ending with an `end` pattern (not escaped). Without `size`, every message must have the same fixed size and the frame size is derived. Bodies shorter than the frame are zero padded on encode. Without `sync` the parser cannot resynchronise, so a bad frame is dropped whole. |
+| `length_prefixed` | `sync`, `length`, `end`, `escape` | A header field gives the size; an optional `end` pattern follows the frame (not escaped). `length.field` names the header field (unsigned integer). `length.covers` says what the value measures: `body` (default), `body_checksum` (body and checksum), `header_body`, or `all` (prefix through checksum). `length.adjust` is added to the value: covered size = value + adjust. With `escape`, `length.counts: wire` makes the value the body size on the wire (see below). On encode the field is filled in automatically. |
 | `delimited` | `start`, `end`, `escape` | Frames bounded by delimiters. `start` is optional (without it, frames are separated by `end` only, like lines); `end` is required. If a new `start` appears before `end`, the partial frame is dropped (`BadDelimiter`). When `start` and `end` are the same (HDLC `0x7E`), one flag may close a frame and open the next. |
 | `custom` | `framer` | A user framer from `custom.framers` decides frame boundaries. |
 
@@ -631,6 +633,30 @@ A framer's `scan` receives the unconsumed bytes at the current stream position a
   drop after a good frame. `consume_on_error` is how much to drop if validation fails: 1 to rescan from the next byte,
   `size` to drop the whole frame.
 - `FrameScan::skip(n, error)`: drop `n` garbage bytes, reporting `error` (or `Error::None` to skip silently).
+
+For the C backend (`--lang c`) add a `c:` block with C names. It is needed only for the custom items that the C
+output uses, so a schema written for C++ still generates C until it uses them:
+
+```yaml
+    bcd_time:
+      wire_size: 3
+      c: { header: "my_codecs.h", type: "my_time", decode: "my_time_decode", encode: "my_time_encode", print: "my_time_print" }
+    add16: { size: 2, c: { header: "my_codecs.h", function: "my_add16" } }
+    len_byte: { c: { header: "my_codecs.h", scan: "my_len_byte_scan" } }
+```
+
+| extension (C) | signature |
+|---------------|-----------|
+| binary decoder | `gmsg_error decode(gmsg_reader* r, T* out)` |
+| binary encoder | `gmsg_error encode(gmsg_writer* w, const T* v)` |
+| text decoder | `gmsg_error decode(const char* s, size_t n, T* out)` (the token, not NUL terminated) |
+| text encoder | `gmsg_error encode(gmsg_text_writer* w, const T* v)`: write the token content with `gmsg_text_raw(w, s, n)`; the separator is already written |
+| checksum | `<uint8_t / uint16_t / uint32_t / uint64_t> fn(const uint8_t* data, size_t n)` |
+| framer | `gmsg_frame_scan scan(const uint8_t* buf, size_t n)` (key `scan`, not `type`) |
+| printing (optional) | `void print(gmsg_printer* p, const T* v)` (key `print`), used by the generated `_print` functions; write with `gmsg_print_text(p, s, n)`. Without it a value whose C type is a standard scalar (`double`, `uint16_t`, ...) prints as that number, anything else as `<?>` |
+
+The generated `.c` file checks these with `_Static_assert` + `_Generic`. On a view, a custom field's accessor decodes
+on demand: `gmsg_error <view>_<field>(const view*, T* out)`.
 
 ---
 
@@ -926,6 +952,162 @@ readable name.
 | `UnknownEnum` | A field of a `strict` enum holds a value that is not declared (on decode, or in a struct being encoded). |
 | `InvalidValue`, `Custom` | For use by custom codecs. |
 
+## C output
+
+`gmpc --lang c` (or `gmp_generate(... LANG c)`) writes `<schema>.gmp.h` and `<schema>.gmp.c` for C99 or later, using
+the C runtime in `runtime-c/` (header-only, or a compiled library: see [C runtime](#c-runtime-header-only-or-library)).
+The generated header also compiles as C++. C programs using the same schemas as the C++ examples are `main.c` in
+[examples/binary_telemetry](examples/binary_telemetry) (stream + callbacks), [examples/nmea_text](examples/nmea_text)
+(push + `_poll_event`) and [examples/custom_codec](examples/custom_codec) (`c:` codecs and a print hook).
+
+Everything the C++ backend generates is generated for C:
+- binary messages: structs and views, with bits, `const`, `pad`, `when`, bytes/strings/arrays, nested messages,
+  field `crc:`, `scale`/`conversions` and `computed:`
+- text messages: tokens with `optional`, `width`, `precision`, `base`; views parse fields on demand
+- protocols: every framing (`none`, `fixed`, `length_prefixed`, `delimited`, custom framers), byte stuffing, frame
+  checksums (also `over: wire`, custom checksums, NMEA-style text checksums), whole-buffer parse / decode / encode,
+  callbacks, a stream parser and the pull API
+- printing: `_print` for every struct, view, bits group and protocol `_any_view` / `_any_message`, with the same text
+  as `gmp::print`
+
+Custom types, checksums and framers use `c:` blocks (see [custom extensions](#custom-extensions)). The C output is
+checked against the C++ output on valid, corrupted and noisy input, including streams fed in chunks of every size,
+and its print text is compared with `gmp::print` for every decoded message.
+
+C99 and C11 compile the same generated code. With C11 the `.gmp.c` also checks the signatures of the functions
+named in `c:` blocks (`_Static_assert` + `_Generic`, behind `#if GMSG_C11`), which gives a clear message on a
+mismatch; C99 builds skip that check, and the compiler still checks every call.
+
+### C runtime: header-only or library
+
+| | CMake target | what you get |
+| --- | --- | --- |
+| header-only (default) | `gmp::runtime_c` | every runtime function is `static inline` in `runtime-c/include/gmp/c/`; nothing to compile; CRC presets bit by bit |
+| library | `gmp::runtime_c_lib` | checksums, framing, stream, text, float text and print are compiled once from `runtime-c/src/` (one `.c` per header, built as C99 with one section per function); the headers only declare them; CRC presets use 256-entry lookup tables |
+
+```cmake
+gmp_generate(TARGET link_msgs LANG c C_RUNTIME library SCHEMAS link.yaml)   # links gmp::runtime_c_lib
+target_compile_definitions(gmp_runtime_c_lib PUBLIC GMSG_USE_LIBC=0)       # options: PUBLIC, so both sides agree
+```
+
+The library is smaller when several files use the runtime (one copy of each function) and its CRC presets are 4 to 8
+times faster (x86, `-O2`), at 256 to 2048 bytes of constant data per table used. Small functions (endian, bits, byte
+reader / writer) stay inline in both builds. Every `GMSG_` option must have the same value for the library and its
+users; header-only and library code can still be mixed in one program, since the header-only copies are `static`.
+Without CMake, compile the files in `runtime-c/src/` with `-DGMSG_RUNTIME_LIBRARY=1` and define the same for your code.
+The lookup tables can also be used header-only with `GMSG_CRC_TABLES=1`, and turned off in the library with
+`GMSG_CRC_TABLES=0`. The tables are generated by `runtime-c/tools/crc_tables.py`.
+
+Names start with a prefix: the schema `namespace` with `::` replaced by `_` (`acme::telemetry` → `acme_telemetry_`),
+or the file name when there is no namespace, or `--opt prefix=...`. The runtime itself uses `gmsg_` / `GMSG_`.
+
+```c
+#include "telemetry.gmp.h"
+
+acme_telemetry_status s;
+gmsg_error e = acme_telemetry_status_decode(buf, len, &s);      /* GMSG_OK or GMSG_ERR_TRUNCATED, ... */
+if (e == GMSG_OK && s.has_ext) use(s.ext.pressure);
+for (size_t i = 0; i < s.samples_count; ++i) use(s.samples[i]);
+
+acme_telemetry_status_view v;                                    /* zero copy, points into buf */
+if (acme_telemetry_status_view_from(buf, len, &v) == GMSG_OK) {
+    double volts = acme_telemetry_status_view_voltage_scaled(&v);
+    gmsg_str label = acme_telemetry_status_view_label(&v);       /* { data, size }, not NUL terminated */
+}
+
+size_t n = 0;
+e = acme_telemetry_status_encode(&s, out, sizeof out, &n);      /* GMSG_ERR_BUFFER_FULL if it does not fit */
+```
+
+| schema | C |
+|--------|---|
+| message `Status` | `typedef struct acme_telemetry_status {...}`, `_read` / `_write` / `_decode` / `_encode`, macros `ACME_TELEMETRY_STATUS_MIN_WIRE_SIZE` / `_MAX_WIRE_SIZE` / `_WIRE_SIZE` |
+| view | `acme_telemetry_status_view`, `_view_from()` / `_view_unchecked()` / `_view_to_struct()`, one accessor function per field |
+| enum `Mode` | `typedef uint8_t acme_telemetry_mode;`, `ACME_TELEMETRY_MODE_FAULT`, `_to_string()` (NULL if unknown), `_is_known()` |
+| bits group `flags` | `acme_telemetry_status_flags` with `_pack()` / `_unpack()` / `_check()` / `_print()` |
+| variable bytes / string / array | fixed-capacity array plus its size. With a bare length field (`length: n`, `count: n`) that field is the size; otherwise (expression, `remaining`, terminator, fixed strings) a member `<field>_len` (bytes, strings) or `<field>_count` (arrays). Strings are NUL terminated after decode, and encode uses the size |
+| `when` field, `optional` text field | `bool has_<field>` in the struct, `_view_has_<field>()` on the view |
+| text message `GGA` | struct `nav_nmea_gga` with `_read_text` / `_write_text` / `_decode` / `_encode`; view accessors parse on demand: `gmsg_error nav_nmea_gga_view_latitude(&v, &out)` (`GMSG_ERR_MISSING_FIELD` for an empty token), `_view_token(&v, i)`, `_view_present_tokens(&v)`; strings as `gmsg_str` |
+| array on a view | `_view_<field>_count()` and `_view_<field>_at(i)` |
+| `scale` / `conversions` / `computed` | `_<field>_scaled()`, `_set_<field>_scaled()`, `_<name>()`, `_set_<name>()` |
+| protocol `BinaryLink` | `acme_telemetry_binary_link_parse()` / `_decode()` / `_process()` / `_encode_<message>()` / `_encode_<message>_with_header()` / `_encode()`, tagged unions `_any_view` / `_any_message` (`kind` = `ACME_TELEMETRY_BINARY_LINK_STATUS`, ...) with `_any_view_print()` / `_any_message_print()`, `_callbacks`, `_stream`, `ACME_TELEMETRY_BINARY_LINK_MAX_FRAME` |
+| print | `void acme_telemetry_status_print(const acme_telemetry_status* m, gmsg_printer* p)`, also `_view_print()`; see below |
+
+Protocols with byte stuffing take a non-const buffer in `_parse` / `_decode` / `_process`: frames are unescaped in
+place, as in C++.
+
+```c
+static void on_status(void* ctx, const acme_telemetry_binary_link_header_view* h, const acme_telemetry_status_view* v) {
+    struct app* a = ctx;                                         /* views are valid during the call only */
+    a->volts = acme_telemetry_status_view_voltage_scaled(v);
+}
+
+static uint8_t rx_buf[ACME_TELEMETRY_BINARY_LINK_MAX_FRAME];     /* any size >= MAX_FRAME */
+acme_telemetry_binary_link_stream rx;
+acme_telemetry_binary_link_stream_init(&rx, rx_buf, sizeof rx_buf);
+rx.cb.ctx = &app;
+rx.cb.on_status = on_status;                                     /* NULL slots are skipped; also on_frame, on_error */
+acme_telemetry_binary_link_stream_feed(&rx, bytes, n);           /* also _push / _next / _reset / _stats / _last_error */
+
+acme_telemetry_binary_link_process(datagram, len, &rx.cb);       /* one whole frame, same callbacks */
+size_t written = 0;
+acme_telemetry_binary_link_encode_status(&s, out, sizeof out, &written);  /* sync, header (id, length), body, CRC */
+```
+
+Pull API on the stream (as in C++; see [Pulling messages](#pulling-messages-poll)):
+
+```c
+acme_telemetry_binary_link_any_view v;
+acme_telemetry_binary_link_stream_push(&rx, bytes, n);
+while (acme_telemetry_binary_link_stream_poll(&rx, &v)) {        /* also _poll_frame / _poll_message / _poll_event */
+    if (v.kind == ACME_TELEMETRY_BINARY_LINK_STATUS) use(&v.as.status);
+}
+/* wait for a reply; other messages go to the callbacks meanwhile */
+if (acme_telemetry_binary_link_stream_poll_for(&rx, ACME_TELEMETRY_BINARY_LINK_COMMAND, &v)) handle(&v.as.command);
+```
+
+A polled view stays valid until the next call on that stream (`_stream_generation()` changes when it expires). The
+poll functions never call message callbacks (except `_poll_for` for other messages); errors go to `on_error`, except
+in `_poll_event`, which returns them.
+
+For each frame the message's callback runs first, then `on_frame` (every frame). Headerless protocols have no `h`
+parameter. The stream struct holds no pointer to itself, so it can live anywhere; its buffer is the caller's.
+
+Printing (`gmp/c/print.h`) gives the same text as [`gmp::print`](#printing), with the same options:
+
+```c
+gmsg_printer p;
+gmsg_printer_init_file(&p, stdout, NULL);                        /* FILE* (needs GMSG_USE_LIBC) */
+acme_telemetry_status_print(&s, &p);                             /* or _view_print(&v, &p), _any_view_print(...) */
+gmsg_printer_finish(&p, true, NULL);                             /* true: end with a newline */
+
+char line[256];
+gmsg_print_options o = gmsg_print_defaults();                    /* style, indent, max_items, max_bytes, precision */
+o.style = GMSG_PRINT_SINGLE_LINE;
+gmsg_printer_init_buffer(&p, line, sizeof line, &o);             /* always NUL terminated */
+acme_telemetry_status_view_print(&v, &p);
+size_t n = 0;
+gmsg_error e = gmsg_printer_finish(&p, false, &n);               /* GMSG_ERR_BUFFER_FULL when cut */
+
+gmsg_printer_init(&p, uart_write, &uart, NULL);                  /* bool uart_write(void* ctx, const char* s, size_t n) */
+```
+
+A view field that fails to parse prints `<error: parse error>` (C++: the same). Custom types print through the `print`
+function of their `c:` block. Floats use `GMSG_FLOAT_TEXT` (below); with `GMSG_FLOAT_TEXT_NONE` they print as `<float>`.
+
+Runtime options (define before including, or on the command line): `GMSG_USE_LIBC` (default 1; 0 needs no C library at
+all), `GMSG_FLOAT_TEXT`, `GMSG_RUNTIME_LIBRARY` and `GMSG_CRC_TABLES` (see [above](#c-runtime-header-only-or-library)),
+`GMSG_ASSERT`, `GMSG_API`. See `runtime-c/include/gmp/c/config.h`.
+
+Floats in text messages and print (`GMSG_FLOAT_TEXT`):
+- `GMSG_FLOAT_TEXT_BUILTIN` (default): exact conversions on a small fixed-size big integer (no heap, no `<math.h>`,
+  about 4 KB of stack). The text is the same as the C++ runtime (`std::to_chars` / `std::from_chars`): shortest
+  round trip, fixed with `precision`, or (print) a number of significant digits, rounded half to even; parsing is
+  strict and locale free.
+- `GMSG_FLOAT_TEXT_LIBC`: `snprintf` / `strtod`. Smaller, but may differ in the last digit and uses the C locale.
+- `GMSG_FLOAT_TEXT_NONE`: no float text; a schema with float fields in text messages fails to compile with a
+  message naming the schema.
+
 ---
 
 ## Building
@@ -953,12 +1135,13 @@ gmp_generate(TARGET <name>
              SCHEMAS <file.yaml>...
              [OUT_DIR <dir>]          # default ${CMAKE_CURRENT_BINARY_DIR}/gmp_generated/<name>
              [LANG <backend>]         # default cpp
+             [C_RUNTIME header|library]  # LANG c: gmp::runtime_c (default) or gmp::runtime_c_lib
              [GENERATOR <path>])      # default: the in-tree gmpc target
 ```
 
-This creates an INTERFACE library `<name>` with:
+This creates a library `<name>` (INTERFACE for C++; STATIC for `LANG c`, built from the generated `.c` files) with:
 - the generated headers on its include path
-- `gmp::runtime` linked in
+- `gmp::runtime` (C++) or `gmp::runtime_c` (C; `gmp::runtime_c_lib` with `C_RUNTIME library`) linked in
 - a build dependency that regenerates whenever a schema or `gmpc` changes
 
 If your custom codec headers live elsewhere, add their directory with
@@ -968,11 +1151,11 @@ If your custom codec headers live elsewhere, add their directory with
 
 ```
 gmpc [options] schema.yaml...
-  --lang NAME        output language backend (default: cpp)
+  --lang NAME        output language backend: cpp (default) or c (C99 or later, see C output)
   --out DIR          output directory (default: current directory)
   --check            validate schemas only, write nothing
   --stdout           print generated code instead of writing files
-  --opt KEY=VALUE    backend specific option (passed through to the backend)
+  --opt KEY=VALUE    backend specific option (c: prefix=NAME_ sets the C name prefix)
   --list-backends    list available backends
   -h, --help         show help
 ```
@@ -984,9 +1167,11 @@ gmpc [options] schema.yaml...
 
 ```
 runtime/include/gmp/     header-only runtime: framing, stream parser, checksums, bit/byte codecs, text, containers, print
+runtime-c/include/gmp/c/ C runtime for the C backend: endian, bits, byte reader/writer, checksums, framing, stream, text, print
+runtime-c/src/           the C runtime's library build (gmp::runtime_c_lib); runtime-c/tools/crc_tables.py
 generator/src/           schema loader, expression parser, IR + lowering, validator, backends
 cmake/GmpGenerate.cmake  gmp_generate() build integration
-tests/                   runtime unit tests, generator golden + diagnostics tests, round-trip tests
+tests/                   runtime unit tests (C++ and C), generator golden + diagnostics tests, round-trip tests
 examples/  bench/  docs/
 ```
 
@@ -1013,10 +1198,16 @@ refresh the bundled references.
 ## Adding a language backend
 
 1. Implement `gmpc::Backend` (`generator/src/backend/backend.hpp`). It consumes the lowered `ir::Schema`, in which
-   types are resolved, layouts and offsets computed, and expressions parsed into trees.
+   types are resolved, layouts and offsets computed, and expressions parsed into trees. Schema rules that hold for
+   every language are checked in lowering; the backend reports only language-specific problems (e.g. names its
+   output reserves) to the `Diagnostics` it is given.
 2. Register the backend in `backend/registry.cpp`.
-3. Put language-specific schema settings in a block named after the backend inside `custom` entries
+3. Add its output file suffixes and runtime target to `_gmp_language_layout` in `cmake/GmpGenerate.cmake`. Header-only
+   output gives an INTERFACE library; output with source files gives a STATIC library.
+4. Put language-specific schema settings in a block named after the backend inside `custom` entries
    (e.g. `py: {...}`).
+5. Add a `check_goldens("<name>")` test case to `tests/generator/test_golden.cpp`. Goldens live in
+   `tests/generator/golden/<name>/`, one file per generated output file.
 
 To update golden files after an intentional change to the generated code, run the generator tests with
 `GMP_UPDATE_GOLDEN=1` and review the diff.

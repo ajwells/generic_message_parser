@@ -70,12 +70,7 @@ public:
         wire_cs_ = escape_ && p.checksum.present && p.checksum.over_wire && !text_;
         stream_ = p.framing.type != FT::None && p.max_frame > 0;
         all_struct_ = std::all_of(p.messages.begin(), p.messages.end(), [](const Message* m) { return m->want_struct; });
-        all_view_ = std::all_of(p.messages.begin(), p.messages.end(), [](const Message* m) { return m->want_view; });
-        if (!all_view_) c.diag.error(p.loc, "protocol '" + p.name + "': all messages need view access (used to select the message type)");
-        if (text_)
-            for (const auto* m : p.messages)
-                if (m->separator != p.separator)
-                    c.diag.error(m->loc, "message '" + m->name + "' separator differs from protocol '" + p.name + "'");
+        // Lowering guarantees every protocol message has a view and (text) the protocol's separator.
         if (!c.schema.protocols.empty() && c.schema.protocols.front().get() == &p) check_reserved_names();  // once per schema
     }
 
@@ -705,7 +700,7 @@ private:
     Ctx& c_;
     CodeWriter& w_;
     const Protocol& p_;
-    bool text_ = false, has_header_ = false, escape_ = false, wire_cs_ = false, stream_ = false, all_struct_ = false, all_view_ = false;
+    bool text_ = false, has_header_ = false, escape_ = false, wire_cs_ = false, stream_ = false, all_struct_ = false;
 };
 
 } // namespace

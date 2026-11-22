@@ -693,7 +693,7 @@ int main() {
 
 ```yaml
 # examples/custom_codec/meter.yaml
-# Custom field codec (BCD date/time) and a custom checksum function.
+# Custom field codec (BCD date/time) and a custom checksum function, for C++ (cpp:) and C (c:).
 schema_version: 1
 namespace: meter
 defaults: { endian: little }
@@ -703,10 +703,12 @@ custom:
     bcd_datetime:
       wire_size: 6
       cpp: { header: "meter_codecs.hpp", type: "meter::DateTime", decode: "meter::decode_bcd", encode: "meter::encode_bcd" }
+      c: { header: "meter_codecs.h", type: "meter_datetime", decode: "meter_decode_bcd", encode: "meter_encode_bcd", print: "meter_print_datetime" }
   checksums:
     mod256:
       size: 1
       cpp: { header: "meter_codecs.hpp", function: "meter::mod256" }
+      c: { header: "meter_codecs.h", function: "meter_mod256" }
 
 messages:
   Reading:

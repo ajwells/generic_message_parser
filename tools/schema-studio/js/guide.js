@@ -6,6 +6,17 @@
   const D = G.decoder;
 
   // ----------------------------------------------------------------------------------------------
+  // code language: C++ or C (`?lang=c`, remembered in localStorage). Schemas and decoding are shared;
+  // only code samples, API names and error names differ.
+  // ----------------------------------------------------------------------------------------------
+  const LANGS = { cpp: 'C++', c: 'C' };
+  const LANG_KEY = 'gmp-guide-lang';
+  let lang = 'cpp';
+  /** The C++ or C variant of a piece of content. */
+  const ln = (cpp, c) => (lang === 'c' ? c : cpp);
+  G.guideLang = () => lang;
+
+  // ----------------------------------------------------------------------------------------------
   // example schemas
   // ----------------------------------------------------------------------------------------------
   const Y = {
@@ -297,7 +308,7 @@ protocols:
     printing: {
       title: 'Printing decoded messages', yaml: Y.structure, cards: ['message:Report'],
       decode: [
-        { target: 'message:Report', label: 'gmp::println(report, stdout): enum names with their value, units, nested blocks', input: '5A 02 00 00 00 42 01 6B', view: 'print' },
+        { target: 'message:Report', label: () => ln('gmp::println(report, stdout)', 'guide_report_print(&report, &printer)') + ': enum names with their value, units, nested blocks', input: '5A 02 00 00 00 42 01 6B', view: 'print' },
         { target: 'message:Report', label: 'single_line style; the conditional Fault block is <absent>', input: '5A 01 00 00', view: 'line' },
       ],
     },
@@ -351,7 +362,7 @@ protocols:
     ['string', 'string', 'fixed / var', 'Characters: fixed (padded), from a field, terminated; one token in text.', '{ name: name, type: string, length: 8 }'],
     ['array', 'array', 'n × element', 'Repeated scalars, enums, nested messages or custom types.', '{ name: samples, type: array, of: i16, count: n, max: 32 }'],
     ['message', 'nested message', 'its size', 'Another message used as a field; views nest without copying.', '{ name: fault, type: Fault }'],
-    ['custom', 'custom type', 'declared', 'Your C++ decode / encode functions for anything GMP does not describe.', '{ name: when, type: bcd_time }'],
+    ['custom', 'custom type', 'declared', 'Your own decode / encode functions for anything GMP does not describe.', '{ name: when, type: bcd_time }'],
     ['pad', 'pad', 'N B', 'Reserved bytes: skipped on decode, zero on encode.', '{ pad: 2 }'],
     ['check', 'crc (field)', '1–8 B', 'A checksum right after one value, verified per field.', '{ name: t, type: u16, crc: crc8_nrsc5 }'],
   ];
@@ -359,7 +370,7 @@ protocols:
   function overview() {
     const step = (kind, title, sub, body) => `<div class="g-step" style="--f:var(--k-${kind});--b:var(--k-${kind}-b)"><div class="g-step-t">${title}</div><div class="g-step-s">${sub}</div>${body ? `<div class="g-step-b">${body}</div>` : ''}</div>`;
     return `
-      <p class="g-lead">GMP turns a <b>YAML description of a wire protocol</b> into dependency-free C++23 that decodes, validates and
+      <p class="g-lead">GMP turns a <b>YAML description of a wire protocol</b> into dependency-free ${ln('C++23', 'C99 / C11 (or C++23)')} that decodes, validates and
       encodes it. Unlike protobuf the wire format is not fixed: the schema describes <i>existing</i> binary and text protocols,
       from CAN payloads and sensor registers to NMEA sentences and framed serial links.</p>
       <div class="g-pipeline">
@@ -367,12 +378,14 @@ protocols:
         <div class="g-arrow">→</div>
         ${step('custom', 'gmpc', 'checks &amp; generates', 'file:line:col diagnostics')}
         <div class="g-arrow">→</div>
-        ${step('int', 'schema.gmp.hpp', 'one header per schema', '<code>struct</code> · <code>View</code> · <code>Protocol</code>')}
+        ${ln(step('int', 'schema.gmp.hpp', 'one header per schema', '<code>struct</code> · <code>View</code> · <code>Protocol</code>'),
+             step('int', 'schema.gmp.h + .c', 'one pair per schema', '<code>struct</code> · <code>_view</code> · <code>_stream</code>'))}
         <div class="g-arrow">→</div>
-        ${step('string', 'your code', 'decode · encode · stream', '<code>Link::Stream&lt;&gt;</code>')}
+        ${step('string', 'your code', 'decode · encode · stream', ln('<code>Link::Stream&lt;&gt;</code>', '<code>demo_link_stream</code>'))}
       </div>
       <div class="g-props">
-        ${['Header-only runtime', 'No heap', 'No exceptions / RTTI', 'C++23 std::expected', 'Zero-copy views', 'Eager structs', 'Streaming with resync', 'Binary and text'].map((t) => `<span class="badge accent">${t}</span>`).join('')}
+        ${ln(['Header-only runtime', 'No heap', 'No exceptions / RTTI', 'C++23 std::expected', 'Zero-copy views', 'Eager structs', 'Streaming with resync', 'Binary and text'],
+             ['Header-only or compiled runtime', 'No heap', 'C99 or later, no C library needed', 'Error codes + out parameters', 'Zero-copy views', 'Eager structs', 'Streaming with resync', 'Binary and text']).map((t) => `<span class="badge accent">${t}</span>`).join('')}
       </div>
       <div class="g-cols">
         <div><h4>1 · Describe</h4>${code(`schema_version: 1
@@ -391,10 +404,12 @@ protocols:
     checksum: { algo: crc16_ccitt }
     message_type: { field: id }
     messages: [Status]`, 'yaml')}</div>
-        <div><h4>2 · Generate</h4>${code(`add_subdirectory(generic_message_parser)
+        <div><h4>2 · Generate</h4>${code(ln(`add_subdirectory(generic_message_parser)
 gmp_generate(TARGET link_msgs SCHEMAS link.yaml)
-target_link_libraries(app PRIVATE link_msgs)`, 'text')}
-          <h4>3 · Use</h4>${code(`demo::Status s;
+target_link_libraries(app PRIVATE link_msgs)`, `add_subdirectory(generic_message_parser)
+gmp_generate(TARGET link_msgs LANG c SCHEMAS link.yaml)   # link.gmp.h + link.gmp.c
+target_link_libraries(app PRIVATE link_msgs)`), 'text')}
+          <h4>3 · Use</h4>${code(ln(`demo::Status s;
 s.set_voltage_scaled(12.6);
 s.samples = {1, 2, 3};          // count is filled in automatically
 std::array<std::uint8_t, demo::Link::max_frame> buf;
@@ -404,14 +419,26 @@ demo::Link::Stream<> stream;    // bytes in any chunk size
 stream.feed(chunk, gmp::overloaded{
     [](const demo::StatusView& v) { v.voltage_scaled(); },
     [](const gmp::FrameError& e) { /* skipped bytes */ },
-});`)}</div>
+});`, `demo_status s = {0};
+demo_status_set_voltage_scaled(&s, 12.6);
+s.samples[0] = 1; s.samples[1] = 2; s.samples[2] = 3;
+s.count = 3;                    // the length field is the array's size
+uint8_t buf[DEMO_LINK_MAX_FRAME];
+size_t n;
+gmsg_error e = demo_link_encode_status(&s, buf, sizeof buf, &n);
+
+static uint8_t mem[DEMO_LINK_MAX_FRAME];
+demo_link_stream stream;        // bytes in any chunk size
+demo_link_stream_init(&stream, mem, sizeof mem);
+stream.cb.on_status = on_status;   // (ctx, header view, const demo_status_view*)
+demo_link_stream_feed(&stream, chunk, len);`))}</div>
       </div>`;
   }
 
   function anatomy() {
     return `
       <p>A schema has two layers. <b>Messages</b> describe a payload: an ordered list of fields, usable on their own
-      (<code>Status::decode(bytes)</code>). <b>Protocols</b> wrap messages in frames on a byte stream:</p>
+      (${ln('<code>Status::decode(bytes)</code>', '<code>demo_status_decode(data, size, &amp;s)</code>')}). <b>Protocols</b> wrap messages in frames on a byte stream:</p>
       ${segBar([
         { label: 'prefix', sub: 'sync / start', kind: 'frame' },
         { label: 'header', sub: 'type id, length…', kind: 'int', w: 1.4 },
@@ -422,10 +449,10 @@ stream.feed(chunk, gmp::overloaded{
       <div class="g-keys">
         ${[
           ['schema_version', '1', 'Required. Lets the format evolve.'],
-          ['namespace', 'acme::telemetry', 'C++ namespace of the generated code.'],
+          ['namespace', 'acme::telemetry', ln('C++ namespace of the generated code.', 'Name prefix of the generated C code: <code>acme_telemetry_</code> (or <code>gmpc --opt prefix=…</code>).')],
           ['defaults', '{ endian: big, … }', 'endian, bit_order, format, separator, access, strict_enums for everything below.'],
           ['enums', 'Mode: { … }', 'Named integer values, used as field types and type ids.'],
-          ['custom', 'types / checksums / framers', 'Hooks into your own C++ code, checked with concepts.'],
+          ['custom', 'types / checksums / framers', ln('Hooks into your own C++ code, checked with concepts.', 'Hooks into your own C code (<code>c:</code> blocks), signatures checked at compile time.')],
           ['messages', 'Status: { fields: […] }', 'Payload layouts. Field order is wire order.'],
           ['protocols', 'Link: { framing, … }', 'Framing, header, checksum, message selection.'],
         ].map(([k, v, d]) => `<div class="g-key"><code class="g-k">${k}</code><code class="g-kv">${esc(v)}</code><p>${d}</p></div>`).join('')}
@@ -443,7 +470,7 @@ stream.feed(chunk, gmp::overloaded{
       in a decoded example to see exactly which bytes it came from.</p>
       ${demo('scalars')}
       <h3 id="g-enums">Enums and bit fields</h3>
-      <p>Enums map numbers to names (<code>to_string()</code>, <code>is_known()</code>). With <code>strict: true</code> (or
+      <p>Enums map numbers to names (${ln('<code>to_string()</code>, <code>is_known()</code>', '<code>_to_string()</code>, <code>_is_known()</code>')}). With <code>strict: true</code> (or
       <code>defaults.strict_enums</code>) undeclared values fail with <code>UnknownEnum</code>, on decode and on encode.
       A <code>bits</code> group packs bit fields into whole bytes; each bit field can be a bool, an integer, an enum, a const or scaled.</p>
       ${demo('enums')}
@@ -461,7 +488,7 @@ stream.feed(chunk, gmp::overloaded{
       ${demo('containers')}
       <h3 id="g-structure">Nested messages, conditions, constants and padding</h3>
       <p>Messages can contain messages. <code>when:</code> makes a field exist only if an expression over earlier fields
-      is true (it becomes <code>std::optional</code>). <code>const</code> fields are checked on decode and always written on encode.</p>
+      is true (${ln('it becomes <code>std::optional</code>', 'the struct gets <code>bool has_&lt;field&gt;</code>')}). <code>const</code> fields are checked on decode and always written on encode.</p>
       ${demo('structure')}`;
   }
 
@@ -471,14 +498,14 @@ stream.feed(chunk, gmp::overloaded{
       <div class="g-formula">
         <div><span class="badge">raw</span> <code>0x6666</code></div><div class="g-arrow">→</div>
         <div><code>× scale + offset</code></div><div class="g-arrow">→</div>
-        <div><span class="badge accent">temperature_scaled()</span> <code>25.00 degC</code></div>
-        <div class="g-arrow">+</div><div><span class="badge accent">temperature_degf()</span> <code>77.00 degF</code></div>
+        <div><span class="badge accent">${ln('temperature_scaled()', '…_temperature_scaled(&amp;m)')}</span> <code>25.00 degC</code></div>
+        <div class="g-arrow">+</div><div><span class="badge accent">${ln('temperature_degf()', '…_temperature_degf(&amp;m)')}</span> <code>77.00 degF</code></div>
       </div>
       ${table(['key', 'generates', 'notes'], [
-        [kbd('scale / offset / unit'), '<code>x_scaled()</code>, <code>set_x_scaled(v)</code>', 'value = raw × scale + offset'],
-        [kbd('conversions: { degf: {…} }'), '<code>x_degf()</code>, <code>set_x_degf(v)</code>', 'extra units for the same raw value'],
-        [kbd('crc: crc8_nrsc5'), 'verified in read / from(), written by encode', 'checksum stored right after the value'],
-        [kbd('computed: { serial: {…} }'), '<code>serial()</code>, <code>set_serial(v)</code>', 'no bytes of its own; setter derived for shift / | packing'],
+        [kbd('scale / offset / unit'), ln('<code>x_scaled()</code>, <code>set_x_scaled(v)</code>', '<code>…_x_scaled(&amp;m)</code>, <code>…_set_x_scaled(&amp;m, v)</code>'), 'value = raw × scale + offset'],
+        [kbd('conversions: { degf: {…} }'), ln('<code>x_degf()</code>, <code>set_x_degf(v)</code>', '<code>…_x_degf(&amp;m)</code>, <code>…_set_x_degf(&amp;m, v)</code>'), 'extra units for the same raw value'],
+        [kbd('crc: crc8_nrsc5'), ln('verified in read / from(), written by encode', 'verified in _read / _view_from, written by _encode'), 'checksum stored right after the value'],
+        [kbd('computed: { serial: {…} }'), ln('<code>serial()</code>, <code>set_serial(v)</code>', '<code>…_serial(&amp;m)</code>, <code>…_set_serial(&amp;m, v)</code>'), 'no bytes of its own; setter derived for shift / | packing'],
       ])}
       ${demo('values')}`;
   }
@@ -494,17 +521,28 @@ stream.feed(chunk, gmp::overloaded{
         [kbd('doc'), 'Copied into the generated code.'],
       ])}
       <div class="g-cols">
-        <div><h4>View: zero copy</h4><p>Wraps the input bytes; accessors read on demand. <code>from()</code> validates once.</p>
-          ${code(`auto v = demo::StatusView::from(bytes);
+        <div><h4>View: zero copy</h4><p>Wraps the input bytes; accessors read on demand. ${ln('<code>from()</code>', '<code>_view_from()</code>')} validates once.</p>
+          ${code(ln(`auto v = demo::StatusView::from(bytes);
 if (!v) return v.error();          // gmp::Error
 double volts = v->voltage_scaled();
-for (auto s : v->samples()) use(s);`)}</div>
-        <div><h4>Struct: eager value</h4><p>Fixed-capacity members, <code>operator==</code>, and the only way to encode.</p>
-          ${code(`demo::Status s;
+for (auto s : v->samples()) use(s);`, `demo_status_view v;
+gmsg_error e = demo_status_view_from(data, size, &v);
+if (e != GMSG_OK) return e;        // GMSG_ERR_...
+double volts = demo_status_view_voltage_scaled(&v);
+for (size_t i = 0; i < demo_status_view_samples_count(&v); ++i)
+    use(demo_status_view_samples_at(&v, i));`))}</div>
+        <div><h4>Struct: eager value</h4><p>${ln('Fixed-capacity members, <code>operator==</code>, and the only way to encode.', 'Fixed-capacity members (arrays with their count, <code>has_&lt;field&gt;</code> for conditions), and the only way to encode.')}</p>
+          ${code(ln(`demo::Status s;
 s.set_voltage_scaled(12.6);
 s.samples = {1, 2, 3};
 std::array<std::uint8_t, demo::Status::max_wire_size> out;
-auto n = s.encode(out);            // gmp::Result<size_t>`)}</div>
+auto n = s.encode(out);            // gmp::Result<size_t>`, `demo_status s = {0};
+demo_status_set_voltage_scaled(&s, 12.6);
+s.samples[0] = 1; s.samples[1] = 2; s.samples[2] = 3;
+s.count = 3;
+uint8_t out[DEMO_STATUS_MAX_WIRE_SIZE];
+size_t n;
+gmsg_error e = demo_status_encode(&s, out, sizeof out, &n);`))}</div>
       </div>`;
   }
 
@@ -517,7 +555,7 @@ auto n = s.encode(out);            // gmp::Result<size_t>`)}</div>
         [kbd('fixed'), '<code>sync</code> + <code>size</code> bytes', 'Every frame is the same size; shorter bodies are zero padded.'],
         [kbd('length_prefixed'), '<code>sync</code> + header with a length', 'The length field (filled in on encode) says how much follows.'],
         [kbd('delimited'), '<code>start</code> … <code>end</code>', 'Search for the end pattern; HDLC-style shared flags allowed.'],
-        [kbd('custom'), 'your framer', '<code>static gmp::FrameScan scan(gmp::bytes_view)</code>'],
+        [kbd('custom'), 'your framer', ln('<code>static gmp::FrameScan scan(gmp::bytes_view)</code>', '<code>gmsg_frame_scan scan(const uint8_t*, size_t)</code>')],
       ])}
       <h3 id="g-length">What the length counts</h3>
       ${[['body', [0, 0, 1, 0]], ['body_checksum', [0, 0, 1, 1]], ['header_body', [0, 1, 1, 0]], ['all', [1, 1, 1, 1]]].map(([c, on]) =>
@@ -559,7 +597,8 @@ message_type: { field: kind }
 # GGA has type_id: GPGGA`, 'yaml')}
           ${segBar([{ label: '$', kind: 'frame' }, { label: 'GPGGA', kind: 'string', sub: '→ GGA' }, { label: ',123519,4807.038,…', kind: 'string', w: 3 }, { label: '*47', kind: 'check' }])}</div>
       </div>
-      ${note('In C++, <code>parse()</code> returns <code>AnyView</code>, a <code>std::variant</code> of the message views, and a stream handler is called with whichever view matched.')}`;
+      ${note(ln('In C++, <code>parse()</code> returns <code>AnyView</code>, a <code>std::variant</code> of the message views, and a stream handler is called with whichever view matched.',
+                'In C, <code>_parse()</code> fills <code>_any_view</code>, a tagged union (<code>kind</code> plus <code>as.&lt;message&gt;</code>), and the stream calls the <code>on_&lt;message&gt;</code> callback of whichever view matched.'))}`;
   }
 
   function escaping() {
@@ -587,13 +626,54 @@ message_type: { field: kind }
 
   function text() {
     return `
-      <p>Text messages are tokens separated by a character. Numbers are parsed with <code>std::from_chars</code>;
+      <p>Text messages are tokens separated by a character. Numbers are parsed ${ln('with <code>std::from_chars</code>', 'exactly and locale free (the same results as C++ <code>std::from_chars</code>)')};
       <code>width</code> and <code>precision</code> control encoding, <code>optional</code> allows empty tokens, and
       <code>pad</code> skips tokens.</p>
       ${demo('nmea')}`;
   }
 
   function streaming() {
+    return ln(streamingCpp(), streamingC());
+  }
+
+  function streamingC() {
+    return `
+      <p><code>P_stream</code> works in a buffer you provide (at least <code>P_MAX_FRAME</code> bytes, no heap). Feed it
+      chunks of any size; it finds frames, validates them and calls your callbacks with the matching view.</p>
+      <div class="g-flow">
+        ${['bytes in (any chunking)', 'scan: find sync / delimiter / length', 'open: checksum, unescape', 'select message by type id', 'on_<message>(ctx, view)'].map((t, i) =>
+          `<div class="g-flow-s"><span>${i + 1}</span>${esc(t)}</div>`).join('<div class="g-arrow">→</div>')}
+      </div>
+      ${code(`static uint8_t buf[DEMO_LINK_MAX_FRAME];
+demo_link_stream parser;
+demo_link_stream_init(&parser, buf, sizeof buf);   // GMSG_ERR_BUFFER_FULL if too small
+parser.cb.ctx = &app;                       // passed to every callback
+parser.cb.on_status = on_status;            // (ctx, const demo_link_header_view*, const demo_status_view*)
+parser.cb.on_frame = on_frame;              // (ctx, header, const demo_link_any_view*): every valid frame
+parser.cb.on_error = on_drop;               // (ctx, gmsg_error, const uint8_t* data, size_t size)
+demo_link_stream_feed(&parser, chunk, n);   // returns the number of frames delivered
+const gmsg_stream_stats* st = demo_link_stream_stats(&parser);   // frames, frame_errors, bytes_skipped, overflows`)}
+      <h3>Callbacks</h3>
+      <p>The callbacks live in the stream (<code>parser.cb</code>), so the code that receives bytes (a UART driver, a socket
+      loop) only calls <code>_stream_feed()</code>. One <code>void* ctx</code> is passed to every callback; NULL slots are
+      skipped. For each frame the message's callback runs first, then <code>on_frame</code>. Views are valid only during the call.
+      <code>demo_link_process(data, size, &amp;cb)</code> does the same for one whole frame.</p>
+      <h3>Pulling messages</h3>
+      <p>Or ask for the next message yourself, which suits a main loop or a request/response exchange. A polled
+      view is valid until the parser is used again (<code>_stream_generation()</code> changes when it is).</p>
+      ${code(`demo_link_stream_push(&parser, chunk, n);   // returns the bytes accepted
+demo_link_any_view m;
+while (demo_link_stream_poll(&parser, &m)) {           // false: more input needed
+    if (m.kind == DEMO_LINK_STATUS) use(&m.as.status);
+}
+demo_link_received r;     demo_link_stream_poll_frame(&parser, &r);     // header, message, bytes
+demo_link_any_message d;  demo_link_stream_poll_message(&parser, &d);   // decoded struct copy
+demo_link_event ev;       demo_link_stream_poll_event(&parser, &ev);    // GMSG_POLL_MESSAGE / _ERROR / _NEED_MORE
+demo_link_stream_poll_for(&parser, DEMO_LINK_STATUS, &m);   // others go to the callbacks meanwhile`)}
+      ${demo('stream')}`;
+  }
+
+  function streamingCpp() {
     return `
       <p><code>Protocol::Stream&lt;&gt;</code> owns a fixed buffer of <code>max_frame</code> bytes. Feed it chunks of any
       size; it finds frames, validates them and calls your handler with the matching view.</p>
@@ -641,12 +721,13 @@ auto reply = link.poll_for<demo::StatusView>();   // others go to the listeners 
 
   function printing() {
     return `
-      <p>Every generated struct, view and bit group has <code>print_to()</code>, so <code>gmp::print</code> can dump it
+      <p>${ln('Every generated struct, view and bit group has <code>print_to()</code>, so <code>gmp::print</code> can dump it',
+             'Every generated struct, view and bit group has <code>_print(&amp;m, &amp;printer)</code> (<code>gmp/c/print.h</code>), with the same text as C++, to dump it')}
       for a console or a debug log. Enums print as <code>name (0xNN)</code> and undeclared values as
       <code>&lt;unknown&gt; (0x07)</code>, so the raw value is always visible. Scaled fields show the raw value followed
       by the engineering value and unit. Bytes print as hex, strings are quoted and escaped, and missing conditional fields
       print as <code>&lt;absent&gt;</code>. A view prints exactly like its struct.</p>
-      ${code(`gmp::println(status, stdout);                       // FILE*: console or fopen'ed log
+      ${code(ln(`gmp::println(status, stdout);                       // FILE*: console or fopen'ed log
 gmp::print(status, std::cout);                         // anything with write(): std::ostream
 char line[256];  gmp::print(status, line);            // char buffer, NUL terminated
 gmp::static_string<256> s;  gmp::print(status, s);    // appends; std::string works too
@@ -656,7 +737,21 @@ gmp::print(status, stdout, {.style = gmp::PrintStyle::single_line});
 // options: style, indent, max_items, max_bytes (0 = all), precision (significant digits of scaled values)
 
 // Stream handlers can print the view directly, and Protocol::parse() results print whichever message matched
-stream.feed(chunk, [](const demo::StatusView& v) { gmp::println(v, stdout); });`)}
+stream.feed(chunk, [](const demo::StatusView& v) { gmp::println(v, stdout); });`, `gmsg_printer p;
+gmsg_printer_init_file(&p, stdout, NULL);           // FILE*: console or fopen'ed log
+demo_status_print(&status, &p);
+gmsg_printer_finish(&p, true, NULL);                // true: end with a newline
+
+char line[256];
+gmsg_printer_init_buffer(&p, line, sizeof line, NULL);   // char buffer, NUL terminated
+gmsg_printer_init(&p, uart_write, &uart, NULL);     // bool uart_write(void* ctx, const char* s, size_t n)
+
+gmsg_print_options o = gmsg_print_defaults();
+o.style = GMSG_PRINT_SINGLE_LINE;
+// options: style, indent, max_items, max_bytes (0 = all), precision (significant digits of scaled values)
+
+// views print like structs, and a parsed frame prints whichever message it holds
+demo_link_any_view_print(&any, &p);`))}
       ${table(['field', 'printed as'], [
         ['integer, float, bool, char', '<code>42</code>, <code>1.5</code>, <code>true</code>, <code>\'N\'</code>'],
         ['enum', '<code>run (0x01)</code>, <code>&lt;unknown&gt; (0x07)</code>'],
@@ -666,13 +761,55 @@ stream.feed(chunk, [](const demo::StatusView& v) { gmp::println(v, stdout); });`
         ['array', '<code>[1, 2, 3]</code>; messages one per line; <code>... (+N more)</code> past <code>max_items</code>'],
         ['conditional field', 'its value, or <code>&lt;absent&gt;</code>'],
         ['computed value', '<code>serial: 305419896 (computed)</code>'],
-        ['custom type', 'your <code>gmp_print(gmp::Printer&amp;, const T&amp;)</code> next to the type, else <code>&lt;?&gt;</code>'],
+        ['custom type', ln('your <code>gmp_print(gmp::Printer&amp;, const T&amp;)</code> next to the type, else <code>&lt;?&gt;</code>',
+                           'the <code>print</code> function of its <code>c:</code> block, <code>void fn(gmsg_printer*, const T*)</code>, else <code>&lt;?&gt;</code>')],
       ])}
-      ${note('Bounded sinks (char buffers, static_string, or a callback that returns false) keep what fits and return <code>BufferFull</code>. Printing never allocates. In the Studio decode tester, the <b>View</b> switch shows the same text for every decoded frame.')}
+      ${note(ln('Bounded sinks (char buffers, static_string, or a callback that returns false) keep what fits and return <code>BufferFull</code>.',
+                'Bounded sinks (char buffers, or a write function that returns false) keep what fits; <code>gmsg_printer_finish()</code> returns <code>GMSG_ERR_BUFFER_FULL</code>.') +
+             ' Printing never allocates. In the Studio decode tester, the <b>View</b> switch shows the same text for every decoded frame.')}
       ${demo('printing')}`;
   }
 
+  const ERRORS = [
+    ['Truncated', 'TRUNCATED', 'Input ended before the message or frame was complete.'],
+    ['BadSync', 'BAD_SYNC', 'Bytes before a sync word / start delimiter were skipped.'],
+    ['BadChecksum', 'BAD_CHECKSUM', 'Frame checksum or field crc mismatch (or a missing text checksum).'],
+    ['BadLength', 'BAD_LENGTH', 'Length out of range, frame larger than max_frame, or an escaped length split.'],
+    ['BadDelimiter', 'BAD_DELIMITER', 'A start delimiter or reserved byte appeared inside a frame.'],
+    ['BadConst', 'BAD_CONST', 'A const field or bit field did not match.'],
+    ['OutOfRange', 'OUT_OF_RANGE', 'More data than a container\'s max, or a value that does not fit.'],
+    ['UnknownType', 'UNKNOWN_TYPE', 'No message has the frame\'s type id.'],
+    ['UnknownEnum', 'UNKNOWN_ENUM', 'A strict enum field holds an undeclared value.'],
+    ['BufferFull', 'BUFFER_FULL', 'Output buffer too small, or stream buffer full without a frame.'],
+    ['ParseError / MissingField', 'PARSE / MISSING_FIELD', 'A text token is invalid / a required token is empty.'],
+    ['InvalidValue / Custom', 'INVALID_VALUE / CUSTOM', 'For custom codecs (also: an unknown escape code).'],
+  ];
+  const errorTable = () => table(['error', 'meaning'], ERRORS.map(([cpp, c, d]) =>
+    [ln(`<code>${cpp}</code>`, c.split(' / ').map((x) => `<code>GMSG_ERR_${x}</code>`).join(' / ')), d]));
+
+  function generatedC() {
+    return `
+      <p>Names come from the schema's namespace: <code>namespace: demo</code> gives <code>demo_status</code>,
+      <code>demo_status_view</code>, <code>DEMO_MODE_RUN</code>; <code>gmpc --lang c --opt prefix=my_</code> picks another prefix.
+      The headers also compile as C++. See README "C output".</p>
+      <p>Any C99 or later compiler works (C11 adds compile-time checks of the functions in <code>c:</code> blocks).
+      The runtime is header-only (<code>gmp::runtime_c</code>), or a compiled library with CRC lookup tables:
+      <code>gmp_generate(... LANG c C_RUNTIME library)</code> links <code>gmp::runtime_c_lib</code>.</p>
+      ${table(['generated', 'what it is'], [
+        ['<code>P_m</code> struct', 'Members per field (<code>has_&lt;field&gt;</code> when conditional, arrays and strings with their length), <code>_decode()</code>, <code>_encode()</code>, <code>_read()</code> / <code>_write()</code>, scaled / conversion / computed accessors.'],
+        ['<code>P_m_view</code>', '<code>_view_from(data, size, &amp;v)</code> validates once; accessor functions read from the buffer. <code>_view_to_struct()</code> copies out.'],
+        ['enum <code>P_e</code>', 'A typedef of the integer type, <code>P_E_VALUE</code> constants, <code>_to_string()</code> (NULL when undeclared), <code>_is_known()</code>.'],
+        ['<code>_print()</code>', 'On structs, views and bit groups (see Printing for logs).'],
+        ['protocol <code>P_p</code>', '<code>_parse()</code> → <code>_any_view</code>, <code>_decode()</code> → <code>_any_message</code>, <code>_process()</code>, <code>_encode_&lt;m&gt;()</code>, <code>_stream</code> with callbacks and the poll API, <code>_MAX_FRAME</code>.'],
+      ])}
+      <h3>Errors</h3>
+      <p>Every fallible call returns a <code>gmsg_error</code> (<code>GMSG_OK</code> is 0) and writes its result through an out parameter.
+      <code>gmsg_error_str(e)</code> gives the text.</p>
+      ${errorTable()}`;
+  }
+
   function cpp() {
+    if (lang === 'c') return generatedC();
     return `
       ${table(['generated', 'what it is'], [
         ['<code>struct M</code>', 'Members per field (std::optional when conditional), <code>decode()</code>, <code>encode()</code>, scaled / conversion / computed accessors, <code>operator==</code>.'],
@@ -683,20 +820,7 @@ stream.feed(chunk, [](const demo::StatusView& v) { gmp::println(v, stdout); });`
       ])}
       <h3>Errors</h3>
       <p>Every fallible call returns <code>gmp::Result&lt;T&gt;</code> (<code>std::expected&lt;T, gmp::Error&gt;</code>).</p>
-      ${table(['error', 'meaning'], [
-        ['Truncated', 'Input ended before the message or frame was complete.'],
-        ['BadSync', 'Bytes before a sync word / start delimiter were skipped.'],
-        ['BadChecksum', 'Frame checksum or field crc mismatch (or a missing text checksum).'],
-        ['BadLength', 'Length out of range, frame larger than max_frame, or an escaped length split.'],
-        ['BadDelimiter', 'A start delimiter or reserved byte appeared inside a frame.'],
-        ['BadConst', 'A const field or bit field did not match.'],
-        ['OutOfRange', 'More data than a container\'s max, or a value that does not fit.'],
-        ['UnknownType', 'No message has the frame\'s type id.'],
-        ['UnknownEnum', 'A strict enum field holds an undeclared value.'],
-        ['BufferFull', 'Output buffer too small, or stream buffer full without a frame.'],
-        ['ParseError / MissingField', 'A text token is invalid / a required token is empty.'],
-        ['InvalidValue / Custom', 'For custom codecs (also: an unknown escape code).'],
-      ].map(([a, b]) => [`<code>${a}</code>`, b]))}`;
+      ${errorTable()}`;
   }
 
   function studio() {
@@ -726,7 +850,7 @@ stream.feed(chunk, [](const demo::StatusView& v) { gmp::println(v, stdout); });`
     ['text', 'Text protocols', text],
     ['streaming', 'Streaming and resync', streaming],
     ['printing', 'Printing for logs', printing],
-    ['cpp', 'Generated C++ and errors', cpp],
+    ['cpp', () => `Generated ${LANGS[lang]} and errors`, cpp],
     ['studio', 'Using the Studio', studio],
   ];
 
@@ -751,7 +875,7 @@ stream.feed(chunk, [](const demo::StatusView& v) { gmp::println(v, stdout); });`
     const runs = (typeof d.decode === 'function' ? d.decode(s) : d.decode).map((r) => {
       const dui = { target: r.target, format: r.format || 'hex', input: r.input || '', newline: r.newline || 'lf', view: r.view || 'fields' };
       return `<div class="g-run">
-        <div class="g-run-head"><span class="g-label">Decode ${esc(r.target.split(':')[1])}</span><span>${esc(r.label)}</span></div>
+        <div class="g-run-head"><span class="g-label">Decode ${esc(r.target.split(':')[1])}</span><span>${esc(typeof r.label === 'function' ? r.label() : r.label)}</span></div>
         <pre class="g-input">${esc(dui.input)}</pre>
         <div class="g-result">${G.renderDecodeResults(s, dui)}</div></div>`;
     }).join('');
@@ -778,25 +902,56 @@ stream.feed(chunk, [](const demo::StatusView& v) { gmp::println(v, stdout); });`
   G.renderGuide = () => {
     const nav = document.getElementById('guide-nav');
     const main = document.getElementById('guide-main');
-    nav.innerHTML = `<div class="g-nav-title">Guide</div>${SECTIONS.map(([id, title], i) =>
-      `<a href="#${id}" data-sec="${id}"><span>${String(i + 1).padStart(2, '0')}</span>${esc(title)}</a>`).join('')}
-      <a class="g-nav-studio" href="index.html">← Back to the Studio</a>`;
-    main.innerHTML = SECTIONS.map(([id, title, fn], i) =>
-      `<section class="g-sec" id="${id}"><div class="g-sec-kicker">${String(i + 1).padStart(2, '0')}</div><h2>${esc(title)}</h2>${fn()}</section>`).join('') +
-      '<footer class="g-foot">Every example on this page is a real schema, laid out and decoded by the same code as the Studio.</footer>';
+    const langSel = document.getElementById('guide-lang');
+    try {
+      const q = new URLSearchParams(location.search).get('lang');
+      const saved = localStorage.getItem(LANG_KEY);
+      if (LANGS[q]) lang = q;
+      else if (LANGS[saved]) lang = saved;
+    } catch (_) { /* storage may be unavailable */ }
 
     const toHash = () => {
       const t = location.hash && document.getElementById(location.hash.slice(1));
       if (t) t.scrollIntoView({ behavior: 'instant', block: 'start' });
     };
-    G.loadJsYaml().then(() => {
-      main.querySelectorAll('.g-demo').forEach(renderDemo);
-      toHash();  // examples change the page height: land on the section again
-      spy();
-    }, (e) => {
-      main.querySelectorAll('.g-demo').forEach((el) => {
-        el.innerHTML = `<div class="callout bad">The live examples need js-yaml from cdnjs.cloudflare.com, which could not be loaded (${esc(e && e.message ? e.message : e)}). The rest of the guide works offline.</div>`;
+    let yaml = null;  // the js-yaml load: a promise, settled once
+    const renderDemos = () => {
+      yaml = yaml || G.loadJsYaml();
+      yaml.then(() => {
+        main.querySelectorAll('.g-demo').forEach(renderDemo);
+        toHash();  // examples change the page height: land on the section again
+        spy();
+      }, (e) => {
+        main.querySelectorAll('.g-demo').forEach((el) => {
+          el.innerHTML = `<div class="callout bad">The live examples need js-yaml from cdnjs.cloudflare.com, which could not be loaded (${esc(e && e.message ? e.message : e)}). The rest of the guide works offline.</div>`;
+        });
       });
+    };
+    const title = (t) => (typeof t === 'function' ? t() : t);
+    const render = () => {
+      document.documentElement.dataset.lang = lang;
+      if (langSel) langSel.querySelectorAll('button[data-lang]').forEach((b) => b.classList.toggle('on', b.dataset.lang === lang));
+      nav.innerHTML = `<div class="g-nav-title">Guide</div>${SECTIONS.map(([id, t], i) =>
+        `<a href="#${id}" data-sec="${id}"><span>${String(i + 1).padStart(2, '0')}</span>${esc(title(t))}</a>`).join('')}
+        <a class="g-nav-studio" href="index.html">← Back to the Studio</a>`;
+      main.innerHTML = SECTIONS.map(([id, t, fn], i) =>
+        `<section class="g-sec" id="${id}"><div class="g-sec-kicker">${String(i + 1).padStart(2, '0')}</div><h2>${esc(title(t))}</h2>${fn()}</section>`).join('') +
+        '<footer class="g-foot">Every example on this page is a real schema, laid out and decoded by the same code as the Studio.</footer>';
+      renderDemos();
+    };
+    if (langSel) langSel.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-lang]');
+      if (!b || b.dataset.lang === lang) return;
+      // keep the reader's place: the section at the top stays at the top
+      const secs = [...main.querySelectorAll('.g-sec')];
+      let cur = secs[0];
+      for (const sec of secs) if (sec.getBoundingClientRect().top - main.getBoundingClientRect().top < 120) cur = sec;
+      lang = b.dataset.lang;
+      try { localStorage.setItem(LANG_KEY, lang); } catch (_) { /* private mode */ }
+      render();
+      const again = cur && document.getElementById(cur.id);
+      if (again) again.scrollIntoView({ behavior: 'instant', block: 'start' });
+      spy();
     });
 
     // decode hover: bytes <-> fields, per example run
@@ -826,14 +981,16 @@ stream.feed(chunk, [](const demo::StatusView& v) { gmp::println(v, stdout); });`
     });
 
     // scroll spy (also run by the example loader above, which finishes later)
-    const links = [...nav.querySelectorAll('a[data-sec]')];
-    const secs = [...main.querySelectorAll('.g-sec')];
-    const spy = () => {
+    function spy() {
+      const links = [...nav.querySelectorAll('a[data-sec]')];
+      const secs = [...main.querySelectorAll('.g-sec')];
+      if (!secs.length) return;
       let cur = secs[0];
       for (const sec of secs) if (sec.getBoundingClientRect().top - main.getBoundingClientRect().top < 120) cur = sec;
       links.forEach((a) => a.classList.toggle('on', a.dataset.sec === cur.id));
-    };
+    }
     main.addEventListener('scroll', spy, { passive: true });
+    render();
     toHash();
     spy();
   };

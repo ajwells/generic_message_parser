@@ -11,16 +11,29 @@ if (MINGW)
     set(GMP_STATIC_LINK -static-libgcc -static-libstdc++)
 endif ()
 
+# gmp_add_test(<name> <sources>... [TEST_SUFFIX <text>]): a Catch2 executable; TEST_SUFFIX is appended to the
+# ctest names (needed when the same test sources are built twice).
 function(gmp_add_test name)
-    add_executable(${name} ${ARGN})
+    cmake_parse_arguments(T "" "TEST_SUFFIX" "" ${ARGN})
+    add_executable(${name} ${T_UNPARSED_ARGUMENTS})
     target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain gmp::runtime)
     target_compile_options(${name} PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Wconversion>)
     target_link_options(${name} PRIVATE ${GMP_STATIC_LINK})
-    catch_discover_tests(${name})
+    if (T_TEST_SUFFIX)
+        catch_discover_tests(${name} TEST_SUFFIX "${T_TEST_SUFFIX}")
+    else ()
+        catch_discover_tests(${name})
+    endif ()
 endfunction()
 
+# Strict C warnings for the C runtime and generated C code (warnings are errors).
+set(GMP_C_WARNINGS $<$<C_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow
+        -Wstrict-prototypes -Wmissing-prototypes -Werror>)
+
 add_subdirectory(runtime)
+add_subdirectory(runtime_c)
 if (GMP_BUILD_GENERATOR)
     add_subdirectory(generator)
     add_subdirectory(roundtrip)
+    add_subdirectory(roundtrip_c)
 endif ()

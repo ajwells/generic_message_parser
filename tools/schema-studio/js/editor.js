@@ -152,6 +152,9 @@
         `<button class="btn small" data-action="addEnumValue" data-path="${base}.values">+ Value</button>`);
   }
 
+  /** The C binding (`c:` block) of a custom item; empty until edited. */
+  const cl = (c) => (c.lang && c.lang.c) || {};
+
   function customEditor(s, uid) {
     let i = s.customTypes.findIndex((c) => c.uid === uid);
     if (i >= 0) {
@@ -168,7 +171,15 @@
           ${field('Decode function', input(`${b}.decode`, c.decode, { placeholder: 'my::decode_time', mono: true }))}
           ${field('Encode function', input(`${b}.encode`, c.encode, { placeholder: 'my::encode_time', mono: true }))}
         </div>
-        <p class="callout" style="margin:12px 0 0">Binary: <code>gmp::Result&lt;T&gt; decode(gmp::ByteReader&amp;)</code>, <code>gmp::VoidResult encode(gmp::ByteWriter&amp;, const T&amp;)</code>.<br>Text: <code>gmp::Result&lt;T&gt; decode(std::string_view)</code>, <code>gmp::VoidResult encode(gmp::text::TextWriter&amp;, const T&amp;)</code>.</p>`);
+        <p class="callout" style="margin:12px 0 0">Binary: <code>gmp::Result&lt;T&gt; decode(gmp::ByteReader&amp;)</code>, <code>gmp::VoidResult encode(gmp::ByteWriter&amp;, const T&amp;)</code>.<br>Text: <code>gmp::Result&lt;T&gt; decode(std::string_view)</code>, <code>gmp::VoidResult encode(gmp::text::TextWriter&amp;, const T&amp;)</code>.</p>`) +
+        section('C binding', `<div class="grid">
+          ${field('Header', input(`${b}.lang.c.header`, cl(c).header, { placeholder: 'my_codecs.h', mono: true }), '', 'span-2')}
+          ${field('C type', input(`${b}.lang.c.type`, cl(c).type, { placeholder: 'my_time', mono: true }), '', 'span-2')}
+          ${field('Decode function', input(`${b}.lang.c.decode`, cl(c).decode, { placeholder: 'my_decode_time', mono: true }))}
+          ${field('Encode function', input(`${b}.lang.c.encode`, cl(c).encode, { placeholder: 'my_encode_time', mono: true }))}
+          ${field('Print function', input(`${b}.lang.c.print`, cl(c).print, { placeholder: 'optional', mono: true }), 'else prints <?>', 'span-2')}
+        </div>
+        <p class="callout" style="margin:12px 0 0">Only needed for <code>gmpc --lang c</code>; written as a <code>c:</code> block.<br>Binary: <code>gmsg_error decode(gmsg_reader*, T*)</code>, <code>gmsg_error encode(gmsg_writer*, const T*)</code>.<br>Text: <code>gmsg_error decode(const char*, size_t, T*)</code>, <code>gmsg_error encode(gmsg_text_writer*, const T*)</code>.<br>Print: <code>void print(gmsg_printer*, const T*)</code>.</p>`);
     }
     i = s.customChecksums.findIndex((c) => c.uid === uid);
     if (i >= 0) {
@@ -179,6 +190,10 @@
           ${field('Size', input(`${b}.size`, c.size, { mono: true }), 'bytes on the wire')}
           ${field('Header', input(`${b}.header`, c.header, { placeholder: 'my_codecs.hpp', mono: true }))}
           ${field('Function', input(`${b}.function`, c.function, { placeholder: 'my::crc', mono: true }), '<unsigned> fn(gmp::bytes_view)')}
+        </div>`) +
+        section('C binding', `<div class="grid">
+          ${field('Header', input(`${b}.lang.c.header`, cl(c).header, { placeholder: 'my_codecs.h', mono: true }))}
+          ${field('Function', input(`${b}.lang.c.function`, cl(c).function, { placeholder: 'my_crc', mono: true }), '<unsigned> fn(const uint8_t*, size_t)')}
         </div>`);
     }
     i = s.customFramers.findIndex((c) => c.uid === uid);
@@ -189,6 +204,10 @@
           ${field('Name', input(`${b}.name`, c.name, { mono: true }))}
           ${field('Header', input(`${b}.header`, c.header, { placeholder: 'my_codecs.hpp', mono: true }))}
           ${field('C++ type', input(`${b}.type`, c.type, { placeholder: 'my::Framer', mono: true }), 'static gmp::FrameScan scan(gmp::bytes_view)', 'span-2')}
+        </div>`) +
+        section('C binding', `<div class="grid">
+          ${field('Header', input(`${b}.lang.c.header`, cl(c).header, { placeholder: 'my_codecs.h', mono: true }))}
+          ${field('Scan function', input(`${b}.lang.c.scan`, cl(c).scan, { placeholder: 'my_scan', mono: true }), 'gmsg_frame_scan fn(const uint8_t*, size_t)')}
         </div>`);
     }
     return '';
@@ -430,7 +449,10 @@
     const fparts = [field('Type', select(`${b}.framing.type`, ft, [
       ['none', 'none - whole buffer is a frame'], ['fixed', 'fixed size'], ['length_prefixed', 'length prefixed'],
       ['delimited', 'delimited (start / end)'], ['custom', 'custom framer']]), '', 'span-2')];
-    if (ft === 'fixed' || ft === 'length_prefixed') fparts.push(patternControl('Sync bytes', `${b}.framing.syncMode`, fr.syncMode, `${b}.framing.sync`, fr.sync, 'optional'));
+    if (ft === 'fixed' || ft === 'length_prefixed') {
+      fparts.push(patternControl('Sync bytes', `${b}.framing.syncMode`, fr.syncMode, `${b}.framing.sync`, fr.sync, 'optional'));
+      fparts.push(patternControl('End', `${b}.framing.endMode`, fr.endMode, `${b}.framing.end`, fr.end, 'optional'));
+    }
     if (ft === 'delimited') {
       fparts.push(patternControl('Start', `${b}.framing.syncMode`, fr.syncMode, `${b}.framing.sync`, fr.sync, 'optional'));
       fparts.push(patternControl('End', `${b}.framing.endMode`, fr.endMode, `${b}.framing.end`, fr.end, 'required'));

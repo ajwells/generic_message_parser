@@ -3,7 +3,8 @@
 A local web app for building GMP YAML schemas visually.
 
 - **Left pane:** every schema option. This covers settings and defaults, messages and their fields (including bit
-  fields), protocols (header, framing, checksum, message_type, carried messages), enums, and custom extensions.
+  fields), protocols (header, framing, checksum, message_type, carried messages), enums, and custom extensions
+  (with a C++ binding and a C binding each: the `cpp:` and `c:` blocks).
   **Hover any option** for a tooltip: what it does, the YAML key it writes, and for drop-downs what each choice means.
 - **Right pane:** a vertical, size-proportional picture of each message and protocol frame. It shows byte offsets, bit
   layouts, nested messages, conditional and variable-length fields, plus side bars marking checksum and length-field
@@ -15,7 +16,9 @@ A local web app for building GMP YAML schemas visually.
 
 - **Guide** (`guide.html`, the Guide button in the top bar): a visual tour of every GMP feature. Each example is a
   real schema shown as YAML, laid out as Studio cards and decoded with the decode tester. **Open in Studio** loads it
-  into the editor (after asking, because it replaces the current schema).
+  into the editor (after asking, because it replaces the current schema). The **C++ / C** switch in its top bar
+  changes the code samples, API names and error names to the chosen language (remembered; `guide.html?lang=c` also
+  works); schemas and decoded examples are the same for both.
 
 ## Decode tester
 

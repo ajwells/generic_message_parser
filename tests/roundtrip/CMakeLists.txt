@@ -11,8 +11,10 @@ gmp_generate(TARGET gmp_test_schemas
         ${SCHEMA_DIR}/enums.yaml
         ${SCHEMA_DIR}/computed.yaml
         ${SCHEMA_DIR}/stuffed.yaml
+        ${SCHEMA_DIR}/framing.yaml
         ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/sensirion_sht4x/sht4x.yaml
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/sensirion_sht4x/sht4x_enum.yaml)
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/sensirion_sht4x/sht4x_enum.yaml
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/reserved_sync/motor_link.yaml)
 # custom codecs referenced by hdlc.yaml
 target_include_directories(gmp_test_schemas INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 

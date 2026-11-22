@@ -529,6 +529,12 @@ private:
             if (!m) { d_.error(p.loc, "protocol '" + p.name + "' references unknown message '" + name + "'"); continue; }
             if (m->format != p.format)
                 d_.error(m->loc, "message '" + m->name + "' format does not match protocol '" + p.name + "'");
+            // Every backend selects the message type of a received frame through its view.
+            if (!m->want_view)
+                d_.error(m->loc, "message '" + m->name + "' needs view access to be part of protocol '" + p.name +
+                                     "' (used to select the message type)");
+            if (p.format == Format::Text && m->format == Format::Text && m->separator != p.separator)
+                d_.error(m->loc, "message '" + m->name + "' separator differs from protocol '" + p.name + "'");
             p.messages.push_back(m);
         }
         if (p.messages.empty()) d_.error(p.loc, "protocol '" + p.name + "' has no messages");

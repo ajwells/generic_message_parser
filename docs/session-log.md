@@ -22,7 +22,7 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 - Toolchain PATH (Git Bash):
   `export PATH="/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/mingw/bin:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/ninja/win/x64:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin:$PATH"`
   (MinGW GCC 15, Ninja, CMake; yaml-cpp and Catch2 via FetchContent).
-- Debug build + tests: `cmake --build build && ctest --test-dir build` (141 tests, all passing, including `gmp_studio_tests`).
+- Debug build + tests: `cmake --build build && ctest --test-dir build` (231 tests, all passing, including `gmp_studio_tests`, the C runtime tests in C11 / C99 / library builds and the generated-C cross-checks).
 - Release build: `cmake --build build-release` (Release, bench ON, tests and examples OFF; it is a compile check only).
 - Regenerate golden files after an intentional generator change:
   `GMP_UPDATE_GOLDEN=1 ctest --test-dir build -R golden`, then check that only the expected files changed.
@@ -50,13 +50,18 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 
 | path | what |
 |------|------|
+| `runtime-c/include/gmp/c/` | C runtime (C99 or later; header-only, or the library build in `runtime-c/src/`): `config.h` (`GMSG_USE_LIBC`, `GMSG_FLOAT_TEXT`, `GMSG_RUNTIME_LIBRARY`, `GMSG_CRC_TABLES`, `GMSG_API`, `GMSG_ASSERT`, `GMSG_C11`, C11 wrappers with C99 fallbacks), `error.h`, `mem.h`, `endian.h`, `bits.h`, `reader.h` (reader + writer), `checksum.h` (+ generated `crc_tables.h`), `types.h`, `framing.h` (scanners, escaping), `stream.h` (`gmsg_stream`, pull support), `float_text.h` (exact float <-> text), `text.h` (tokenizer, integer parsing, text writer), `print.h` (`gmsg_printer`, same text as `gmp::print`), `runtime.h` (includes all). Names use `gmsg_` / `GMSG_`. Targets `gmp::runtime_c` (header-only), `gmp::runtime_c_lib` (compiled) |
+| `runtime-c/src/`, `runtime-c/tools/` | library build of the C runtime: one `.c` per library header (checksum, framing, stream, float_text, text, print), each defining `GMSG_IMPL_<PART>_`; `tools/crc_tables.py` writes `crc_tables.h` |
 | `runtime/include/gmp/` | header-only runtime: endian, byte/bit readers and writers, checksums, text codec, containers, framing (`framing/fixed.hpp`, `length_prefixed.hpp`, `delimited.hpp`, `escape.hpp`, `frame.hpp`), `stream_parser.hpp`, `error.hpp`, `print.hpp` |
 | `generator/src/schema/` | `loader.cpp` (YAML → IR, key checks, renamed-key hints), `expr.cpp`, `validator.cpp` |
 | `generator/src/ir/` | `ir.hpp` (language-neutral IR), `lowering.cpp` (resolution, sizes, offsets, escape tables, all semantic checks) |
+| `generator/src/backend/c/` | C backend: `c_backend.cpp` (files, enums, unsupported-feature checks, global name registry), `c_common.cpp` (naming, types, expressions), `emit_binary_message.cpp` (bits, structs, views, print), `emit_protocol.cpp` (framing, parse / decode / process, callbacks, stream, poll, encode; binary and text), `emit_text_message.cpp` |
 | `generator/src/backend/cpp/` | C++ emitters: `emit_binary_message.cpp`, `emit_text_message.cpp`, `emit_protocol.cpp`, `cpp_backend.cpp`, `cpp_common.cpp` |
 | `cmake/GmpGenerate.cmake` | `gmp_generate(TARGET … SCHEMAS …)` |
-| `tests/runtime`, `tests/generator` (golden + diagnostics), `tests/roundtrip`, `tests/schemas` | test suites; goldens in `tests/generator/golden/` |
-| `examples/` | binary_telemetry, nmea_text, bitpacked_can, custom_codec, sensirion_sht4x (two schemas), reserved_sync |
+| `tests/runtime_c` | C runtime: `test_c_runtime.c` (built as C11 and C99 with `GMSG_USE_LIBC` 1 and 0, with `GMSG_CRC_TABLES=1`, and against `gmp::runtime_c_lib`; checks every CRC preset against the bit-by-bit CRC, i.e. every table entry), `crosscheck_c.c` + `test_c_vs_cpp.cpp` (C vs C++ runtime on random inputs), `test_text_c_vs_cpp.cpp` (float text incl. `%g`-style digits, the printer against `gmp::Printer`); the cross-check also runs against the library build (C side C99, ctest names end in `[c99, runtime_c_lib]`), `cxx_compat.cpp` (C headers compiled as C++). Strict warnings with `-Werror` |
+| `tests/roundtrip_c` | generated C for every supported schema compiled as strict C11 with `-Werror` (`gmp_test_schemas_c`), and the same files as C99 header-only (`gmp_test_schemas_c99`, compile check) and C99 with the library (`gmp_test_schemas_c99_lib`, cross-checked by `gmp_c_generated_tests_lib`), `test_c_generated.cpp` (messages: C vs C++ on valid, truncated, corrupted and random inputs: errors, fields, views, conversions, computed values, re-encoded bytes, print text via `print_compare.hpp`) and `test_c_protocols.cpp` (16 + 4 protocols: whole-buffer parse / decode / process / encode and noisy streams in several chunk sizes: events, header and message bytes, stats) |
+| `tests/runtime`, `tests/generator` (golden + diagnostics), `tests/roundtrip`, `tests/schemas` | test suites; goldens in `tests/generator/golden/<backend>/` (today only `cpp/`) |
+| `examples/` | binary_telemetry, nmea_text, bitpacked_can, custom_codec, sensirion_sht4x (two schemas), reserved_sync; C versions (`main.c`, `gmp_add_example(... LANG c)`) of binary_telemetry (callbacks), nmea_text (push + poll_event) and custom_codec (`c:` codecs, print hook) |
 | `docs/schema.md` | compact schema reference (source for the skill's `references/schema.md`) |
 | `tools/schema-studio/` | Studio (`index.html`) and Guide (`guide.html`); JS in `js/` (see its README for the file roles); tests in `tests/` (`run_tests.py`, pages `unit` / `crosscheck` / `ui` / `guide`, C++ reference generator `crossref.cpp`) |
 | `skills/gmp/` | AI skill: `SKILL.md`, `references/` (generated by `build_references.py`), `evals/` (7 test cases for the skill-creator workflow) |
@@ -120,12 +125,67 @@ Studio (`tools/schema-studio`):
   mirroring gmpc, decode tester mirroring the runtime (including escaping and wire-count lengths).
 - Hover tooltips for every editor control (`js/tips.js`, keyed by normalised `data-path`).
 - Guide page `guide.html` (`js/guide.js`): 14 sections (incl. "Printing for logs"), 10 live demos built from real
-  schemas, "Open in Studio". Demo runs accept `view: 'print' | 'line'`.
+  schemas, "Open in Studio". Demo runs accept `view: 'print' | 'line'`. A **C++ / C** switch in the top bar
+  (`ln(cpp, c)` in guide.js; `?lang=c`; remembered in localStorage `gmp-guide-lang`) swaps code samples, API names,
+  error names and the "Generated C++ / C and errors" section; schemas and demos are shared.
+- Custom types / checksums / framers have a **C binding** section (the `c:` block: header, type, decode, encode,
+  print / function / scan) next to the C++ binding. Validation wants a binding for at least one language; YAML
+  export omits an empty `cpp:` block. `G.setPath` creates missing intermediate objects (`lang.c`).
 - Example inputs for the decode tester (SHT4x, NMEA, Link, any escaped protocol).
 - Decode tester **View** switch: Fields / Print / One line. `js/print.js` mirrors `gmp::print` exactly; the decoder
   now keeps raw values on its nodes (`v`, `field`, `bit`, `content`, `absent`, `msg`, `top`) for it.
 
 AI skill: `skills/gmp/` (see section 7).
+
+C backend (`gmpc --lang c`): `<schema>.gmp.h` + `<schema>.gmp.c`, C99 or later, header compiles as C++. The
+`_Generic` signature checks of `c:` functions are behind `#if GMSG_C11`. `gmp_generate(... C_RUNTIME library)` links
+`gmp::runtime_c_lib`.
+- Supported: everything the C++ backend generates. Enums and binary messages (structs, views, bits, const, pad,
+  when, bytes/strings/arrays, nested, field crc incl. inline params, scale/conversions, computed with setters),
+  text messages, protocols, custom `c:` extensions, print.
+- Print: `<t>_print(const t*, gmsg_printer*)` for structs, views, bits groups (defined in the .c), protocol
+  `_any_view_print` / `_any_message_print` (kind 0 prints `<none>`). Custom types: `c: { print: fn }`
+  (`void fn(gmsg_printer*, const T*)`, checked with `_Static_assert`), else a built-in printer when the C type is
+  a standard scalar (`double`, `uint16_t`, ... as C++ prints them), else `<?>`. Views print `<error: ...>` for
+  custom / text fields that fail to decode.
+- Names: prefix from `--opt prefix=`, else namespace (`a::b` -> `a_b_`), else the file stem; types snake_case
+  (`acme_telemetry_status`), macros upper case. Variable containers get `<f>_len` / `<f>_count`, `when` fields
+  `has_<f>`. Generated names are checked for clashes (per message and globally).
+- Small functions are `static inline` in the header; read/write/decode/encode and view validation are in the .c.
+- Runtime additions: `gmp/c/types.h` (`gmsg_bytes`, `gmsg_str`, `gmsg_str_strip`, `gmsg_round_i64` = llround).
+- Sizes: a length / count given by a bare field reference (`length: n`) uses that field as the container size (no
+  `<f>_len` / `<f>_count` member); other variable containers get `<f>_len` (bytes, strings) / `<f>_count` (arrays).
+- Custom items: `c:` blocks (types: header/type/decode/encode, checksums: function, framers: scan), required only
+  for items the C output uses; signatures checked with `_Static_assert` + `_Generic`.
+- Text messages: struct with `has_<f>` for optional tokens, `_read_text` / `_write_text`; view tokenises once and
+  parses on demand (`gmsg_error` + out parameter). Float text: `GMSG_FLOAT_TEXT` builtin (exact, matches
+  to_chars / from_chars), libc, none (`#error` in the generated header when a schema needs it).
+- Poll API on streams: `_poll`, `_poll_frame`, `_poll_message`, `_poll_event`, `_poll_for(kind)`,
+  `_stream_generation()`.
+- Protocols: per protocol `_parse` / `_decode` / `_process` / `_encode_<m>` /
+  `_encode_<m>_with_header` / `_encode`, tagged unions `_any_view` / `_any_message` (kind 1..N, 0 none), `_callbacks`
+  (one `void* ctx`, `on_<m>(ctx, header_view*, view*)`, `on_frame`, `on_error`), `_stream` (`gmsg_stream base` + `cb`,
+  caller buffer >= `_MAX_FRAME`). Escaped protocols take non-const buffers.
+
+C runtime (`runtime-c/`, for the C backend):
+- Prefix `gmsg_` / `GMSG_` (not `gmp_`, which GNU MP uses). Umbrella header `gmp/c/runtime.h`.
+- C99 or later (`GMSG_C11` 1 for C11 / C++; `GMSG_STATIC_ASSERT` falls back to a negative-size array). Header-only
+  by default; `GMSG_RUNTIME_LIBRARY=1` (target `gmp::runtime_c_lib`) makes the large headers (checksum, framing,
+  stream, float_text, text, print) declaration-only: public types and prototypes first, bodies under
+  `#if GMSG_DEFINE_FUNCTIONS_ || defined(GMSG_IMPL_<PART>_)`, compiled by `runtime-c/src/<part>.c`. Public functions
+  use `GMSG_API` (`static inline` / `extern`), internal helpers `GMSG_PRIV_`, always-inline small headers (endian,
+  bits, mem, reader, types, error) `GMSG_INLINE`. `GMSG_CRC_TABLES` (default = `GMSG_RUNTIME_LIBRARY`): presets use
+  256-entry tables (4-8x faster on x86 -O2); the generic `gmsg_crc_*` stays bit by bit. `GMSG_USE_LIBC` (default 1) picks `<string.h>`/`<assert.h>` or built-in loops; without it only
+  `<stdint.h>`, `<stddef.h>`, `<stdbool.h>` are used. `GMSG_FLOAT_TEXT` (builtin default / libc / none) selects the
+  float text used by text messages and print (`gmsg_format_general` for print's significant digits).
+- `print.h`: `gmsg_printer` (write function + ctx, options as `gmp::PrintOptions`), sinks `_init_buffer` (NUL
+  terminated), `_init_file` (with libc), `_init`; `gmsg_print_begin/end/key/absent/unit/note/conversion/text`, values
+  `_u64/_i64/_bool/_char/_str/_hex/_enum/_f32/_f64/_error`, lists `gmsg_print_list_begin/item/end`;
+  `gmsg_printer_finish(p, newline, &n)` returns `GMSG_ERR_BUFFER_FULL` when cut.
+- `gmsg_error` / `GMSG_OK` / `GMSG_ERR_*` (same values and texts as `gmp::Error`), `gmsg_mem*`, `gmsg_load_<t>` / `gmsg_store_<t>` (+ `_be` / `_le`,
+  `gmsg_load_uint`), `gmsg_get_bits` / `gmsg_set_bits` (+ signed), `gmsg_reader` / `gmsg_writer` with typed
+  `gmsg_read_<t>` / `gmsg_write_<t>` returning `gmsg_error`, generic bit-by-bit CRC `gmsg_crc_params` and all presets and
+  simple checksums as `gmsg_NAME_init/update/finish/compute`.
 
 ## 5. Design decisions (and why)
 
@@ -172,9 +232,9 @@ AI skill: `skills/gmp/` (see section 7).
 - **Corrupted length below max_frame** delays good frames on an idle link (no timeout / per-type size check). See
   future task "bad length handling".
 - Studio import and the Guide's live demos need internet for js-yaml (cdnjs); the rest works offline.
+- The Studio cross-check (`crossref.cpp`) does not include `tests/schemas/framing.yaml` yet, so the Studio decoder is not compared with C++ for length `adjust`, little-endian checksums or `end` after escaped fixed / length-prefixed frames (the YAML round trip is).
 - `build-release` does not build tests or examples; run tests in `build`.
 - Text protocols with escaping are allowed only for delimited framing; `checksum.over: wire` is binary-only.
-- No git: keep backups before large refactors.
 
 ## 7. Future tasks (planned, not started)
 
@@ -187,12 +247,130 @@ AI skill: `skills/gmp/` (see section 7).
 | Bad length handling | per-message size check from the type id; `flush_partial()` for idle links; optional header checksum. Also: a frame whose length field is *longer* than its message is accepted and the extra bytes are ignored (found by a skill-eval run). Decide whether to offer an exact-size check. |
 | Stream I/O + callbacks | decided: do all four, one at a time. **A** stored handler / callbacks: **done**. **C** ISR-safe ring buffer: design presented, **tabled** (open questions C1–C6 in the memory note). **B** pull API: **done**. Remaining: **C** (when resumed) and **D**, an endpoint with source/sink adapters, `send(msg)` and a blocking `wait_for<V>(timeout)` / `transact`. |
 | `gmp::to_text<N>(msg)` (small, optional) | printing helper returning a fresh `gmp::static_string<N>` instead of appending to a sink |
-| Guide language selector | the guide is C++-specific today; when other target languages get backends, add a language picker to `guide.html` so code, API names and notes match the chosen language (schema content stays shared) |
+| C backend | Evaluated 2026-11-21 (memory note `c-backend-todo`): the generator is ready; the work is a C runtime and a C-style API (error codes, tagged unions, fn-pointer callbacks; exact float text needs a shortest-float formatter). Prep refactors done except sharing `cpp_common` helpers. Decided: C11 (C99 later), header-only runtime (a `.c` variant later), `.h`+`.c` output, v1 = binary messages + protocols/stream/callbacks; text, print, poll, custom framers, C99 and the `.c` runtime come later (list in the note). Float text: `GMSG_FLOAT_TEXT` builtin (default, exact) / libc / none. C library use: compile-time switch, default on. C runtime core done. C backend complete (README "C output"), with C examples and Studio support (`c:` editors, guide language selector). C99 mode and the compiled runtime library with CRC tables done 2026-11-22; nothing left from the C plan. |
+| Rename C++ runtime macros/namespace? | The C runtime uses `gmsg_` / `GMSG_` to avoid GNU MP (`gmp_`, `GMP_`). Consider whether the C++ runtime should match: `namespace gmp` and `GMP_ASSERT` don't clash with GNU MP today (its C++ wrapper `gmpxx.h` has no `gmp` namespace), but the names are confusable and a future `GMP_*` macro could clash. Would touch the runtime, generated code, goldens, docs, Studio text and the skill. Ask the user. |
+| Studio on a full JavaScript GMP | Replace the hand-written decoder mirror (`js/decoder.js`, `js/print.js`) with a real JS runtime (port of the C++/C runtimes) and a `js` backend, cross-checked against C++ like the C runtime. Open: schema-driven interpreter vs generated code (gmpc has no browser build), JS vs TypeScript, BigInt for 64-bit, keeping the decoder's node tree. Memory note `studio-js-runtime-todo`. |
 
 Each planned task has a detailed note (with open questions to ask the user) in the Claude memory directory for this
 project.
 
 ## 8. Session history
+
+### 2026-11-22 (C99 mode, compiled C runtime library with CRC tables)
+- C99: `config.h` accepts C99 (`#error` only below C99), `GMSG_C11`, C99 fallbacks for `GMSG_STATIC_ASSERT` (extern
+  array of size -1) and `GMSG_ALIGNOF` (offsetof). Generated `.gmp.c` wraps the `_Generic` checks in `#if GMSG_C11`;
+  header comments say "C99 or later". C goldens updated; C++ goldens unchanged.
+- Library build: the six large headers were split (public types + prototypes, then the bodies behind
+  `GMSG_DEFINE_FUNCTIONS_ || GMSG_IMPL_<PART>_`); `runtime-c/src/*.c` (one per header, so a static library links only
+  what is used; built with `-ffunction-sections -fdata-sections`); CMake `gmp::runtime_c_lib` (defined when C is
+  enabled; the root CMake now enables C before the runtime targets) with PUBLIC `GMSG_RUNTIME_LIBRARY=1`;
+  `gmp_generate(C_RUNTIME header|library)`; `gmp_add_test(... TEST_SUFFIX)` for building the same Catch2 sources twice.
+- CRC tables: `runtime-c/tools/crc_tables.py` -> `gmp/c/crc_tables.h` (13 tables, shared by presets with the same
+  width / poly / refin; each a function-local static so unused tables cost nothing). Test checks every preset against
+  the bit-by-bit CRC for every byte from 5 start registers and 50 random split inputs; planted bugs (one table entry,
+  the shift of the normal update) were caught.
+- New ctest entries: runtime unit tests C99 libc 1/0, CRC tables, library; `gmp_c_vs_cpp_tests_lib` and
+  `gmp_c_generated_tests_lib` (C99 + library); `gmp_test_schemas_c99` compiles the generated C as C99 (188 -> 231).
+- Studio guide (C): C99 / C11, "Header-only or compiled runtime", a paragraph on `C_RUNTIME library` (guide test
+  checks it). README: C output says C99 or later, new "C runtime: header-only or library" section, options,
+  `gmp_generate` `C_RUNTIME`, layout; skill references regenerated.
+
+### 2026-11-22 (C backend: print, C examples, Studio support for C)
+- Print: runtime `gmp/c/print.h` (port of `gmp::Printer`) and `gmsg_format_general` in `float_text.h` (exact
+  `%.*g`: all digits of the exact value, half-even rounding, the printf fixed / scientific rule); generated `_print`
+  for structs, views, bits groups, text messages and protocol unions; `c: { print: fn }` hook for custom types
+  (`hdlc.yaml` uses `test_time_print`).
+- Checks: `print_compare.hpp` compares the C text with `gmp::print` (5 option sets + a 23-byte buffer) for every
+  decoded struct / view in the three generated-C suites; `test_text_c_vs_cpp.cpp` adds `%g` digits against
+  `to_chars(general, p)` (~400k values) and a printer scenario against `gmp::Printer` (every value kind, 360 option
+  combinations, every buffer size). Planted bugs (separator, max_bytes, precision, enum width, escapes, truncation,
+  empty block, tie rounding, optional text, computed unit, custom hook) are all caught; the empty-block bug was only
+  caught after adding the runtime scenario (no schema prints an empty block). `>=` vs `>` for max_items is an
+  equivalent mutant.
+- C examples: `main.c` in binary_telemetry, nmea_text (pull style) and custom_codec (`meter.yaml` got `c:` blocks,
+  `meter_codecs.h`); same output as the C++ programs; clean with the strict C warning set. The root CMake enables C
+  for examples too.
+- Studio: C binding editors for custom items, tooltips, validation (C-only items are valid), no empty `cpp:` in
+  YAML, `setPath` creates `lang.c`; Guide C++ / C switch. New tests in `ui.html` and `guide.html` (150 checks);
+  planted bugs in `setPath` and a C guide sample were caught.
+- Docs: README "C output" (no longer "preview"; print, examples), custom-extension tables (`print` row) in README and
+  docs/schema.md, Studio README; skill references regenerated.
+
+### 2026-11-21 (C backend: custom extensions, poll API, text messages and float text)
+- Decisions: order 1 (custom `c:` blocks) -> 4 (poll) -> 2 (text + exact float text); see the memory note.
+- Custom extensions: `c:` blocks for types / checksums / framers, compile-time signature checks, C test codecs in
+  `tests/roundtrip_c/test_codecs_c.h`; `hdlc.yaml` / `custom.yaml` got `c:` blocks and are in the C goldens and
+  cross-checks (Batch with a BCD custom type, Hdlc / Summed with a custom checksum, a custom framer).
+- Found: hdlc's `name_len` length field clashed with the C member `name_len`. Changed the C structs: a bare length
+  field is the container size (no extra member). Same encoded bytes as C++ (C++ derives the field from the size).
+- Found: Studio dropped `c:` (all non-cpp) language blocks on YAML import/export. Fixed (`yaml.js`, `state.js` keep
+  them in `lang`); the Studio round trip now also compares `gmpc --lang c` output (it failed on the old Studio code).
+- Poll API: runtime `gmsg_stream_step` / `gmsg_stream_pull` / generation; generated poll functions with a capture
+  mode in the stream's process hook. Cross-checked against C++ for all 5 poll functions on every streamed protocol.
+- Float text: `gmp/c/float_text.h` (Burger-Dybvig shortest with the to_chars fixed/scientific choice, exact fixed
+  precision, exact parsing). Found by the cross-check: libstdc++ prints the exact integer for fixed-form values whose
+  neighbours are 2+ apart (e.g. float 441382624), and reports out of range before trailing characters. About 13M
+  assertions against to_chars / from_chars / parse_int / TextWriter (`test_text_c_vs_cpp.cpp`).
+- Text messages and text protocols in C (`emit_text_message.cpp`, text branch of `emit_protocol.cpp`), cross-checked
+  in `test_c_text.cpp` and `test_c_protocols.cpp` (Nmea, TextPos). Planted bugs (width, hex case, empty tokens,
+  poll_for delivery, poll_event errors) were all caught.
+- A third C runtime test build uses `GMSG_FLOAT_TEXT_LIBC`.
+
+### 2026-11-21 (C backend: protocols)
+- Design agreed with the user: caller-provided stream buffer, one `void* ctx` per callbacks struct, header view
+  always passed when the protocol has a header, whole-frame `_process()` (named after C++ `P::process`; "dispatch"
+  was rejected because `dispatch` was renamed to `message_type`).
+- C runtime: `framing.h` and `stream.h`, cross-checked against C++ in `tests/runtime_c/test_framing_c_vs_cpp.cpp`
+  (9 scanner configs, 3 escape styles, the stream with 2 capacities and 3 chunk sizes; about 1M assertions). The
+  input generator inserts whole sync / delimiter tokens; a coverage check showed that random bytes alone rarely
+  formed frames for 2-byte syncs.
+- C backend `emit_protocol.cpp`; 16 protocols generated from the test schemas, all compiled with `-Werror`.
+- New schema `tests/schemas/framing.yaml` (length adjust, `header_body` / `all` coverage, little-endian length and
+  checksum, `end` after escaped fixed and length-prefixed frames). Planted bugs in the emitter for those options
+  (checksum endian, adjust sign, escaped suffix) passed the tests until this schema was added; now all are caught.
+- The new schema found a Studio bug: `end` was only supported for delimited framing (editor, YAML export, default
+  reserved bytes). Fixed in `editor.js`, `yaml.js`, `state.js`, tooltip; docs/schema.md and README list `end` for
+  fixed and length_prefixed.
+- C++ goldens: only `framing.gmp.hpp` added. C goldens regenerated (protocols).
+
+### 2026-11-21 (C backend: binary messages)
+- Added the C backend (`generator/src/backend/c/`, registered as `c`) for enums and binary messages; see section 4.
+  Its semantics mirror `backend/cpp/emit_binary_message.cpp` (same checks in the same order, same error codes).
+- Goldens in `tests/generator/golden/c/` (all schemas except `hdlc`, which uses a custom type). Diagnostics tests for
+  unsupported features, name clashes, skipped text/protocols and prefixes.
+- `tests/roundtrip_c/`: 11 schemas generated and compiled as C11 with `-Werror`; `test_c_generated.cpp` (9 cases,
+  about 28k assertions) compares C and C++. Checked by injecting bugs into the backend: wrong endian, no padding
+  strip, a missing strict-enum check and a wrong CRC endian were all caught. Using the length member instead of
+  the container size inside write-side expressions is not observable with the current schemas.
+- `GMP_C_WARNINGS` moved to `tests/CMakeLists.txt`. README: "C output (preview)", `--lang c`, `LANG c`.
+
+### 2026-11-21 (C runtime prefix)
+- Renamed the C runtime prefix from `gmp_` / `GMP_` to `gmsg_` / `GMSG_` (GNU MP uses `gmp_` functions and
+  `GMP_ERROR_*` macros), and the umbrella header `gmp/c/gmp.h` to `gmp/c/runtime.h`. The path `gmp/c/` is kept.
+- Noted a future task: consider the same change for the C++ runtime (section 7).
+
+### 2026-11-21 (C runtime core)
+- Decisions for the C backend: C11 (C99 later), header-only runtime (`.c` library later), `.h` + `.c` generated
+  output, first version = binary messages + protocols/stream/callbacks, `GMP_FLOAT_TEXT` builtin by default,
+  `GMP_USE_LIBC` on by default. Details and the list of later work are in the memory note `c-backend-todo`.
+- Added `runtime-c/include/gmp/c/` (section 4) and `gmp::runtime_c`; the root CMake enables C only for tests.
+  `_gmp_language_layout` has a `c` entry (`.gmp.h` + `.gmp.c`), though gmpc has no C backend yet.
+- Tests in `tests/runtime_c/` (8 ctest entries). CRCs are checked against the reveng check values and against the
+  C++ runtime. Checked by injecting a wrong CRC preset and a wrong bit mask: both were caught.
+- The CRC is bitwise (no tables) to stay header-only; a table-driven variant is planned with the `.c` library.
+
+### 2026-11-21 (C backend evaluation and prep)
+- Evaluated adding a C backend; findings and open decisions are in the memory note `c-backend-todo` and section 7.
+- Prep refactors (the user skipped sharing the `cpp_common` helpers):
+  - lowering now checks that protocol messages have view access and (text) the protocol's separator; this used to
+    live in the C++ backend. The view error is now per message: "message 'A' needs view access to be part of
+    protocol 'P'". New diagnostics test.
+  - goldens moved to `tests/generator/golden/cpp/` (renames only); `test_golden.cpp` checks every output file per
+    backend (`check_goldens(lang)`), and the determinism test runs for every registered backend.
+  - `test_diagnostics.cpp` `compile(yaml, backend)` takes a backend name.
+  - `gmp_generate` takes per-language output suffixes and runtime target from `_gmp_language_layout`; output with
+    sources becomes a STATIC library. README "Adding a language backend" updated.
+- Removed the stale "No git" known issue.
 
 ### 2026-11-21 (GMP skill evaluation)
 - Iteration 1 used 3 cases, each run with and without the skill: 17/18 with the skill, 18/18 without.

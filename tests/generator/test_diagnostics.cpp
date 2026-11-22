@@ -4,6 +4,7 @@
 
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "backend/backend.hpp"
 #include "ir/lowering.hpp"
@@ -16,10 +17,15 @@ struct Outcome {
     std::string text;
 };
 
-Outcome compile(const std::string& yaml, bool backend = false) {
+/// Load and lower `yaml`; with `backend` set (e.g. "cpp"), also run that backend for its language-specific checks.
+Outcome compile(const std::string& yaml, const char* backend = nullptr) {
     gmpc::Diagnostics d;
     auto s = gmpc::load_schema_string(yaml, "test.yaml", d);
-    if (s && gmpc::lower_schema(*s, d) && backend) (void)gmpc::find_backend("cpp")->generate(*s, {}, d);
+    if (s && gmpc::lower_schema(*s, d) && backend) {
+        const auto* b = gmpc::find_backend(backend);
+        REQUIRE(b);
+        (void)b->generate(*s, {}, d);
+    }
     std::ostringstream os;
     d.print(os);
     return {!d.has_errors(), os.str()};
@@ -179,6 +185,37 @@ messages:
                  "needs view access too");
 }
 
+TEST_CASE("protocol messages: view access and text separator are checked by lowering (any backend)") {
+    expect_error(R"(
+messages:
+  A:
+    access: struct
+    type_id: 1
+    fields: [ { name: x, type: u8 } ]
+protocols:
+  P:
+    header: [ { name: type, type: u8 } ]
+    message_type: { field: type }
+    messages: [A]
+)",
+                 "message 'A' needs view access to be part of protocol 'P'");
+    expect_error(R"(
+messages:
+  T:
+    format: text
+    separator: ';'
+    type_id: TT
+    fields: [ { name: x, type: u8 } ]
+protocols:
+  P:
+    format: text
+    framing: { type: delimited, end: "\n", max_frame: 32 }
+    message_type: { token: 0 }
+    messages: [T]
+)",
+                 "message 'T' separator differs from protocol 'P'");
+}
+
 TEST_CASE("message_type / type_id; the old names are rejected with a hint") {
     CHECK(compile(R"(
 messages:
@@ -330,13 +367,177 @@ protocols:
 )";
     const std::string base = "messages:\n  A:\n    fields:\n      - { name: x, type: u8 }\n";
     for (const char* name : {"Callbacks", "CallbackStream", "StreamWith", "Frame", "AnyView"}) {
-        const auto r = compile(base + "  " + name + ":\n    fields:\n      - { name: y, type: u8 }\n" + proto, true);
+        const auto r = compile(base + "  " + name + ":\n    fields:\n      - { name: y, type: u8 }\n" + proto, "cpp");
         INFO(r.text);
         CHECK_FALSE(r.ok);
         CHECK(r.text.find("message '" + std::string(name) + "' clashes with a name generated inside protocol 'P'") !=
               std::string::npos);
     }
-    const auto ok = compile(base + proto, true);
+    const auto ok = compile(base + proto, "cpp");
     INFO(ok.text);
     CHECK(ok.ok);
+}
+
+// ---- C backend ---------------------------------------------------------------------------------------
+
+namespace {
+
+void expect_c_error(const std::string& yaml, const std::string& needle) {
+    const auto r = compile(yaml, "c");
+    INFO("schema:\n" << yaml << "\ndiagnostics:\n" << r.text);
+    CHECK_FALSE(r.ok);
+    CHECK(r.text.find(needle) != std::string::npos);
+}
+
+std::vector<gmpc::OutputFile> generate_c(const std::string& yaml, const gmpc::BackendOptions& opts, std::string& diag_text) {
+    gmpc::Diagnostics d;
+    auto s = gmpc::load_schema_string(yaml, "test.yaml", d);
+    std::vector<gmpc::OutputFile> files;
+    if (s && gmpc::lower_schema(*s, d)) files = gmpc::find_backend("c")->generate(*s, opts, d);
+    std::ostringstream os;
+    d.print(os);
+    diag_text = os.str();
+    return files;
+}
+
+} // namespace
+
+TEST_CASE("C backend: c: entries of custom items, and name clashes") {
+    // a custom type used by a generated message needs type / decode (/ encode with a struct)
+    expect_c_error(R"(
+custom:
+  types:
+    t: { wire_size: 2, cpp: { type: "int", decode: "d", encode: "e" } }
+messages:
+  A:
+    fields: [ { name: x, type: t } ]
+)",
+                   "custom type 't' needs a 'c: { type: ... }' entry for the C backend");
+    expect_c_error(R"(
+custom:
+  types:
+    t: { wire_size: 2, c: { type: "int", decode: "d" } }
+messages:
+  A:
+    fields: [ { name: x, type: t } ]
+)",
+                   "custom type 't' needs a 'c: { encode: ... }' entry");
+    // custom framer and checksum used by a generated protocol
+    expect_c_error(R"(
+custom:
+  framers:
+    f: { cpp: { type: "F" } }
+messages:
+  A: { fields: [ { name: x, type: u8 } ] }
+protocols:
+  Q:
+    framing: { type: custom, framer: f, max_frame: 16 }
+    messages: [A]
+)",
+                   "custom framer 'f' needs a 'c: { scan: ... }' entry");
+    expect_c_error(R"(
+custom:
+  checksums:
+    k: { size: 1, cpp: { function: "k" } }
+messages:
+  A: { fields: [ { name: x, type: u8 } ] }
+protocols:
+  P:
+    checksum: { algo: k }
+    messages: [A]
+)",
+                   "custom checksum 'k' needs a 'c: { function: ... }' entry");
+    // unused custom items need no c: entry; complete entries pass
+    const auto ok = compile(R"(
+custom:
+  types:
+    unused: { cpp: { type: "int", decode: "d" } }
+    t: { wire_size: 2, c: { header: "codec.h", type: "my_t", decode: "my_t_decode", encode: "my_t_encode" } }
+messages:
+  A:
+    fields: [ { name: x, type: t } ]
+)",
+                            "c");
+    INFO(ok.text);
+    CHECK(ok.ok);
+    // The bits group Status.flags and the message StatusFlags would both be test_status_flags.
+    expect_c_error(R"(
+messages:
+  Status:
+    fields:
+      - name: flags
+        type: bits
+        fields: [ { name: a, bits: 8 } ]
+  StatusFlags: { fields: [ { name: y, type: u8 } ] }
+)",
+                   "generated name 'test_status_flags'");
+    // A variable-length field `data` whose length is an expression gets a length member `data_len`.
+    expect_c_error(R"(
+messages:
+  A:
+    fields:
+      - { name: n, type: u8 }
+      - { name: data, type: bytes, length: "n * 2", max: 8 }
+      - { name: data_len, type: u8 }
+)",
+                   "generated C name 'data_len'");
+    // A bare length field is the container's size: no extra member, so `name_len` + `name` is fine.
+    const auto len = compile(R"(
+messages:
+  A:
+    fields:
+      - { name: name_len, type: u8 }
+      - { name: name, type: string, length: name_len, max: 8 }
+)",
+                             "c");
+    INFO(len.text);
+    CHECK(len.ok);
+}
+
+TEST_CASE("C backend: binary and text messages and protocols are all generated") {
+    const auto r = compile(R"(
+messages:
+  A: { type_id: 1, fields: [ { name: x, type: u8 } ] }
+  T: { format: text, type_id: T, fields: [ { name: x, type: u8 } ] }
+protocols:
+  P:
+    header: [ { name: id, type: u8 } ]
+    message_type: { field: id }
+    messages: [A]
+  Text:
+    format: text
+    framing: { type: delimited, end: [0x0A], max_frame: 32 }
+    message_type: { token: 0 }
+    messages: [T]
+)",
+                           "c");
+    INFO(r.text);
+    CHECK(r.ok);
+    CHECK(r.text.find("not generated") == std::string::npos);  // nothing is skipped any more
+}
+
+TEST_CASE("C backend: names use the namespace, the file stem or --opt prefix") {
+    const std::string yaml = "messages:\n  MotorStatus: { fields: [ { name: rpm, type: u16 } ] }\n";
+    std::string text;
+    auto files = generate_c(yaml, {}, text);
+    REQUIRE(files.size() == 2);
+    CHECK(files[0].name == "test.gmp.h");
+    CHECK(files[1].name == "test.gmp.c");
+    CHECK(files[0].content.find("typedef struct test_motor_status {") != std::string::npos);
+    CHECK(files[0].content.find("#define TEST_MOTOR_STATUS_WIRE_SIZE 2") != std::string::npos);
+
+    files = generate_c("namespace: acme::drive\n" + yaml, {}, text);
+    REQUIRE(files.size() == 2);
+    CHECK(files[0].content.find("typedef struct acme_drive_motor_status {") != std::string::npos);
+
+    gmpc::BackendOptions opts;
+    opts.values["prefix"] = "md_";
+    files = generate_c(yaml, opts, text);
+    REQUIRE(files.size() == 2);
+    CHECK(files[0].content.find("uint16_t md_motor_status_view_rpm(") != std::string::npos);
+
+    opts.values["prefix"] = "9bad";
+    files = generate_c(yaml, opts, text);
+    CHECK(files.empty());
+    CHECK(text.find("not a valid C identifier prefix") != std::string::npos);
 }

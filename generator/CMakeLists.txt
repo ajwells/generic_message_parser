@@ -21,7 +21,12 @@ add_library(gmpc_lib STATIC
         src/backend/cpp/cpp_common.cpp
         src/backend/cpp/emit_binary_message.cpp
         src/backend/cpp/emit_text_message.cpp
-        src/backend/cpp/emit_protocol.cpp)
+        src/backend/cpp/emit_protocol.cpp
+        src/backend/c/c_backend.cpp
+        src/backend/c/c_common.cpp
+        src/backend/c/emit_binary_message.cpp
+        src/backend/c/emit_protocol.cpp
+        src/backend/c/emit_text_message.cpp)
 target_include_directories(gmpc_lib PUBLIC src)
 target_link_libraries(gmpc_lib PUBLIC yaml-cpp::yaml-cpp)
 target_compile_options(gmpc_lib PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra>)

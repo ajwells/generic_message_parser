@@ -36,6 +36,36 @@
     T.eq(errors.join('\n'), '', 'JavaScript errors');
   });
 
+  T.test('language selector: C code samples, C names, back to C++', async () => {
+    const btn = (l) => d.querySelector(`#guide-lang button[data-lang="${l}"]`);
+    const codeText = () => Array.from(d.querySelectorAll('.g-code')).map((p) => p.textContent).join('\n');
+    const sec = () => d.getElementById('cpp');
+    T.ok(btn('cpp') && btn('c'), 'language buttons');
+    try { w.localStorage.removeItem('gmp-guide-lang'); } catch (_) { /* file:// */ }
+    T.ok(/gmp::println/.test(codeText()) && btn('cpp').classList.contains('on'), 'C++ by default');
+    btn('c').click();
+    await T.until(() => /Generated C and errors/.test(sec().textContent), 3000, 'C section title');
+    T.ok(btn('c').classList.contains('on') && !btn('cpp').classList.contains('on'), 'C selected');
+    const c = codeText();
+    for (const want of ['gmsg_printer_init_file', 'demo_link_stream_init', 'demo_status_view_from', 'LANG c', 'demo_link_stream_poll'])
+      T.ok(c.includes(want), `C sample has ${want}`);
+    T.ok(!/gmp::|std::/.test(c), 'no C++ left in the code samples');
+    T.ok(sec().textContent.includes('GMSG_ERR_BAD_CHECKSUM'), 'C error names');
+    T.ok(/C99 or later/.test(sec().textContent) && sec().textContent.includes('C_RUNTIME library'), 'C99 and the compiled runtime are described');
+    T.ok(d.querySelector('#guide-nav').textContent.includes('Generated C and errors'), 'nav title');
+    const demos = () => Array.from(d.querySelectorAll('[data-demo]'));
+    await T.until(() => demos().length && demos().every((el) => el.querySelector('.g-demo-head, .callout')), 10000, 'demos after the switch');
+    T.ok(d.querySelectorAll('.frame-card').length >= 10, 'demos decode again');
+    T.ok(Array.from(d.querySelectorAll('.g-run-head')).some((h) => h.textContent.includes('guide_report_print')), 'C print demo label');
+    let saved = 'c';
+    try { saved = w.localStorage.getItem('gmp-guide-lang'); } catch (_) { /* file:// */ }
+    T.eq(saved, 'c', 'choice remembered');
+    btn('cpp').click();
+    await T.until(() => /Generated C\+\+ and errors/.test(sec().textContent), 3000, 'C++ section title');
+    T.ok(/gmp::println/.test(codeText()) && !/gmsg_printer_init_file/.test(codeText()), 'C++ samples again');
+    T.eq(errors.join('\n'), '', 'JavaScript errors');
+  });
+
   T.run();
 })();
 </script>

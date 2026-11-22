@@ -1,0 +1,77 @@
+# Framing options not covered by the other schemas: length adjust, every length / checksum coverage, little-endian
+# length and checksum fields, and an end delimiter after escaped fixed and length-prefixed frames.
+schema_version: 1
+namespace: test::framing
+defaults: { endian: big }
+
+messages:
+  Reading:
+    type_id: 1
+    fields:
+      - { name: channel, type: u8 }
+      - { name: value, type: i32 }
+  Note:
+    type_id: 2
+    fields:
+      - { name: n, type: u8 }
+      - { name: text, type: string, length: n, max: 24 }
+
+protocols:
+  # length counts header + body, minus 1 (adjust); little-endian u16 length; CRC-32 over everything, little endian
+  Adjusted:
+    endian: little
+    header:
+      - { name: id, type: u8 }
+      - { name: len, type: u16 }
+    framing:
+      type: length_prefixed
+      sync: [0xA5]
+      length: { field: len, covers: header_body, adjust: -1 }
+      max_frame: 64
+    checksum: { algo: crc32, covers: all }
+    message_type: { field: id }
+    messages: [Reading, Note]
+
+  # length counts the whole frame plus 2 (adjust); 8-bit sum over the body only
+  WholeFrame:
+    header:
+      - { name: len, type: u8 }
+      - { name: id, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0x55, 0xAA]
+      length: { field: len, covers: all, adjust: 2 }
+      max_frame: 64
+    checksum: { algo: sum8, covers: body }
+    message_type: { field: id }
+    messages: [Reading, Note]
+
+  # escaped length-prefixed frame with an end delimiter after it; the length counts body and checksum
+  EscapedWithEnd:
+    header:
+      - { name: id, type: u8 }
+      - { name: len, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0x7E]
+      end: [0x0D]
+      escape: { char: 0x7D, code: xor, reserved: [0x7E, 0x0D] }
+      length: { field: len, covers: body_checksum }
+      max_frame: 80
+    checksum: { algo: crc16_kermit, covers: header_body, endian: little }
+    message_type: { field: id }
+    messages: [Reading, Note]
+
+  # escaped fixed-size frame with an end delimiter; index-style escape codes with a base
+  FixedWithEnd:
+    header:
+      - { name: id, type: u8 }
+    framing:
+      type: fixed
+      sync: [0xC0]
+      end: [0xC1]
+      size: 9
+      escape: { char: 0xDB, code: index, base: 0x10, reserved: [0xC0, 0xC1, 0xDB] }
+    checksum: { algo: xor8 }
+    message_type: { field: id }
+    messages: [Reading]

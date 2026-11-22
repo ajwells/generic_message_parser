@@ -89,7 +89,7 @@ window.GMP = window.GMP || {};
       if (style === 'xor') add(esc);
     } else {
       const sync = G.patternBytes(fr.syncMode, fr.sync) || [];
-      const end = fr.type === 'delimited' ? G.patternBytes(fr.endMode, fr.end) || [] : [];
+      const end = G.patternBytes(fr.endMode, fr.end) || [];  // as gmpc: sync / start and end bytes, then the escape byte
       sync.forEach(add); end.forEach(add); add(esc);
     }
     if (reserved.length > 16) errors.push('at most 16 reserved bytes (escape byte included)');
@@ -147,9 +147,10 @@ window.GMP = window.GMP || {};
   /** Whether decode rejects undeclared values: the enum's `strict` ('' inherits defaults.strict_enums). */
   G.enumStrict = (s, e) => (e.strict === '' || e.strict == null ? !!s.schema.defaults.strict_enums : e.strict === 'true');
   G.newEnumValue = (name = '', value = '') => ({ uid: G.uid(), name, value });
-  G.newCustomType = (over = {}) => ({ uid: G.uid(), name: 'custom_type', wire_size: '', max_wire_size: '', header: '', type: '', decode: '', encode: '', ...over });
-  G.newCustomChecksum = (over = {}) => ({ uid: G.uid(), name: 'my_checksum', size: '1', header: '', function: '', ...over });
-  G.newCustomFramer = (over = {}) => ({ uid: G.uid(), name: 'my_framer', header: '', type: '', ...over });
+  // `lang`: other language blocks ({ c: { header, type, ... } }), kept from imported YAML
+  G.newCustomType = (over = {}) => ({ uid: G.uid(), name: 'custom_type', wire_size: '', max_wire_size: '', header: '', type: '', decode: '', encode: '', lang: {}, ...over });
+  G.newCustomChecksum = (over = {}) => ({ uid: G.uid(), name: 'my_checksum', size: '1', header: '', function: '', lang: {}, ...over });
+  G.newCustomFramer = (over = {}) => ({ uid: G.uid(), name: 'my_framer', header: '', type: '', lang: {}, ...over });
 
   G.emptyState = () => ({
     version: STATE_VERSION,  // defined in the persistence section below
@@ -317,7 +318,10 @@ window.GMP = window.GMP || {};
   G.setPath = (obj, path, value) => {
     const keys = G.splitPath(path);
     let o = obj;
-    for (let i = 0; i < keys.length - 1; i++) o = o[keys[i]];
+    for (let i = 0; i < keys.length - 1; i++) {
+      if (o[keys[i]] == null) o[keys[i]] = typeof keys[i + 1] === 'number' ? [] : {};  // e.g. lang.c on first edit
+      o = o[keys[i]];
+    }
     o[keys[keys.length - 1]] = value;
   };
 

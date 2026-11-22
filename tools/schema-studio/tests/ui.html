@@ -94,6 +94,38 @@
     noErrors('in the decode tester');
   });
 
+  T.test('custom type: C binding fields write a c: block; a C-only type is valid', async () => {
+    await click(d.querySelector('[data-action=addCustomType]'));
+    const set = (key, value) => {
+      const el = Array.from(left().querySelectorAll('input[data-path]')).find((e) => e.dataset.path.endsWith(key));
+      T.ok(el, `input ${key}`);
+      if (!el) return;
+      el.value = value;
+      el.dispatchEvent(new w.Event('input', { bubbles: true }));
+      el.dispatchEvent(new w.Event('change', { bubbles: true }));
+    };
+    T.ok(left().textContent.includes('C binding'), 'C binding section');
+    set('.lang.c.header', 'my_codecs.h');
+    set('.lang.c.type', 'my_time');
+    set('.lang.c.decode', 'my_decode_time');
+    set('.lang.c.print', 'my_print_time');
+    await T.sleep(50);
+    await click(d.querySelector('.tab[data-tab="yaml"]'));
+    const yaml = (d.querySelector('#tab-yaml pre') || d.getElementById('tab-yaml')).textContent;
+    const cLine = yaml.split('\n').find((l) => /^\s*c: \{/.test(l)) || '';
+    T.ok(['header', 'my_codecs.h', 'type', 'my_time', 'decode', 'my_decode_time', 'print', 'my_print_time'].every((x) => cLine.includes(x)),
+         'c: block in the YAML: ' + cLine);
+    T.ok(!/custom_type[\s\S]{0,40}cpp: \{\}/.test(yaml), 'no empty cpp: block');
+    const issues = d.getElementById('issues').textContent;
+    T.ok(!/custom type needs/.test(issues), 'no binding errors: ' + issues);
+    // the c: block survives a YAML round trip and shows in the editor
+    try { await G.loadJsYaml(); } catch (_) { T.skip('js-yaml could not be loaded from cdnjs (offline?)'); }
+    const back = G.fromYaml(yaml);
+    const t = back.customTypes.find((x) => x.lang && x.lang.c && x.lang.c.type === 'my_time');
+    T.ok(t && t.lang.c.print === 'my_print_time', 'c: block read back');
+    noErrors('while editing a C binding');
+  });
+
   T.test('every decode target renders', async () => {
     const sel = d.getElementById('decode-target');
     T.ok(sel, 'target select');

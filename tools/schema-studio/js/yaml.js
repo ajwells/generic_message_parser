@@ -176,10 +176,9 @@
     if (fr.type !== 'none' && fr.type !== 'custom') {
       const sync = G.patternBytes(fr.syncMode, fr.sync) || [];
       if (sync.length) fo[fr.type === 'delimited' ? 'start' : 'sync'] = patternNode(fr.syncMode, fr.sync);
-      if (fr.type === 'delimited') {
-        const end = G.patternBytes(fr.endMode, fr.end) || [];
-        if (end.length) fo.end = patternNode(fr.endMode, fr.end);
-      }
+      // end delimiter: required for delimited, optional after fixed and length-prefixed frames
+      const end = G.patternBytes(fr.endMode, fr.end) || [];
+      if (end.length) fo.end = patternNode(fr.endMode, fr.end);
     }
     const escapable = ['delimited', 'fixed', 'length_prefixed'].includes(fr.type);
     const escapeNode = () => {
@@ -268,6 +267,15 @@
     }
     if (s.customTypes.length || s.customChecksums.length || s.customFramers.length) {
       const c = {};
+      // language blocks other than cpp: kept from the imported YAML (c:, ...)
+      const otherLang = (o, t) => {
+        for (const [lang, block] of Object.entries(t.lang || {})) {
+          const b = {};
+          for (const [k, v] of Object.entries(block)) if (has(v)) b[k] = v;
+          if (Object.keys(b).length) o[lang] = flow(b);
+        }
+        return o;
+      };
       if (s.customTypes.length) {
         c.types = {};
         s.customTypes.forEach((t) => {
@@ -276,7 +284,8 @@
           if (G.isInt(t.max_wire_size)) o.max_wire_size = raw(t.max_wire_size);
           const cpp = {};
           ['header', 'type', 'decode', 'encode'].forEach((k) => { if (has(t[k])) cpp[k] = t[k]; });
-          o.cpp = flow(cpp);
+          if (Object.keys(cpp).length) o.cpp = flow(cpp);
+          otherLang(o, t);
           c.types[t.name] = o;
         });
       }
@@ -285,7 +294,9 @@
         s.customChecksums.forEach((t) => {
           const cpp = {};
           ['header', 'function'].forEach((k) => { if (has(t[k])) cpp[k] = t[k]; });
-          c.checksums[t.name] = { size: raw(G.isInt(t.size) ? t.size : '1'), cpp: flow(cpp) };
+          const o = { size: raw(G.isInt(t.size) ? t.size : '1') };
+          if (Object.keys(cpp).length) o.cpp = flow(cpp);
+          c.checksums[t.name] = otherLang(o, t);
         });
       }
       if (s.customFramers.length) {
@@ -293,7 +304,7 @@
         s.customFramers.forEach((t) => {
           const cpp = {};
           ['header', 'type'].forEach((k) => { if (has(t[k])) cpp[k] = t[k]; });
-          c.framers[t.name] = { cpp: flow(cpp) };
+          c.framers[t.name] = otherLang(Object.keys(cpp).length ? { cpp: flow(cpp) } : {}, t);
         });
       }
       root.custom = c;
@@ -444,17 +455,25 @@
       }));
     }
     const c = y.custom || {};
+    // Language blocks other than cpp: (c:, ...) are not edited in Studio but kept, so an export preserves them.
+    const keepLang = (t, nonLang) => {
+      const out = {};
+      for (const [k, v] of Object.entries(t || {}))
+        if (k !== 'cpp' && !nonLang.includes(k) && v && typeof v === 'object' && !Array.isArray(v))
+          out[k] = Object.fromEntries(Object.entries(v).map(([kk, vv]) => [kk, str(vv)]));
+      return out;
+    };
     for (const [name, t] of Object.entries(c.types || {})) {
       const cpp = t.cpp || {};
-      s.customTypes.push(G.newCustomType({ name, wire_size: str(t.wire_size), max_wire_size: str(t.max_wire_size), header: str(cpp.header), type: str(cpp.type), decode: str(cpp.decode), encode: str(cpp.encode) }));
+      s.customTypes.push(G.newCustomType({ name, wire_size: str(t.wire_size), max_wire_size: str(t.max_wire_size), header: str(cpp.header), type: str(cpp.type), decode: str(cpp.decode), encode: str(cpp.encode), lang: keepLang(t, ['wire_size', 'max_wire_size', 'doc']) }));
     }
     for (const [name, t] of Object.entries(c.checksums || {})) {
       const cpp = t.cpp || {};
-      s.customChecksums.push(G.newCustomChecksum({ name, size: str(t.size), header: str(cpp.header), function: str(cpp.function) }));
+      s.customChecksums.push(G.newCustomChecksum({ name, size: str(t.size), header: str(cpp.header), function: str(cpp.function), lang: keepLang(t, ['size', 'doc']) }));
     }
     for (const [name, t] of Object.entries(c.framers || {})) {
       const cpp = t.cpp || {};
-      s.customFramers.push(G.newCustomFramer({ name, header: str(cpp.header), type: str(cpp.type) }));
+      s.customFramers.push(G.newCustomFramer({ name, header: str(cpp.header), type: str(cpp.type), lang: keepLang(t, ['doc']) }));
     }
     for (const [name, m] of Object.entries(y.messages || {})) {
       s.messages.push(G.newMessage({

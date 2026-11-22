@@ -55,19 +55,24 @@
     s.customTypes.forEach((c) => {
       const t = { kind: 'custom', uid: c.uid };
       claim(c.name, t, 'Custom type');
-      if (!c.type) add('error', t, c.name, 'custom type needs a C++ type');
-      if (!c.decode) add('error', t, c.name, 'custom type needs a decode function');
+      const cb = (c.lang && c.lang.c) || {};
+      // a binding for at least one language (cpp: or c:); a started binding must be complete
+      if (!c.type && !cb.type) add('error', t, c.name, 'custom type needs a C++ or C type');
+      if (c.type && !c.decode) add('error', t, c.name, 'custom type needs a C++ decode function');
+      if (cb.type && !cb.decode) add('error', t, c.name, 'custom type needs a C decode function');
+      if (!c.type && c.decode) add('error', t, c.name, 'custom type needs a C++ type');
+      if (!cb.type && cb.decode) add('error', t, c.name, 'custom type needs a C type');
     });
     s.customChecksums.forEach((c) => {
       const t = { kind: 'custom', uid: c.uid };
       if (!G.isIdent(c.name)) add('error', t, c.name || '(unnamed)', 'checksum name is not a valid identifier');
-      if (!c.function) add('error', t, c.name, 'custom checksum needs a C++ function');
+      if (!c.function && !((c.lang && c.lang.c) || {}).function) add('error', t, c.name, 'custom checksum needs a C++ or C function');
       if (!G.isInt(c.size)) add('error', t, c.name, 'custom checksum needs a size in bytes');
     });
     s.customFramers.forEach((c) => {
       const t = { kind: 'custom', uid: c.uid };
       if (!G.isIdent(c.name)) add('error', t, c.name || '(unnamed)', 'framer name is not a valid identifier');
-      if (!c.type) add('error', t, c.name, 'custom framer needs a C++ type');
+      if (!c.type && !((c.lang && c.lang.c) || {}).scan) add('error', t, c.name, 'custom framer needs a C++ type or a C scan function');
     });
     s.messages.forEach((m) => claim(m.name, { kind: 'message', uid: m.uid }, 'Message'));
     s.protocols.forEach((p) => claim(p.name, { kind: 'protocol', uid: p.uid }, 'Protocol'));
