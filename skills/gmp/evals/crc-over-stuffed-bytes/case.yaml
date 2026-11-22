@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: crc-over-stuffed-bytes
+expected_outcome: |
+  radio.yaml: delimited framing with 0x7E start/end, escape { char: 0x7D, xor: 0x20 }, a 1-byte kind header used
+  for message_type, crc16_kermit stored little-endian computed over the stuffed bytes (checksum.over: wire),
+  Telemetry (kind 1, temp scaled 0.01 degC) and Ack (kind 2). The capture decodes to Telemetry{batt_mv 32268,
+  temp 21.53 degC}, Ack{seq 125}, Telemetry{batt_mv 3700, temp -4.12 degC}.

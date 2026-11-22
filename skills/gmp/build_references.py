@@ -102,7 +102,8 @@ recipes = [
            '- `computed:` joins `serial_high` / `serial_low`; `set_serial()` splits it back automatically.\n'
            '- Each 1-byte command is its own message with a `const` field. `examples/sensirion_sht4x/sht4x_enum.yaml` shows the\n'
            '  alternative: one `CommandFrame` message with a `strict` enum field.\n'
-           '- Responses carry no type id, so each response layout is its own fixed-size protocol.',
+           '- Responses carry no type id. On I2C, each read is one reply: decode it with `Measurement::decode(bytes)` (no\n'
+           '  protocol needed). The fixed-size protocols are only useful when replies arrive on a byte stream.',
            sht_main),
     recipe('5. Reserved sync byte with byte stuffing',
            'a link where a byte value (here 0x80) may only mark the start of a frame, so every other occurrence must be escaped.',

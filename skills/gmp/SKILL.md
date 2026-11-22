@@ -195,7 +195,13 @@ Errors are values (`gmp::Result<T>` = `std::expected<T, gmp::Error>`): `Truncate
 - **Strict enums:** by default undeclared enum values decode fine (check with `is_known()`); set `strict: true` on the
   enum or `defaults.strict_enums: true` to reject them.
 - **Per-frame I/O is the app's job.** GMP doesn't own a UART or socket; read bytes yourself and pass them to `feed()`.
-  Handlers run synchronously inside `feed()`, so feeding from an ISR runs the handlers in the ISR.
+  Handlers run synchronously inside `feed()`, so feeding from an ISR runs the checksum, the decode and your handlers
+  inside the ISR. On an MCU, keep the ISR short instead:
+  - The RX interrupt (or DMA callback) only appends bytes to a single-producer / single-consumer ring buffer. Use
+    `std::atomic` head and tail indices, written by one side each, with a power-of-two size. GMP doesn't ship one yet.
+  - The main loop or a task drains the ring into `parser.feed(...)` (or `push()` + `poll()`).
+
+  Size the ring for bytes per second × the longest gap between drains.
 - **Stored handlers:** `make_stream(h)` / `StreamWith<H>` keep a compile-time handler; `CallbackStream` keeps runtime
   listeners (one per message, plus `AnyView` for every frame and `gmp::FrameError`; registering again replaces).
   Contexts passed to `on<Fn>(ctx)` must outlive the registration. Messages and enums can't be named `Header`,
@@ -204,8 +210,14 @@ Errors are values (`gmp::Result<T>` = `std::expected<T, gmp::Error>`): `Truncate
 
 ## When modelling a new protocol
 
+- **Only add a protocol for what's actually on the wire around the message.** If each read already gives you exactly
+  one message (an I2C or SPI register read, a CAN payload, a USB HID report, a UDP datagram), there's nothing to
+  frame. Define the message and decode it directly with `Msg::decode(bytes)` / `MsgView::from(bytes)`. A `fixed` or
+  `none` protocol around it adds nothing. A protocol is for sync bytes, a header, a length, a frame checksum,
+  delimiters, escaping, or choosing between several message types in one byte stream.
 - One message per distinct payload layout. If a device answers different commands with differently shaped replies
-  that carry no type id, make one protocol per reply (or decode the message directly) and pick by the command you sent.
+  that carry no type id, decode the reply message for the command you sent. Only wrap each reply in its own
+  protocol when you need stream parsing (e.g. the replies arrive on a UART).
 - Reach for `bits` whenever a datasheet shows sub-byte fields; reach for `scale`/`offset` for "value = raw × k + c"
   formulas (store the exact factor, e.g. `175 / 65535` as `0.0026703288319218739`, and comment it).
 - A checksum per value (Sensirion-style "CRC after every word") is a field `crc:`, not a protocol checksum.

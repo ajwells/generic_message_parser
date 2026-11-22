@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: length-counts-cmd-and-crc
+expected_outcome: |
+  motor.yaml: length_prefixed framing with sync 0xA5, a header with LEN (u8) and CMD (u8), and a length definition
+  whose covered size works out to CMD + payload + CRC (e.g. covers: body_checksum with adjust: -1, or an equivalent),
+  crc8_maxim over LEN + CMD + payload (covers: header_body), message_type on CMD, little-endian Status (0x10) and
+  SetSpeed (0x11). Decoding the capture yields Status{rpm 1500, temp_c -5, fault 0}, SetSpeed{rpm 2400},
+  Status{rpm 0, temp_c 22, fault 4}; the corrupted third frame and the 00 FF noise are rejected.

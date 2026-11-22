@@ -2,3 +2,6 @@ cmake-build-*/
 build/
 build-*/
 .idea/workspace.xml
+
+# GMP skill eval results (skill-creator workspace)
+skills/gmp-workspace/

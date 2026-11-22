@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: pressure-sensor-datasheet
+expected_outcome: |
+  px210.yaml describes the 7-byte measurement: a big-endian u16 pressure and an i16 temperature, each followed by
+  its CRC-8 (poly 0x31, init 0xFF, i.e. crc8_nrsc5) as a field-level crc, scaled to hPa (800/65535, offset 300)
+  and degC (1/200); a status bits group with BUSY, a 2-bit MODE enum (sleep/normal/forced), reserved bits as
+  padding or const 0, and DRDY. gmpc --check accepts it.

@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: hid-report-conditional-serial
+expected_outcome: |
+  devinfo.yaml: a message with report_id as const 0x05; mode as an enum (idle/run/cal) that is strict so undeclared
+  values are rejected; flags as a bits group (has_error at bit 0, low_battery at bit 1, 6 reserved bits); serial_hi
+  and serial_lo with a computed 32-bit serial "(serial_hi << 16) | serial_lo" (setter available); error_code with
+  when: flags.has_error; count + array of u16 with count: count and max 16. No protocol/framing is needed. The first
+  report decodes to mode run, low_battery, serial 0x00C0FFEE (12648430), samples 100/200/300, no error_code; the
+  second to mode cal, has_error, error_code 0x0102, serial 305419896, no samples. A mode of 7 is rejected.

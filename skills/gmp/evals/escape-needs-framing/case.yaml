@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: escape-needs-framing
+expected_outcome: |
+  Explains that byte stuffing needs a framing that finds frame boundaries (framing none treats the whole buffer as
+  one message), and changes the protocol to delimited framing with 0x7E start/end flags, keeping
+  escape { char: 0x7D, xor: 0x20 } and the crc16_x25 little-endian checksum. The corrected radio.yaml passes
+  gmpc --check.

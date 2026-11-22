@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: uart-frame-stream-parser
+expected_outcome: |
+  link.yaml: a protocol with length_prefixed framing, sync [0xAA, 0x55], a header with a u8 id and a little-endian
+  u16 length covering the body, a crc16_modbus checksum over header + body stored little-endian, message_type on
+  the id field, and Heartbeat (type_id 1) / SetLed (type_id 2) with little-endian fields. gmpc --check accepts it.
+  rx.cpp feeds the received chunks to the generated Protocol::Stream (or make_stream / CallbackStream) with
+  handlers for both messages, uses no heap, exceptions or std::vector/std::string, and compiles against the
+  generated header.

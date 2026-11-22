@@ -434,7 +434,8 @@ protocols:
 - `computed:` joins `serial_high` / `serial_low`; `set_serial()` splits it back automatically.
 - Each 1-byte command is its own message with a `const` field. `examples/sensirion_sht4x/sht4x_enum.yaml` shows the
   alternative: one `CommandFrame` message with a `strict` enum field.
-- Responses carry no type id, so each response layout is its own fixed-size protocol.
+- Responses carry no type id. On I2C, each read is one reply: decode it with `Measurement::decode(bytes)` (no
+  protocol needed). The fixed-size protocols are only useful when replies arrive on a byte stream.
 
 ```cpp
 // Talk to a Sensirion SHT4x over I2C: encode commands, decode the 6-byte responses (with per-word CRC-8).
