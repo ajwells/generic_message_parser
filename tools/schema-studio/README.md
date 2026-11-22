@@ -18,7 +18,9 @@ A local web app for building GMP YAML schemas visually.
   real schema shown as YAML, laid out as Studio cards and decoded with the decode tester. **Open in Studio** loads it
   into the editor (after asking, because it replaces the current schema). The **C++ / C** switch in its top bar
   changes the code samples, API names and error names to the chosen language (remembered; `guide.html?lang=c` also
-  works); schemas and decoded examples are the same for both.
+  works); schemas and decoded examples are the same for both. Its **API reference** section lists every generated
+  and runtime function grouped by task (decode, views, field access, encode, text, enums and bit groups, protocols,
+  streaming, pull API, printing, sizes, errors, checksums), with a filter box and jump links.
 
 ## Decode tester
 

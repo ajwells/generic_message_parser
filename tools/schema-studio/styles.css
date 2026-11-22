@@ -162,7 +162,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .field-label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 520; min-width: 0; }
 .field-label .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .field-label .hint { font-weight: 400; color: var(--faint); font-size: 11.5px; }
-input[type=text], input[type=number], select, textarea {
+input[type=text], input[type=search], input[type=number], select, textarea {
   width: 100%; border: 1px solid var(--border-strong); background: var(--panel); border-radius: var(--radius-sm);
   padding: 6px 9px; color: var(--text); font-size: 13px; outline: none; transition: border-color .12s, box-shadow .12s;
 }
@@ -494,6 +494,16 @@ pre.g-code { margin: 0 0 6px; font-size: 12px; line-height: 1.55; }
 .g-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--muted); }
 .g-table td:first-child { color: var(--text); white-space: nowrap; }
 .g-table tr:last-child td { border-bottom: none; }
+
+/* API reference */
+.g-api-bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: var(--bg); padding: 8px 0; margin: 6px 0 4px; max-width: 1000px; }
+.g-api-bar input { flex: 0 1 320px; min-width: 200px; }
+.g-api-jump { display: flex; flex-wrap: wrap; gap: 5px; }
+.g-api-jump a { text-decoration: none; font-size: 11.5px; }
+.g-api-group h3 { scroll-margin-top: 56px; }
+.g-api td:first-child { white-space: normal; width: 52%; }
+.g-api .g-sig { font-size: 12px; white-space: pre-wrap; word-break: break-word; background: none; padding: 0; color: var(--text); }
+.g-api-none { color: var(--muted); font-style: italic; }
 
 /* checksums, escaping, streaming */
 .g-algos { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 14px; }

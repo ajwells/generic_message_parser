@@ -124,7 +124,8 @@ Studio (`tools/schema-studio`):
 - Editor for every option, live layout cards, YAML export/import (import uses js-yaml from cdnjs), validation
   mirroring gmpc, decode tester mirroring the runtime (including escaping and wire-count lengths).
 - Hover tooltips for every editor control (`js/tips.js`, keyed by normalised `data-path`).
-- Guide page `guide.html` (`js/guide.js`): 14 sections (incl. "Printing for logs"), 10 live demos built from real
+- Guide page `guide.html` (`js/guide.js`): 15 sections (incl. "Printing for logs" and "API reference": the `API`
+  table in guide.js, rows `[C++ signature, C signature, description]`, grouped by task, with a filter box and jump links), 10 live demos built from real
   schemas, "Open in Studio". Demo runs accept `view: 'print' | 'line'`. A **C++ / C** switch in the top bar
   (`ln(cpp, c)` in guide.js; `?lang=c`; remembered in localStorage `gmp-guide-lang`) swaps code samples, API names,
   error names and the "Generated C++ / C and errors" section; schemas and demos are shared.
@@ -255,6 +256,13 @@ Each planned task has a detailed note (with open questions to ask the user) in t
 project.
 
 ## 8. Session history
+
+### 2026-11-22 (Studio guide: API reference)
+- New guide section 13 "API reference" (`apiRef()` / `API` / `filterApi()` in `js/guide.js`, styles `.g-api*`): every
+  generated and runtime function grouped by task (decode, views, field access, encode, text messages, enums and bit
+  groups, protocols, streaming, pull API, printing, sizes and constants, errors, checksums) for C++ and for C, names
+  checked against the goldens. Filter box (kept across the language switch) and jump links. New `tests/guide.html`
+  case (groups, key names per language, no cross-language names, filter, no-match message); 151 Studio checks.
 
 ### 2026-11-22 (C99 mode, compiled C runtime library with CRC tables)
 - C99: `config.h` accepts C99 (`#error` only below C99), `GMSG_C11`, C99 fallbacks for `GMSG_STATIC_ASSERT` (extern

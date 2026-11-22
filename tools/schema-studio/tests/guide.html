@@ -66,6 +66,51 @@
     T.eq(errors.join('\n'), '', 'JavaScript errors');
   });
 
+  T.test('API reference: groups in both languages, filter', async () => {
+    const btn = (l) => d.querySelector(`#guide-lang button[data-lang="${l}"]`);
+    const sec = () => d.getElementById('api');
+    const groups = () => Array.from(sec().querySelectorAll('[data-api-group]'));
+    const visibleRows = () => Array.from(sec().querySelectorAll('[data-api-row]')).filter((r) => !r.hidden && !r.closest('[data-api-group]').hidden);
+    btn('cpp').click();
+    await T.until(() => sec() && groups().length, 3000, 'API section');
+    const want = ['decode', 'views', 'fields', 'encode', 'text', 'enums', 'protocols', 'stream', 'poll', 'print', 'sizes', 'errors', 'checksums'];
+    T.eq(groups().map((g) => g.dataset.apiGroup).join(','), want.join(','), 'C++ groups');
+    const cppText = sec().textContent;
+    for (const x of ['Status::decode(bytes)', 's.encode(out)', 'Link::parse(frame)', 'parser.poll_event()', 'gmp::println', 'CallbackStream'])
+      T.ok(cppText.includes(x), `C++ reference has ${x}`);
+    T.ok(!/gmsg_printer_init|demo_status_decode/.test(cppText), 'no C names in the C++ reference');
+    T.ok(!/\bnull\b|undefined/.test(cppText), 'no missing cells (C++)');
+    T.ok(sec().querySelectorAll('.g-api-jump a').length === want.length, 'jump links');
+    T.ok(want.every((id) => d.getElementById('api-' + id)), 'jump targets');
+
+    const filter = () => d.getElementById('api-filter');
+    filter().value = 'poll';
+    filter().dispatchEvent(new w.Event('input', { bubbles: true }));
+    const polled = visibleRows();
+    T.ok(polled.length >= 5 && polled.every((r) => /poll/i.test(r.textContent + r.closest('[data-api-group]').textContent)), `filter "poll": ${polled.length} rows`);
+    T.ok(groups().some((g) => g.hidden), 'groups without a match are hidden');
+
+    btn('c').click();
+    await T.until(() => /demo_status_decode/.test(sec().textContent), 3000, 'C reference');
+    T.eq(filter().value, 'poll', 'filter kept after the language switch');
+    T.ok(visibleRows().length >= 5 && visibleRows().every((r) => /poll/i.test(r.closest('[data-api-group]').textContent)), 'filter applied to the C reference');
+    filter().value = 'zzzz-no-such-function';
+    filter().dispatchEvent(new w.Event('input', { bubbles: true }));
+    T.ok(visibleRows().length === 0 && !sec().querySelector('.g-api-none').hidden, 'no-match message');
+    filter().value = '';
+    filter().dispatchEvent(new w.Event('input', { bubbles: true }));
+    const cText = sec().textContent;
+    for (const x of ['demo_status_decode', 'demo_status_view_from', 'demo_link_encode_status_with_header', 'demo_link_stream_poll_event', 'gmsg_printer_finish', 'gmsg_crc32_compute', 'DEMO_LINK_MAX_FRAME'])
+      T.ok(cText.includes(x), `C reference has ${x}`);
+    T.ok(!/gmp::|std::/.test(cText), 'no C++ names in the C reference');
+    T.ok(!/\bnull\b|undefined/.test(cText), 'no missing cells (C)');
+    btn('cpp').click();
+    await T.until(() => /Status::decode/.test(sec().textContent), 3000, 'back to C++');
+    filter().value = '';
+    filter().dispatchEvent(new w.Event('input', { bubbles: true }));
+    T.eq(errors.join('\n'), '', 'JavaScript errors');
+  });
+
   T.run();
 })();
 </script>

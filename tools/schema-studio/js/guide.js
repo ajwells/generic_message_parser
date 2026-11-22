@@ -837,6 +837,220 @@ demo_link_any_view_print(&any, &p);`))}
       <div class="g-legend">${G.renderLegend()}</div>`;
   }
 
+  // ----------------------------------------------------------------------------------------------
+  // API reference: every generated / runtime function, grouped by task. Rows are [C++, C, what it does];
+  // a null signature means the language has no counterpart; the description may be [C++ text, C text].
+  // Names use the guide's example: namespace demo, message Status (voltage scaled, temperature with a degF
+  // conversion, samples array, ext conditional, flags bits group, label string), enum Mode, text message Gga,
+  // protocol Link.
+  // ----------------------------------------------------------------------------------------------
+  const API = [
+    { id: 'decode', title: 'Decode: bytes → struct',
+      intro: 'Validate a whole message and copy every field into a struct you own. Use it when you keep or modify the values.',
+      rows: [
+        ['demo::Status::decode(bytes)  →  gmp::Result<Status>', 'gmsg_error demo_status_decode(const uint8_t* data, size_t size, demo_status* out)',
+          'Decode one message from the start of the buffer (trailing bytes are allowed).'],
+        ['gmp::VoidResult s.read(gmp::ByteReader& r)', 'gmsg_error demo_status_read(gmsg_reader* r, demo_status* m)',
+          'Decode from a reader at its current position, e.g. a message embedded in your own format. The reader advances past it.'],
+        ['demo::Link::decode(frame)  →  gmp::Result<AnyMessage>', 'gmsg_error demo_link_decode(const uint8_t* data, size_t size, demo_link_any_message* out)',
+          'Decode a whole protocol frame into whichever message it carries (see Protocols).'],
+        ['v.to_struct()  →  gmp::Result<Status>', 'gmsg_error demo_status_view_to_struct(const demo_status_view* v, demo_status* out)',
+          'Copy a validated view into a struct.'],
+      ] },
+    { id: 'views', title: 'Views: zero-copy access',
+      intro: 'A view checks the message once and then reads each field straight from the buffer when you ask for it. Nothing is copied; the buffer must outlive the view.',
+      rows: [
+        ['demo::StatusView::from(bytes)  →  gmp::Result<StatusView>', 'gmsg_error demo_status_view_from(const uint8_t* data, size_t size, demo_status_view* out)',
+          'Validate lengths, consts, field CRCs and strict enums, and record field offsets.'],
+        ['demo::StatusView::unchecked(bytes)', 'demo_status_view demo_status_view_unchecked(const uint8_t* data, size_t size)',
+          'A view without validation, for bytes you have already checked.'],
+        ['v.voltage()', 'uint16_t demo_status_view_voltage(const demo_status_view* v)', 'Read one field (the raw wire value).'],
+        ['v.data(), v.wire_size()', 'v.data, v.size', 'The bytes the view covers and its size on the wire.'],
+        ['v.to_struct()', 'demo_status_view_to_struct(&v, &out)', 'Copy everything out into a struct.'],
+      ] },
+    { id: 'fields', title: 'Field access (structs and views)',
+      intro: 'How each kind of field looks. Struct fields are members; view fields are accessor functions with the same names.',
+      rows: [
+        ['s.voltage', 's.voltage', 'Plain field: a struct member with the wire value.'],
+        ['s.voltage_scaled(), s.set_voltage_scaled(12.6)', 'demo_status_voltage_scaled(&s), demo_status_set_voltage_scaled(&s, 12.6)',
+          'Engineering value of a field with scale / offset; the setter rounds back to the raw value. Views have the getter.'],
+        ['s.temperature_degf(), s.set_temperature_degf(77)', 'demo_status_temperature_degf(&s), demo_status_set_temperature_degf(&s, 77)',
+          'One accessor pair per entry in the field\'s conversions list.'],
+        ['s.rgb(), s.set_rgb(v)', 'demo_status_rgb(&s), demo_status_set_rgb(&s, v)', 'computed: values derived from other fields (getter on views too).'],
+        ['s.ext (std::optional), v.ext()  →  std::optional<ExtendedView>', 's.has_ext + s.ext, demo_status_view_has_ext(&v), demo_status_view_ext(&v)',
+          'A conditional (when:) field, present or absent.'],
+        ['s.samples (static_vector), v.samples()  →  size(), [i], range-for', 's.samples[i] with its count field, demo_status_view_samples_count(&v), demo_status_view_samples_at(&v, i)',
+          'Arrays. A length / count taken from another field fills that field automatically on encode.'],
+        ['s.label (static_string), v.label()  →  std::string_view', 's.label (NUL terminated) + s.label_len, demo_status_view_label(&v)  →  gmsg_str',
+          ['Strings; bytes fields give gmp::bytes_view in views.', 'Strings; bytes fields give gmsg_bytes { data, size } in views.']],
+        ['s.flags.armed', 's.flags.armed', 'Members of a bits group (see Enums and bit groups).'],
+        ['v.when()  →  gmp::Result<MyTime>', 'gmsg_error demo_status_view_when(const demo_status_view* v, my_time* out)',
+          'A custom type in a view is decoded on access, so it can fail.'],
+      ] },
+    { id: 'encode', title: 'Encode: struct → bytes',
+      intro: 'Write a struct to a buffer you provide. Lengths and counts that come from other fields are filled in for you; nothing allocates.',
+      rows: [
+        ['s.encode(out)  →  gmp::Result<std::size_t>', 'gmsg_error demo_status_encode(const demo_status* m, uint8_t* out, size_t capacity, size_t* written)',
+          'Encode one message; returns the bytes written (BufferFull when out is too small).'],
+        ['gmp::VoidResult s.write(gmp::ByteWriter& w)', 'gmsg_error demo_status_write(const demo_status* m, gmsg_writer* w)',
+          'Encode at a writer\'s current position (inside your own format).'],
+        ['demo::Link::encode(s, out)', 'demo_link_encode_status(&s, out, capacity, &n)',
+          'A complete frame: sync, header (type id and length filled in), message, checksum, escaping.'],
+        ['demo::Link::encode(header, s, out)', 'demo_link_encode_status_with_header(&h, &s, out, capacity, &n)',
+          'The same, with header fields you choose (sequence numbers, addresses).'],
+        ['demo::Link::encode(any_message, out)', 'demo_link_encode(&any, out, capacity, &n)', 'Encode whichever message the AnyMessage holds.'],
+      ] },
+    { id: 'text', title: 'Text messages',
+      intro: 'Text messages (NMEA-style tokens) have the same struct / view shape; these are the differences.',
+      rows: [
+        ['demo::Gga::decode_text(std::string_view)', null, 'Decode from text without the protocol framing.'],
+        ['demo::Gga::decode(bytes), g.encode(out)', 'demo_gga_decode(data, size, &g), demo_gga_encode(&g, out, capacity, &n)', 'Decode / encode the message tokens.'],
+        ['g.read_text(std::span<const std::string_view> tokens)', 'gmsg_error demo_gga_read_text(const gmsg_str* tok, size_t ntok, demo_gga* m)',
+          'Fill the struct from tokens you split yourself.'],
+        ['g.write_text(gmp::text::TextWriter& w)', 'gmsg_error demo_gga_write_text(const demo_gga* m, gmsg_text_writer* w)', 'Append the tokens to a text writer.'],
+        ['demo::GgaView::from(std::string_view or bytes)', 'demo_gga_view_from(data, size, &v)', 'Split into tokens once; fields are parsed when read.'],
+        ['v.latitude()  →  gmp::Result<std::optional<double>>', 'gmsg_error demo_gga_view_latitude(const demo_gga_view* v, double* out), demo_gga_view_has_latitude(&v)',
+          ['Parse one token on demand; optional tokens give an empty optional.', 'Parse one token on demand; an empty optional token gives GMSG_ERR_MISSING_FIELD (check _has_ first).']],
+        ['g.latitude (std::optional<double>)', 'g.has_latitude + g.latitude', 'Optional tokens in the struct.'],
+        [null, 'demo_gga_view_token(&v, i), demo_gga_view_present_tokens(&v)', 'The raw token text and the number of tokens present.'],
+        ['Gga::token_count, Gga::separator', null, 'Tokens per message and the separator character.'],
+      ] },
+    { id: 'enums', title: 'Enums and bit groups',
+      intro: 'Enums keep every raw value (undeclared ones too); bits groups pack several fields into bytes.',
+      rows: [
+        ['enum class demo::Mode : std::uint8_t { idle, run, fault }', 'typedef uint8_t demo_mode;  DEMO_MODE_IDLE, DEMO_MODE_RUN, ...', 'The enum type and its values.'],
+        ['to_string(Mode)  →  std::string_view', 'const char* demo_mode_to_string(demo_mode v)', ['The value\'s name; empty when undeclared.', 'The value\'s name; NULL when undeclared.']],
+        ['is_known(Mode)', 'bool demo_mode_is_known(demo_mode v)', 'True for a declared value.'],
+        ['Status_flags::unpack(p), f.pack(p)', 'demo_status_flags_unpack(&f, p), demo_status_flags_pack(&f, p)', 'Read / write the group from / to its bytes.'],
+        ['Status_flags::check(p)  →  gmp::VoidResult', 'gmsg_error demo_status_flags_check(const uint8_t* p)', 'Validate const bits and strict enums in the group.'],
+      ] },
+    { id: 'protocols', title: 'Protocols: one frame at a time',
+      intro: 'For datagrams, packets from a queue, or any buffer that holds exactly one frame. Framing, checksum and escaping are handled; the message is chosen by its type id.',
+      rows: [
+        ['demo::Link::parse(frame)  →  gmp::Result<AnyView>', 'gmsg_error demo_link_parse(const uint8_t* data, size_t size, demo_link_any_view* out)',
+          ['A view of whichever message the frame carries: AnyView is a std::variant of the message views.', 'A view of whichever message the frame carries: out->kind (DEMO_LINK_STATUS, ...) and out->as.status, ...']],
+        ['demo::Link::decode(frame)  →  gmp::Result<AnyMessage>', 'demo_link_decode(data, size, &msg)', 'The same, decoded into a struct (a variant / tagged union).'],
+        ['demo::Link::process(frame, handler)  →  gmp::Error', 'gmsg_error demo_link_process(const uint8_t* data, size_t size, const demo_link_callbacks* cb)',
+          ['Call the handler overload for the message (with the header view when it takes one).', 'Call the callback slot for the message, then on_frame.']],
+        ['demo::Link::open(frame)  →  gmp::Result<Frame>, select_message(f), visit_frame(f, fn)', null,
+          'The steps of parse separately: check and unescape the frame, then pick the message.'],
+        ['demo::Link::scan(bytes)  →  gmp::FrameScan', null, 'Find where the next frame starts and ends (what the stream parser uses).'],
+        ['Link::Header, Link::HeaderView, Link::AnyView, Link::AnyMessage', 'demo_link_header, demo_link_header_view, demo_link_any_view, demo_link_any_message, demo_link_kind',
+          'The protocol\'s types.'],
+      ] },
+    { id: 'stream', title: 'Streaming: push bytes, get callbacks',
+      intro: 'For serial ports and sockets: bytes arrive in chunks of any size; the parser finds frames, resyncs after garbage and delivers each message.',
+      rows: [
+        ['demo::Link::Stream<> parser;', 'demo_link_stream s;  uint8_t buf[DEMO_LINK_MAX_FRAME];  demo_link_stream_init(&s, buf, sizeof buf)',
+          ['A parser with its own buffer of max_frame bytes (pass a capacity to change it).', 'A parser using your buffer (at least DEMO_LINK_MAX_FRAME bytes).']],
+        ['parser.feed(chunk, handler)  →  frames delivered', 'size_t demo_link_stream_feed(demo_link_stream* s, const uint8_t* data, size_t n)',
+          ['Push the bytes and call the handler for every complete frame.', 'Push the bytes and call s.cb for every complete frame; returns frames delivered.']],
+        ['parser.push(chunk), parser.next(handler)', 'demo_link_stream_push(&s, data, n), demo_link_stream_next(&s)', 'Push without processing, then deliver one frame (or one error) at a time.'],
+        ['demo::Link::make_stream(handler), feed(chunk)', null, 'A parser that stores its handler at compile time, so the byte receiver only calls feed(chunk).'],
+        ['demo::Link::CallbackStream<> link;  link.on<&App::on_status>(app)', 's.cb.ctx = &app;  s.cb.on_status = on_status;',
+          ['Runtime listeners, one per message; the listener is picked from its parameter type.', 'Callback slots, one per message, with one context pointer; NULL slots are skipped.']],
+        ['link.off<StatusView>(), link.has<StatusView>(), link.clear()', null, 'Remove, test and clear listeners.'],
+        ['on<&App::on_frame>, on<&App::on_drop>', 's.cb.on_frame, s.cb.on_error', 'Every valid frame (after its message callback), and dropped bytes / rejected frames with the reason.'],
+        ['parser.stats()', 'const gmsg_stream_stats* demo_link_stream_stats(const demo_link_stream* s)', 'Counters: frames, frame_errors, bytes_skipped, overflows.'],
+        ['parser.last_error(), parser.buffered(), parser.reset()', 'demo_link_stream_last_error(&s), demo_link_stream_buffered(&s), demo_link_stream_reset(&s)',
+          'Reason of the last drop, bytes waiting, and start over (clears stats).'],
+      ] },
+    { id: 'poll', title: 'Pull API: ask for the next message',
+      intro: 'Push bytes, then poll in your main loop or while waiting for a reply. A polled view stays valid until the parser is used again.',
+      rows: [
+        ['parser.poll()  →  Polled<AnyView>', 'bool demo_link_stream_poll(demo_link_stream* s, demo_link_any_view* out)', 'The next message, or nothing when more input is needed.'],
+        ['parser.poll_frame()  →  { header, message, bytes }', 'bool demo_link_stream_poll_frame(demo_link_stream* s, demo_link_received* out)', 'The next frame with its header view and raw bytes.'],
+        ['parser.poll_message()  →  std::optional<AnyMessage>', 'bool demo_link_stream_poll_message(demo_link_stream* s, demo_link_any_message* out)', 'The next message as a decoded copy.'],
+        ['parser.poll_event()  →  AnyView or gmp::FrameError', 'gmsg_poll demo_link_stream_poll_event(demo_link_stream* s, demo_link_event* out)',
+          ['Messages and errors in stream order.', 'Messages and errors in stream order: GMSG_POLL_MESSAGE, GMSG_POLL_ERROR or GMSG_POLL_NEED_MORE.']],
+        ['link.poll_for<StatusView>()', 'bool demo_link_stream_poll_for(demo_link_stream* s, demo_link_kind kind, demo_link_any_view* out)',
+          'Wait for one message type; other messages go to the listeners meanwhile.'],
+        [null, 'uint32_t demo_link_stream_generation(const demo_link_stream* s)', 'Changes whenever polled views expire, so you can check one is still current.'],
+      ] },
+    { id: 'print', title: 'Printing',
+      intro: 'Human-readable text for logs and consoles; the same output in both languages and in the Studio decode tester.',
+      rows: [
+        ['gmp::print(v, sink, opts), gmp::println(v, sink, opts)  →  gmp::Result<std::size_t>', 'demo_status_print(&s, &p), demo_status_view_print(&v, &p), demo_status_flags_print(&f, &p)',
+          'Print a struct, view or bits group.'],
+        ['sinks: FILE*, std::ostream, char[N], static_string, std::string, callback', 'gmsg_printer_init_file(&p, f, opts), gmsg_printer_init_buffer(&p, buf, cap, opts), gmsg_printer_init(&p, write_fn, ctx, opts)',
+          'Where the text goes.'],
+        [null, 'gmsg_error gmsg_printer_finish(gmsg_printer* p, bool newline, size_t* written)', 'End printing; GMSG_ERR_BUFFER_FULL when the text was cut.'],
+        ['gmp::print(Link::parse(frame).value(), sink)', 'demo_link_any_view_print(&any, &p), demo_link_any_message_print(&msg, &p)', 'Print whichever message a frame holds.'],
+        ['gmp::PrintOptions{ .style, .indent, .max_items, .max_bytes, .precision }', 'gmsg_print_options o = gmsg_print_defaults();', 'Multi or single line, indent, how much of arrays and bytes, significant digits.'],
+        ['m.print_to(gmp::Printer& p)', null, 'What gmp::print calls; use it to print inside your own printer.'],
+        ['void gmp_print(gmp::Printer&, const MyTime&)', 'c: { print: my_time_print }  →  void my_time_print(gmsg_printer* p, const my_time* v)', 'How a custom type prints (otherwise <?>).'],
+      ] },
+    { id: 'sizes', title: 'Sizes and constants',
+      intro: 'Compile-time sizes for buffers and checks.',
+      rows: [
+        ['Status::min_wire_size, Status::max_wire_size', 'DEMO_STATUS_MIN_WIRE_SIZE, DEMO_STATUS_MAX_WIRE_SIZE', 'Smallest and largest encoding of the message.'],
+        ['Status::wire_size', 'DEMO_STATUS_WIRE_SIZE', 'Only for fixed-size messages.'],
+        ['Status::magic_value', 'DEMO_STATUS_MAGIC_VALUE', 'The value of a const field (magic).'],
+        ['Link::max_frame', 'DEMO_LINK_MAX_FRAME', 'Largest frame on the wire: size of stream and encode buffers.'],
+        ['Link::prefix_size, header_size, trailer_size, suffix_size, prefix', null, 'Frame layout: sync / start bytes, header, checksum, end delimiter.'],
+      ] },
+    { id: 'errors', title: 'Errors',
+      intro: 'Nothing throws and nothing allocates; every fallible call reports an error code (table in the next section).',
+      rows: [
+        ['gmp::Result<T>  (std::expected<T, gmp::Error>)', 'gmsg_error return value + out parameter (GMSG_OK is 0)', 'How results are returned.'],
+        ['gmp::to_string(gmp::Error)', 'const char* gmsg_error_str(gmsg_error e)', 'Short description, e.g. "bad checksum".'],
+        ['gmp::FrameError{ error, data }', 'on_error(ctx, gmsg_error e, const uint8_t* data, size_t size)', 'A dropped frame or skipped bytes, with the reason.'],
+      ] },
+    { id: 'checksums', title: 'Checksums (runtime)',
+      intro: 'The algorithms protocols use are available directly, e.g. to check a frame by hand or build a reply.',
+      rows: [
+        ['gmp::crc32::compute(bytes)', 'uint32_t gmsg_crc32_compute(const uint8_t* data, size_t n)', 'One call over a whole buffer (every preset: crc8 … crc64_ecma, xor8, sum8, lrc8, sum16, fletcher16, fletcher8_ubx).'],
+        ['init(), update(state, bytes), finish(state)', 'gmsg_crc32_init(), gmsg_crc32_update(state, data, n), gmsg_crc32_finish(state)', 'Incremental: feed the data in pieces.'],
+        ['gmp::Crc<T, width, poly, init, refin, refout, xorout>', 'gmsg_crc_params p = { width, refin, refout, poly, init, xorout };  gmsg_crc_compute(&p, data, n)', 'Any other CRC from its parameters.'],
+      ] },
+  ];
+
+  function apiRef() {
+    const langName = LANGS[lang];
+    const groups = API.map((g) => {
+      const rows = g.rows.filter((r) => (lang === 'c' ? r[1] : r[0]) != null);
+      if (!rows.length) return '';
+      const body = rows.map((r) => {
+        const sig = lang === 'c' ? r[1] : r[0];
+        const desc = Array.isArray(r[2]) ? ln(r[2][0], r[2][1]) : r[2];
+        return `<tr data-api-row><td><code class="g-sig">${esc(sig)}</code></td><td>${esc(desc)}</td></tr>`;
+      }).join('');
+      return `<div class="g-api-group" data-api-group="${g.id}"><h3 id="api-${g.id}">${esc(g.title)}</h3><p>${esc(g.intro)}</p>
+        <table class="g-table g-api"><thead><tr><th>${langName}</th><th>what it does</th></tr></thead><tbody>${body}</tbody></table></div>`;
+    }).join('');
+    return `
+      <p>Every function the generated code and the runtime give you, grouped by what you want to do. Names follow the
+      examples in this guide: <code>namespace: demo</code>, a message <code>Status</code>, an enum <code>Mode</code>, a
+      text message <code>Gga</code> and a protocol <code>Link</code>; your schema's names take their place
+      (${ln('<code>demo::Status</code>, <code>demo::Link</code>', '<code>demo_status_…</code>, <code>demo_link_…</code>; the prefix is the namespace, or <code>--opt prefix=</code>')}).</p>
+      <div class="g-api-bar">
+        <input id="api-filter" type="search" placeholder="Filter, e.g. encode, poll, print, crc" aria-label="Filter the API reference">
+        <div class="g-api-jump">${API.map((g) => `<a class="g-k" href="#api-${g.id}">${esc(g.title.split(':')[0])}</a>`).join('')}</div>
+      </div>
+      ${groups}
+      <p class="g-api-none" hidden>No function matches the filter.</p>`;
+  }
+
+  /** Show only API rows containing every word of the filter (groups whose title matches keep all rows). */
+  function filterApi(root, text) {
+    const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+    let any = false;
+    root.querySelectorAll('[data-api-group]').forEach((g) => {
+      const head = g.querySelector('h3').textContent.toLowerCase();
+      let shown = 0;
+      g.querySelectorAll('[data-api-row]').forEach((r) => {
+        const t = head + ' ' + r.textContent.toLowerCase();
+        const ok = words.every((w) => t.includes(w));
+        r.hidden = !ok;
+        if (ok) shown++;
+      });
+      g.hidden = shown === 0;
+      if (shown) any = true;
+    });
+    const none = root.querySelector('.g-api-none');
+    if (none) none.hidden = any;
+  }
+
   const SECTIONS = [
     ['overview', 'What is GMP', overview],
     ['anatomy', 'Anatomy of a schema', anatomy],
@@ -850,6 +1064,7 @@ demo_link_any_view_print(&any, &p);`))}
     ['text', 'Text protocols', text],
     ['streaming', 'Streaming and resync', streaming],
     ['printing', 'Printing for logs', printing],
+    ['api', 'API reference', apiRef],
     ['cpp', () => `Generated ${LANGS[lang]} and errors`, cpp],
     ['studio', 'Using the Studio', studio],
   ];
@@ -928,6 +1143,7 @@ demo_link_any_view_print(&any, &p);`))}
       });
     };
     const title = (t) => (typeof t === 'function' ? t() : t);
+    let apiFilterText = '';  // kept when the language switch renders the page again
     const render = () => {
       document.documentElement.dataset.lang = lang;
       if (langSel) langSel.querySelectorAll('button[data-lang]').forEach((b) => b.classList.toggle('on', b.dataset.lang === lang));
@@ -937,6 +1153,11 @@ demo_link_any_view_print(&any, &p);`))}
       main.innerHTML = SECTIONS.map(([id, t, fn], i) =>
         `<section class="g-sec" id="${id}"><div class="g-sec-kicker">${String(i + 1).padStart(2, '0')}</div><h2>${esc(title(t))}</h2>${fn()}</section>`).join('') +
         '<footer class="g-foot">Every example on this page is a real schema, laid out and decoded by the same code as the Studio.</footer>';
+      const filter = document.getElementById('api-filter');
+      if (filter && apiFilterText) {
+        filter.value = apiFilterText;
+        filterApi(main, apiFilterText);
+      }
       renderDemos();
     };
     if (langSel) langSel.addEventListener('click', (e) => {
@@ -952,6 +1173,12 @@ demo_link_any_view_print(&any, &p);`))}
       const again = cur && document.getElementById(cur.id);
       if (again) again.scrollIntoView({ behavior: 'instant', block: 'start' });
       spy();
+    });
+
+    main.addEventListener('input', (e) => {
+      if (e.target.id !== 'api-filter') return;
+      apiFilterText = e.target.value;
+      filterApi(main, apiFilterText);
     });
 
     // decode hover: bytes <-> fields, per example run
