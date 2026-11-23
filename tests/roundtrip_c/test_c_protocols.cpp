@@ -231,12 +231,24 @@ auto cpp_recorder(std::vector<Event>& out) {
 template <class P, std::size_t... I>
 std::vector<typename P::AnyMessage> sample_messages(std::mt19937& rng, std::index_sequence<I...>) {
     std::vector<typename P::AnyMessage> out;
+    // escaped protocols: bytes that need escaping are common, so frames contain escape pairs
+    Bytes special;
+    if constexpr (requires { P::framing_config.escape; }) {
+        const auto& c = P::framing_config.escape;
+        if (c.enabled) {
+            special.assign(c.raw.begin(), c.raw.begin() + c.count);
+            special.push_back(c.esc);
+        }
+    }
     auto one = [&]<class M>(std::type_identity<M>) {
         out.emplace_back(M{});
         int found = 0;
         for (int k = 0; k < 200000 && found < 3; ++k) {
             Bytes b(rng() % 40);
-            for (auto& x : b) x = static_cast<std::uint8_t>(rng() % 3 == 0 ? rng() % 4 : rng());
+            for (auto& x : b)
+                x = static_cast<std::uint8_t>(!special.empty() && rng() % 4 == 0 ? special[rng() % special.size()]
+                                              : rng() % 3 == 0                    ? rng() % 4
+                                                                                  : rng());
             if (auto m = M::decode(gmp::bytes_view(b.data(), b.size()))) {
                 out.emplace_back(*m);
                 ++found;
@@ -290,6 +302,23 @@ std::vector<Bytes> mutations(const std::vector<Bytes>& valid, std::mt19937& rng)
     return out;
 }
 
+/// False when `in` holds an escape pair for a byte that needs no escaping: restoring a failed frame writes that byte
+/// plainly, so the buffer then differs from the input.
+template <class P>
+bool canonical_escapes(const Bytes& in) {
+    if constexpr (requires { P::framing_config.escape; }) {
+        const auto& c = P::framing_config.escape;
+        if (!c.enabled) return true;
+        for (std::size_t i = 0; i + 1 < in.size(); ++i) {
+            if (in[i] != c.esc) continue;
+            const auto d = c.decode(in[i + 1]);
+            if (d && !c.needs_escape(*d)) return false;
+            ++i;
+        }
+    }
+    return true;
+}
+
 /// Whole-buffer parse / decode / process / encode.
 template <class T>
 void check_whole_buffer(const std::vector<Bytes>& valid, unsigned seed) {
@@ -304,6 +333,8 @@ void check_whole_buffer(const std::vector<Bytes>& valid, unsigned seed) {
         typename T::AnyView v;
         const auto ce = T::parse(b.data(), b.size(), &v);
         REQUIRE(static_cast<int>(ce) == (cpp ? 0 : code(cpp.error())));
+        CHECK(a == b);  // C and C++ leave the same bytes
+        if (!cpp && canonical_escapes<P>(in)) CHECK(a == in);  // a frame that fails is left as received
         if (cpp) {
             ++ok;
             REQUIRE(static_cast<std::size_t>(v.kind) == cpp->index() + 1);
@@ -321,6 +352,7 @@ void check_whole_buffer(const std::vector<Bytes>& valid, unsigned seed) {
             const auto cb = recording_callbacks<T>(events);
             CHECK(T::process(c.data(), c.size(), &cb) == ce);
             CHECK(events.size() == (ce == GMSG_OK ? 1u : 0u));
+            CHECK(c == b);
         }
         if constexpr (T::structs) {
         // decode and re-encode

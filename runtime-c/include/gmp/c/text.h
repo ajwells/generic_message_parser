@@ -14,6 +14,7 @@
 #include "gmp/c/config.h"
 #include "gmp/c/error.h"
 #include "gmp/c/float_text.h"
+#include "gmp/c/mem.h"
 #include "gmp/c/types.h"
 
 GMSG_C_BEGIN
@@ -240,19 +241,26 @@ GMSG_API gmsg_error gmsg_text_u64_token(gmsg_text_writer* w, uint64_t v, int bas
 /* Float token: precision >= 0 fixed with that many decimals, else shortest; width > 0 zero-pads after the sign to
  * that many characters in total (NMEA style "0123.45"). */
 GMSG_PRIV_ gmsg_error gmsg_text_float_(gmsg_text_writer* w, double v, bool is_float, int precision, int width) {
-    char tmp[1100];
-    size_t n = 0, i, start = 0;
+    /* formatted straight into the output, so any length fits that the output buffer can hold */
+    char* at;
+    size_t n = 0;
     gmsg_error e = gmsg_text_begin_token(w);
     if (e != GMSG_OK) return e;
-    e = is_float ? gmsg_format_float((float)v, precision, tmp, sizeof tmp, &n) : gmsg_format_double(v, precision, tmp, sizeof tmp, &n);
+    at = w->out + w->pos;
+    e = is_float ? gmsg_format_float((float)v, precision, at, w->cap - w->pos, &n)
+                 : gmsg_format_double(v, precision, at, w->cap - w->pos, &n);
+    if (e == GMSG_ERR_BUFFER_FULL) return e;
     if (e != GMSG_OK) return GMSG_ERR_INVALID_VALUE;
-    if (n > 0 && tmp[0] == '-') {
-        if ((e = gmsg_text_put_(w, '-')) != GMSG_OK) return e;
-        start = 1;
+    if (width > 0 && (size_t)width > n) { /* zero padding after the sign */
+        const size_t pad = (size_t)width - n;
+        const size_t sign = at[0] == '-' ? 1u : 0u;
+        if (w->cap - w->pos < n + pad) return GMSG_ERR_BUFFER_FULL;
+        gmsg_memmove(at + sign + pad, at + sign, n - sign);
+        gmsg_memset(at + sign, (uint8_t)'0', pad);
+        n += pad;
     }
-    for (i = n; i < (size_t)(width > 0 ? width : 0); ++i)
-        if ((e = gmsg_text_put_(w, '0')) != GMSG_OK) return e;
-    return gmsg_text_raw(w, tmp + start, n - start);
+    w->pos += n;
+    return GMSG_OK;
 }
 
 GMSG_API gmsg_error gmsg_text_f64_token(gmsg_text_writer* w, double v, int precision, int width) {

@@ -145,21 +145,6 @@ constexpr bool has_header = requires { typename P::HeaderView; };
 template <class P>
 constexpr bool has_stream = requires { typename P::template Stream<>; };
 
-/// The stream reference: P, with process() working on a copy of the frame. The generated C++ unescapes a frame in
-/// place in the parser buffer, so after a frame fails (bad checksum...) the parser resynchronises over unescaped
-/// bytes; JavaScript unescapes a copy and resynchronises over the bytes as received. The copy gives the reference
-/// for that (non-destructive) behaviour; for protocols without escaping it changes nothing.
-template <class P>
-struct NonDestructive {
-    static gmp::FrameScan scan(gmp::bytes_view b) noexcept { return P::scan(b); }
-    template <class H>
-    static gmp::Error process(gmp::mut_bytes frame, H& handler) {
-        static std::array<std::uint8_t, 65536> scratch;
-        std::copy(frame.begin(), frame.end(), scratch.begin());
-        return P::process(gmp::mut_bytes(scratch.data(), frame.size()), handler);
-    }
-};
-
 template <class P>
 struct ProtocolCase {
     const char* schema;
@@ -221,7 +206,7 @@ struct ProtocolCase {
                 }
                 for (const std::size_t chunk : {std::size_t{1}, std::size_t{5}, wire.size() ? wire.size() : 1}) {
                     std::string ev;
-                    gmp::StreamParser<NonDestructive<P>, P::max_frame> parser;
+                    typename P::template Stream<> parser;  // the real C++ stream: resyncs over the bytes as received
                     auto on_view = [&](const auto& v) { ev += "M:" + text(v, true) + "\n"; };
                     auto handler = gmp::overloaded{
                         [&](const gmp::FrameError& e) {

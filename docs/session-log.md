@@ -23,7 +23,7 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 - Toolchain PATH (Git Bash):
   `export PATH="/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/mingw/bin:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/ninja/win/x64:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin:$PATH"`
   (MinGW GCC 15, Ninja, CMake; yaml-cpp and Catch2 via FetchContent).
-- Debug build + tests: `cmake --build build && ctest --test-dir build` (236 tests, all passing, including `gmp_studio_tests`, the C runtime tests in C11 / C99 / library builds, the generated-C cross-checks, the JS runtime and generated-JS cross-checks and `gmp_studio_gmpc_fresh`). Keep the MinGW `bin` on PATH when running ctest: without it the test executables fail with 0xc0000139.
+- Debug build + tests: `cmake --build build && ctest --test-dir build` (238 tests, all passing, including `gmp_studio_tests`, the C runtime tests in C11 / C99 / library builds, the generated-C cross-checks, the JS runtime and generated-JS cross-checks and `gmp_studio_gmpc_fresh`). Keep the MinGW `bin` on PATH when running ctest: without it the test executables fail with 0xc0000139.
 - Node.js: none on PATH; CMake finds the copy inside emsdk (`~/emsdk/node/24.19.0_64bit/node.exe`, variable `GMP_NODE`). JS tests: `node tests/runtime_js/test_runtime.js build/tests/runtime_js/gmp_js_vectors.exe` and `node tests/roundtrip_js/test_generated.js build/tests/roundtrip_js/gmp_js_crossref.exe build/tests/roundtrip_js/gen`.
 - emsdk is installed in `~/emsdk` (latest). It needs Python 3.10+: a portable Python 3.12 is in `~/tools/python312`, and emsdk brings Python 3.13 and Node. `py tools/schema-studio/gmpc/build.py` (with the CLion CMake + Ninja on PATH) builds `gmpc.wasm` in `build-wasm/` (about 20 s) and writes `tools/schema-studio/gmpc/gmpc.js`, `gmpc.stamp`, `gmpc-info.js`. Rebuild after any change under `generator/` (the freshness test fails otherwise).
 - Release build: `cmake --build build-release` (Release, bench ON, tests and examples OFF; it is a compile check only).
@@ -67,7 +67,7 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 | `tests/runtime_c` | C runtime: `test_c_runtime.c` (built as C11 and C99 with `GMSG_USE_LIBC` 1 and 0, with `GMSG_CRC_TABLES=1`, and against `gmp::runtime_c_lib`; checks every CRC preset against the bit-by-bit CRC, i.e. every table entry), `crosscheck_c.c` + `test_c_vs_cpp.cpp` (C vs C++ runtime on random inputs), `test_text_c_vs_cpp.cpp` (float text incl. `%g`-style digits, the printer against `gmp::Printer`); the cross-check also runs against the library build (C side C99, ctest names end in `[c99, runtime_c_lib]`), `cxx_compat.cpp` (C headers compiled as C++). Strict warnings with `-Werror` |
 | `tests/roundtrip_c` | generated C for every supported schema compiled as strict C11 with `-Werror` (`gmp_test_schemas_c`), and the same files as C99 header-only (`gmp_test_schemas_c99`, compile check) and C99 with the library (`gmp_test_schemas_c99_lib`, cross-checked by `gmp_c_generated_tests_lib`), `test_c_generated.cpp` (messages: C vs C++ on valid, truncated, corrupted and random inputs: errors, fields, views, conversions, computed values, re-encoded bytes, print text via `print_compare.hpp`) and `test_c_protocols.cpp` (16 + 4 protocols: whole-buffer parse / decode / process / encode and noisy streams in several chunk sizes: events, header and message bytes, stats) |
 | `tests/runtime_js` | `gmsg.js` tests under Node: `test_runtime.js` (unit checks + vectors from `js_vectors.cpp`: checksums, generic CRCs via the C runtime, bits, float text, int parsing, TextWriter, scanners, escaping, stream, printer), `harness.js` |
-| `tests/roundtrip_js` | generated JS for every test schema (`gmp_generate(LANG js)` into `build/tests/roundtrip_js/gen`, with `test_codecs.js`) cross-checked against generated C++: `js_crossref.cpp` (messages: decode / print / re-encode / view on seeds, mutations, truncations; protocols: parse / decode / encode and noisy streams through a NonDestructive wrapper) and `test_generated.js` |
+| `tests/roundtrip_js` | generated JS for every test schema (`gmp_generate(LANG js)` into `build/tests/roundtrip_js/gen`, with `test_codecs.js`) cross-checked against generated C++: `js_crossref.cpp` (messages: decode / print / re-encode / view on seeds, mutations, truncations; protocols: parse / decode / encode and noisy streams through the real `Stream<>`) and `test_generated.js` |
 | `tests/runtime`, `tests/generator` (golden + diagnostics), `tests/roundtrip`, `tests/schemas` | test suites; goldens in `tests/generator/golden/<backend>/` (`cpp/`, `c/`, `js/`) |
 | `examples/` | binary_telemetry, nmea_text, bitpacked_can, custom_codec, sensirion_sht4x (two schemas), reserved_sync; C versions (`main.c`, `gmp_add_example(... LANG c)`) of binary_telemetry (callbacks), nmea_text (push + poll_event) and custom_codec (`c:` codecs, print hook) |
 | `docs/schema.md` | compact schema reference (source for the skill's `references/schema.md`) |
@@ -280,14 +280,13 @@ C runtime (`runtime-c/`, for the C backend):
   (e.g. `GMSG_USE_LIBC`, `GMSG_FLOAT_TEXT`) is not detected; set options on the library target as PUBLIC definitions.
 - C99 builds of generated code skip the `_Generic` signature checks of `c:` functions (calls are still type checked).
 - Text protocols with escaping are allowed only for delimited framing; `checksum.over: wire` is binary-only.
-- **Escaped frames and resync (C++ / C vs JS):** the C++ and C stream parsers unescape a frame in place in the stream
-  buffer. When that frame then fails (checksum, type id...) only `consume_on_error` bytes are dropped and the parser
-  resynchronises over the *unescaped* bytes, where a payload's escaped sync byte is now raw (possible phantom frame
-  starts). JS unescapes a copy and resynchronises over the bytes as received. `js_crossref.cpp` uses a
-  `NonDestructive<P>` wrapper as the reference. Open decision for the user (section 7).
-- C++ `TextWriter::float_token` formats into a 128-character buffer, so fixed notation of huge values (|v| ≥ ~1e120
-  with a precision) fails with `InvalidValue`; C (1100-byte buffer) and JS encode them.
+- **Escaped frames that fail (C++ / C vs JS):** C++ and C restore a failed frame by escaping it again, so with `xor`
+  escaping a non-canonical escape pair (escape + code of a byte that needs no escaping) comes back as the plain byte;
+  JS keeps the bytes exactly. Resync is the same; only `FrameError::data` contents can differ.
+- C `_poll_message` restores a frame whose struct decode fails after the view decoded, but no test reaches that path
+  for an escaped protocol (the C++ encoder cannot build such a frame); a planted bug there is not caught.
 - JS cannot keep the payload of f32 signalling NaNs (they become quiet NaNs), so such values re-encode differently.
+  Accepted by the user (2026-11-22); revisit only if a protocol needs bit-exact NaNs in JS.
 - The gmpc engine cannot run custom codecs (user code); frames using them fail with `Custom` in that engine.
 
 ## 7. Future tasks (planned, not started)
@@ -302,13 +301,35 @@ C runtime (`runtime-c/`, for the C backend):
 | Stream I/O + callbacks | decided: do all four, one at a time. **A** stored handler / callbacks: **done**. **C** ISR-safe ring buffer: design presented, **tabled** (open questions C1–C6 in the memory note). **B** pull API: **done**. Remaining: **C** (when resumed) and **D**, an endpoint with source/sink adapters, `send(msg)` and a blocking `wait_for<V>(timeout)` / `transact`. |
 | `gmp::to_text<N>(msg)` (small, optional) | printing helper returning a fresh `gmp::static_string<N>` instead of appending to a sink |
 | Rename C++ runtime macros/namespace? | The C runtime uses `gmsg_` / `GMSG_` to avoid GNU MP (`gmp_`, `GMP_`). Consider whether the C++ runtime should match: `namespace gmp` and `GMP_ASSERT` don't clash with GNU MP today (its C++ wrapper `gmpxx.h` has no `gmp` namespace), but the names are confusable and a future `GMP_*` macro could clash. Would touch the runtime, generated code, goldens, docs, Studio text and the skill. Ask the user. |
-| Non-destructive unescaping in C++ / C streams? (deferred by the user, 2026-11-22) | See section 6: decide whether the C++ and C stream parsers should resync over the received bytes after a failed escaped frame (like JS). Options: a scratch buffer of `max_frame` for escaped protocols, or unescape only after the checksum passed. Ask the user. Also: whether C++ `float_token` should get a larger buffer (as C). |
 | JS follow-ups (suggested, not requested yet) | A JS example program (`examples/*/main.js`, run as a test like the C examples), TypeScript declarations (`.d.ts`) for gmsg.js and generated modules (possibly a gmpc output), an npm package layout for the runtime (package.json, ES module entry besides UMD). Memory note `studio-js-runtime-todo`. |
 
 Each planned task has a detailed note (with open questions to ask the user) in the Claude memory directory for this
 project.
 
 ## 8. Session history
+
+### 2026-11-22 (JS findings decided: checksum-first unescape, unbounded float tokens, f32 NaN accepted)
+- Decisions (user): 1. C++ / C unescape only after the checksum passes; 2. enlarge the C++ float token buffer as
+  needed; 3. accept JS f32 NaN payload loss and document it (kept as a watch item in memory `js-findings-todo`).
+- 1: runtime `gmp::check_escaped` / `gmp::for_each_unescaped` (C: `gmsg_check_escaped`, `gmsg_unescape_iter`).
+  Escaped binary frames verify a built-in checksum (and `over: wire`) over the escaped bytes before unescaping.
+  Failures that come later (custom checksum functions, header, unknown type, body, struct decode in
+  `poll_message`) restore the frame with `restore_frame` / `_restore_` (re-escaping in place), so resync always
+  scans the bytes as received. (The restore goes beyond the user's choice: checksum-first alone would leave those
+  cases destructive.)
+  C++: `Frame::unescaped_size`, `restore_frame`, `StreamParser::open_view` (all `poll*`). C: `_split_`,
+  `_restore_`, `_select_restore_`.
+- Tests: `js_crossref.cpp` compares JS with the real `Stream<>` (NonDestructive wrapper removed).
+  `test_c_protocols.cpp` checks that C and C++ leave the same bytes and that a failed frame is left as received;
+  the random sample messages now favour reserved bytes. Before that, the C mutants were not caught. 7 of 8 planted
+  bugs caught (restore in C++ / C / poll helper, checksum range, iterator decode, dropped run, code check). Not
+  caught: the C `poll_message` restore (section 6).
+- 2: C++ `TextWriter::float_token` and C `gmsg_text_float_` format straight into the output buffer (no 128 /
+  1100-character temporary). New test "C and C++ text writers write huge fixed-notation floats"; the JS vectors no
+  longer skip failing tokens (buffer 1024, failure is fatal). The old C++ code fails both.
+- Goldens: only the escaped schemas changed (C++ and C; JS unchanged). gmpc.js rebuilt. README (escaping rules, JS
+  known differences, `poll_frame`), docs/schema.md, skill references.
+- End state: 238 ctest pass, Studio suite passes, Release build compiles. Not committed.
 
 ### 2026-11-22 (JavaScript GMP: runtime, js backend, Studio engines)
 - Decisions (user): keep functionality the same across C++ / C / JS but idiomatic per language; Studio gets both a
@@ -327,7 +348,7 @@ project.
 - Phase 5: Studio JavaScript binding editor + tooltips + validation; Guide JavaScript language (code samples,
   streamingJs / generatedJs, API reference JS column, error names) + test; README "JavaScript output", custom `js:`
   table, CMake / CLI / layout; docs/schema.md; Studio READMEs; SKILL.md + references.
-- End state: 236 ctest pass, Studio 191 checks pass, Release build compiles. Nothing committed.
+- End state: 236 ctest pass, Studio 191 checks pass, Release build compiles. Committed later as `f06d5db`.
 - The user deferred the open decisions (in-place unescape in C++/C streams, C++ `float_token` buffer, f32 NaN
   payloads in JS) to a later session; see section 7 and memory note `js-findings-todo`.
 

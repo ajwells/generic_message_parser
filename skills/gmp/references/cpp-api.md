@@ -123,7 +123,7 @@ while (auto m = parser.poll()) {                 // next valid message; empty = 
 | call | returns |
 |------|---------|
 | `poll()` | `Polled<AnyView>`: the next valid message. |
-| `poll_frame()` | `Polled<Received>`: `{ header, message, bytes }`. `header` exists only on protocols with a header; `bytes` is the frame. For protocols with escaping, it has been unescaped in place, so only the header and body are meaningful. |
+| `poll_frame()` | `Polled<Received>`: `{ header, message, bytes }`. `header` exists only on protocols with a header; `bytes` is the frame. For protocols with escaping, it has been unescaped in place, so only the header and body are meaningful (frames that fail are left as received). |
 | `poll_message()` | `std::optional<AnyMessage>`: the decoded struct, a copy that stays valid. A frame whose struct decode fails (e.g. more than `max` elements) is dropped like any bad frame. |
 | `poll_event()` | `Polled<std::variant<AnyView, gmp::FrameError>>`: messages and errors inline, in stream order. |
 | `poll_for<V>()` | `Polled<V>`: wait (without blocking) for one message type, e.g. a reply. Only on parsers with a stored handler (`CallbackStream`, `make_stream`): other messages that arrive meanwhile go to that handler. |
@@ -504,13 +504,11 @@ text (`to_chars` / `from_chars` results) and printing. Its tests compare it with
 generated JavaScript for every test schema is compared with the generated C++ on valid, mutated and truncated
 messages and on noisy streams (errors, `gmp::print` text, re-encoded bytes, stream events and statistics). Known
 differences:
-- a frame of a byte-stuffed protocol that fails validation is not unescaped in the stream buffer, so the parser
-  resynchronises over the bytes as received (the C++ and C parsers unescape in place and resynchronise over the
-  unescaped bytes)
 - signalling NaNs of `f32` fields become quiet NaNs (JavaScript cannot keep their payload), so they re-encode
   differently
-- a huge float in a text field with a `precision` (fixed notation longer than 127 characters) encodes; C++ reports
-  `InvalidValue`, C encodes it too
+- a frame of a byte-stuffed protocol that fails validation: JavaScript reports its bytes exactly as received; C++ and C
+  restore them by escaping again, so an escape pair of a byte that needs no escaping (possible with `xor` escaping)
+  comes back as the plain byte. Resynchronisation is the same.
 
 Schema Studio uses the same runtime: its decode tester's **Quick** engine interprets the schema with `gmsg.js`, and its
 **gmpc** engine generates the JavaScript with gmpc compiled to WebAssembly (`tools/schema-studio/gmpc/gmpc.js`, built

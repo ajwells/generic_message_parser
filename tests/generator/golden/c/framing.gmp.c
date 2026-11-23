@@ -1040,25 +1040,59 @@ typedef struct test_framing_escaped_with_end_frame_ {
     test_framing_escaped_with_end_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } test_framing_escaped_with_end_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
-static gmsg_error test_framing_escaped_with_end_open_(uint8_t* frame, size_t size, test_framing_escaped_with_end_frame_* f) {
+/* Split an unescaped frame into header and body. */
+static gmsg_error test_framing_escaped_with_end_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, test_framing_escaped_with_end_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
-    if (size < 6) return GMSG_ERR_TRUNCATED;
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 1, &test_framing_escaped_with_end_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
+    (void)frame;
     if (interior_n < 4) return GMSG_ERR_TRUNCATED;
-    {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 2, 2, GMSG_ENDIAN_LITTLE);
-        if (stored != (uint64_t)gmsg_crc16_kermit_compute(interior, interior_n - 2)) return GMSG_ERR_BAD_CHECKSUM;
-    }
     if ((e = test_framing_escaped_with_end_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
     f->body = interior + 2;
     f->body_size = interior_n - 2 - 2;
     return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void test_framing_escaped_with_end_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 1, 1, unescaped_n, &test_framing_escaped_with_end_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
+static gmsg_error test_framing_escaped_with_end_open_(uint8_t* frame, size_t size, test_framing_escaped_with_end_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 6) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 1;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &test_framing_escaped_with_end_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 4) return GMSG_ERR_TRUNCATED;
+    {
+        uint8_t sb[2];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &test_framing_escaped_with_end_framing_.escape, un - 2, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 2, GMSG_ENDIAN_LITTLE);
+        uint16_t c = gmsg_crc16_kermit_init();
+        gmsg_unescape_iter_init(&it, wire, wire_n, &test_framing_escaped_with_end_framing_.escape, 0, un - 2);
+        while (gmsg_unescape_next(&it, &pp, &pn)) c = gmsg_crc16_kermit_update(c, pp, pn);
+        if (stored != (uint64_t)gmsg_crc16_kermit_finish(c)) return GMSG_ERR_BAD_CHECKSUM;
+    }
+    (void)gmsg_unescape_in_place(wire, wire_n, &test_framing_escaped_with_end_framing_.escape, &un);
+    e = test_framing_escaped_with_end_split_(frame, wire, un, f);
+    if (e != GMSG_OK) test_framing_escaped_with_end_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -1078,6 +1112,12 @@ static gmsg_error test_framing_escaped_with_end_select_(const test_framing_escap
     return GMSG_ERR_UNKNOWN_TYPE;
 }
 
+static gmsg_error test_framing_escaped_with_end_select_restore_(uint8_t* frame, size_t size, const test_framing_escaped_with_end_frame_* f, test_framing_escaped_with_end_any_view* out) {
+    const gmsg_error e = test_framing_escaped_with_end_select_(f, out);
+    if (e != GMSG_OK) test_framing_escaped_with_end_restore_(frame, size, f->unescaped_n);
+    return e;
+}
+
 static void test_framing_escaped_with_end_deliver_(const test_framing_escaped_with_end_callbacks* cb, const test_framing_escaped_with_end_frame_* f, const test_framing_escaped_with_end_any_view* v) {
     switch (v->kind) {
         case TEST_FRAMING_ESCAPED_WITH_END_READING: if (cb->on_reading) cb->on_reading(cb->ctx, &f->header, &v->as.reading); break;
@@ -1093,7 +1133,7 @@ static gmsg_error test_framing_escaped_with_end_process_frame_(uint8_t* frame, s
     test_framing_escaped_with_end_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = test_framing_escaped_with_end_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = test_framing_escaped_with_end_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = test_framing_escaped_with_end_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) test_framing_escaped_with_end_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -1105,7 +1145,7 @@ gmsg_error test_framing_escaped_with_end_parse(uint8_t* data, size_t size, test_
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = test_framing_escaped_with_end_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return test_framing_escaped_with_end_select_(&f, out);
+    return test_framing_escaped_with_end_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error test_framing_escaped_with_end_decode(uint8_t* data, size_t size, test_framing_escaped_with_end_any_message* out) {
@@ -1136,7 +1176,7 @@ static gmsg_error test_framing_escaped_with_end_stream_process_(gmsg_stream* gs,
     gmsg_error e = GMSG_OK;
     if (s->mode_ == test_framing_escaped_with_end_mode_deliver_) return test_framing_escaped_with_end_process_frame_(frame, n, &s->cb);
     if ((e = test_framing_escaped_with_end_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = test_framing_escaped_with_end_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = test_framing_escaped_with_end_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -1146,10 +1186,12 @@ static gmsg_error test_framing_escaped_with_end_stream_process_(gmsg_stream* gs,
     }
     if (s->mode_ == test_framing_escaped_with_end_mode_message_) {
         switch (s->got_.message.kind) {
-            case TEST_FRAMING_ESCAPED_WITH_END_READING: s->msg_->kind = TEST_FRAMING_ESCAPED_WITH_END_READING; return test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading);
-            case TEST_FRAMING_ESCAPED_WITH_END_NOTE: s->msg_->kind = TEST_FRAMING_ESCAPED_WITH_END_NOTE; return test_framing_note_view_to_struct(&s->got_.message.as.note, &s->msg_->as.note);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case TEST_FRAMING_ESCAPED_WITH_END_READING: s->msg_->kind = TEST_FRAMING_ESCAPED_WITH_END_READING; e = test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading); break;
+            case TEST_FRAMING_ESCAPED_WITH_END_NOTE: s->msg_->kind = TEST_FRAMING_ESCAPED_WITH_END_NOTE; e = test_framing_note_view_to_struct(&s->got_.message.as.note, &s->msg_->as.note); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) test_framing_escaped_with_end_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }
@@ -1416,25 +1458,59 @@ typedef struct test_framing_fixed_with_end_frame_ {
     test_framing_fixed_with_end_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } test_framing_fixed_with_end_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
-static gmsg_error test_framing_fixed_with_end_open_(uint8_t* frame, size_t size, test_framing_fixed_with_end_frame_* f) {
+/* Split an unescaped frame into header and body. */
+static gmsg_error test_framing_fixed_with_end_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, test_framing_fixed_with_end_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
-    if (size < 4) return GMSG_ERR_TRUNCATED;
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 1, &test_framing_fixed_with_end_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
+    (void)frame;
     if (interior_n < 2) return GMSG_ERR_TRUNCATED;
-    {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 1, 1, GMSG_ENDIAN_BIG);
-        if (stored != (uint64_t)gmsg_xor8_compute(interior, interior_n - 1)) return GMSG_ERR_BAD_CHECKSUM;
-    }
     if ((e = test_framing_fixed_with_end_header_view_from(interior, 1, &f->header)) != GMSG_OK) return e;
     f->body = interior + 1;
     f->body_size = interior_n - 1 - 1;
     return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void test_framing_fixed_with_end_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 1, 1, unescaped_n, &test_framing_fixed_with_end_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
+static gmsg_error test_framing_fixed_with_end_open_(uint8_t* frame, size_t size, test_framing_fixed_with_end_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 4) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 1;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &test_framing_fixed_with_end_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 2) return GMSG_ERR_TRUNCATED;
+    {
+        uint8_t sb[1];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &test_framing_fixed_with_end_framing_.escape, un - 1, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 1, GMSG_ENDIAN_BIG);
+        uint8_t c = gmsg_xor8_init();
+        gmsg_unescape_iter_init(&it, wire, wire_n, &test_framing_fixed_with_end_framing_.escape, 0, un - 1);
+        while (gmsg_unescape_next(&it, &pp, &pn)) c = gmsg_xor8_update(c, pp, pn);
+        if (stored != (uint64_t)gmsg_xor8_finish(c)) return GMSG_ERR_BAD_CHECKSUM;
+    }
+    (void)gmsg_unescape_in_place(wire, wire_n, &test_framing_fixed_with_end_framing_.escape, &un);
+    e = test_framing_fixed_with_end_split_(frame, wire, un, f);
+    if (e != GMSG_OK) test_framing_fixed_with_end_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -1448,6 +1524,12 @@ static gmsg_error test_framing_fixed_with_end_select_(const test_framing_fixed_w
     }
     out->kind = TEST_FRAMING_FIXED_WITH_END_NONE;
     return GMSG_ERR_UNKNOWN_TYPE;
+}
+
+static gmsg_error test_framing_fixed_with_end_select_restore_(uint8_t* frame, size_t size, const test_framing_fixed_with_end_frame_* f, test_framing_fixed_with_end_any_view* out) {
+    const gmsg_error e = test_framing_fixed_with_end_select_(f, out);
+    if (e != GMSG_OK) test_framing_fixed_with_end_restore_(frame, size, f->unescaped_n);
+    return e;
 }
 
 static void test_framing_fixed_with_end_deliver_(const test_framing_fixed_with_end_callbacks* cb, const test_framing_fixed_with_end_frame_* f, const test_framing_fixed_with_end_any_view* v) {
@@ -1464,7 +1546,7 @@ static gmsg_error test_framing_fixed_with_end_process_frame_(uint8_t* frame, siz
     test_framing_fixed_with_end_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = test_framing_fixed_with_end_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = test_framing_fixed_with_end_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = test_framing_fixed_with_end_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) test_framing_fixed_with_end_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -1476,7 +1558,7 @@ gmsg_error test_framing_fixed_with_end_parse(uint8_t* data, size_t size, test_fr
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = test_framing_fixed_with_end_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return test_framing_fixed_with_end_select_(&f, out);
+    return test_framing_fixed_with_end_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error test_framing_fixed_with_end_decode(uint8_t* data, size_t size, test_framing_fixed_with_end_any_message* out) {
@@ -1506,7 +1588,7 @@ static gmsg_error test_framing_fixed_with_end_stream_process_(gmsg_stream* gs, u
     gmsg_error e = GMSG_OK;
     if (s->mode_ == test_framing_fixed_with_end_mode_deliver_) return test_framing_fixed_with_end_process_frame_(frame, n, &s->cb);
     if ((e = test_framing_fixed_with_end_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = test_framing_fixed_with_end_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = test_framing_fixed_with_end_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -1516,9 +1598,11 @@ static gmsg_error test_framing_fixed_with_end_stream_process_(gmsg_stream* gs, u
     }
     if (s->mode_ == test_framing_fixed_with_end_mode_message_) {
         switch (s->got_.message.kind) {
-            case TEST_FRAMING_FIXED_WITH_END_READING: s->msg_->kind = TEST_FRAMING_FIXED_WITH_END_READING; return test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case TEST_FRAMING_FIXED_WITH_END_READING: s->msg_->kind = TEST_FRAMING_FIXED_WITH_END_READING; e = test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) test_framing_fixed_with_end_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }

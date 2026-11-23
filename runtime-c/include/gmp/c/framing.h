@@ -75,6 +75,25 @@ GMSG_API gmsg_error gmsg_unescape_in_place(uint8_t* buf, size_t n, const gmsg_es
 /* Number of bytes produced by unescaping wire[0..n). */
 GMSG_API gmsg_error gmsg_unescaped_size(const uint8_t* wire, size_t n, const gmsg_escape_config* c, size_t* out_n);
 
+/* Check the escape pairs of wire[0..n) without modifying it: the same errors as gmsg_unescape_in_place, in the same
+ * order. *out_n receives the unescaped size. */
+GMSG_API gmsg_error gmsg_check_escaped(const uint8_t* wire, size_t n, const gmsg_escape_config* c, size_t* out_n);
+
+/* Iterates over the unescaped bytes with index in [from, to) of wire[0..n) without modifying it: runs of plain bytes
+ * point into wire, each escape pair yields its decoded byte. wire must pass gmsg_check_escaped. Used to verify a
+ * checksum before a frame is unescaped in place. */
+typedef struct gmsg_unescape_iter {
+    const uint8_t* wire;
+    size_t n, i, u, from, to;
+    const gmsg_escape_config* c;
+    uint8_t byte;
+} gmsg_unescape_iter;
+
+GMSG_API void gmsg_unescape_iter_init(gmsg_unescape_iter* it, const uint8_t* wire, size_t n,
+                                      const gmsg_escape_config* c, size_t from, size_t to);
+/* Next piece: true with *p / *len set, false at the end. */
+GMSG_API bool gmsg_unescape_next(gmsg_unescape_iter* it, const uint8_t** p, size_t* len);
+
 /* Number of escape pairs needed for raw[0..n). */
 GMSG_API size_t gmsg_escape_overhead(const uint8_t* raw, size_t n, const gmsg_escape_config* c);
 
@@ -253,6 +272,61 @@ GMSG_API gmsg_error gmsg_unescaped_size(const uint8_t* wire, size_t n, const gms
         if (wire[i] == c->esc && ++i >= n) return GMSG_ERR_TRUNCATED;
     *out_n = k;
     return GMSG_OK;
+}
+
+GMSG_API gmsg_error gmsg_check_escaped(const uint8_t* wire, size_t n, const gmsg_escape_config* c, size_t* out_n) {
+    size_t i, k = 0;
+    for (i = 0; i < n; ++i, ++k) {
+        uint8_t b;
+        gmsg_error e;
+        if (wire[i] != c->esc) continue;
+        if (++i >= n) return GMSG_ERR_TRUNCATED;
+        e = gmsg_escape_decode(c, wire[i], &b);
+        if (e != GMSG_OK) return e;
+    }
+    *out_n = k;
+    return GMSG_OK;
+}
+
+GMSG_API void gmsg_unescape_iter_init(gmsg_unescape_iter* it, const uint8_t* wire, size_t n,
+                                      const gmsg_escape_config* c, size_t from, size_t to) {
+    it->wire = wire;
+    it->n = n;
+    it->i = 0;
+    it->u = 0;
+    it->from = from;
+    it->to = to;
+    it->c = c;
+    it->byte = 0;
+}
+
+GMSG_PRIV_ bool gmsg_unescape_pair_at_(const gmsg_unescape_iter* it) {
+    return it->wire[it->i] == it->c->esc && it->i + 1 < it->n;
+}
+
+GMSG_API bool gmsg_unescape_next(gmsg_unescape_iter* it, const uint8_t** p, size_t* len) {
+    size_t start;
+    while (it->u < it->from && it->u < it->to && it->i < it->n) { /* skip to index `from` */
+        it->i += gmsg_unescape_pair_at_(it) ? 2u : 1u;
+        ++it->u;
+    }
+    if (it->u >= it->to || it->i >= it->n) return false;
+    if (gmsg_unescape_pair_at_(it)) {
+        if (gmsg_escape_decode(it->c, it->wire[it->i + 1], &it->byte) != GMSG_OK) it->byte = 0;
+        it->i += 2;
+        ++it->u;
+        *p = &it->byte;
+        *len = 1;
+        return true;
+    }
+    start = it->i;
+    while (it->i < it->n && it->u < it->to && !gmsg_unescape_pair_at_(it)) {
+        ++it->i;
+        ++it->u;
+    }
+    *p = it->wire + start;
+    *len = it->i - start;
+    return true;
 }
 
 GMSG_API size_t gmsg_escape_overhead(const uint8_t* raw, size_t n, const gmsg_escape_config* c) {

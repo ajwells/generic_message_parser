@@ -520,25 +520,59 @@ typedef struct link_hdlc_hdlc_frame_ {
     link_hdlc_hdlc_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } link_hdlc_hdlc_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
-static gmsg_error link_hdlc_hdlc_open_(uint8_t* frame, size_t size, link_hdlc_hdlc_frame_* f) {
+/* Split an unescaped frame into header and body. */
+static gmsg_error link_hdlc_hdlc_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, link_hdlc_hdlc_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
-    if (size < 6) return GMSG_ERR_TRUNCATED;
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 1, &link_hdlc_hdlc_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
+    (void)frame;
     if (interior_n < 4) return GMSG_ERR_TRUNCATED;
-    {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 2, 2, GMSG_ENDIAN_LITTLE);
-        if (stored != (uint64_t)gmsg_crc16_x25_compute(interior, interior_n - 2)) return GMSG_ERR_BAD_CHECKSUM;
-    }
     if ((e = link_hdlc_hdlc_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
     f->body = interior + 2;
     f->body_size = interior_n - 2 - 2;
     return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void link_hdlc_hdlc_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 1, 1, unescaped_n, &link_hdlc_hdlc_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
+static gmsg_error link_hdlc_hdlc_open_(uint8_t* frame, size_t size, link_hdlc_hdlc_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 6) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 1;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &link_hdlc_hdlc_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 4) return GMSG_ERR_TRUNCATED;
+    {
+        uint8_t sb[2];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_hdlc_hdlc_framing_.escape, un - 2, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 2, GMSG_ENDIAN_LITTLE);
+        uint16_t c = gmsg_crc16_x25_init();
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_hdlc_hdlc_framing_.escape, 0, un - 2);
+        while (gmsg_unescape_next(&it, &pp, &pn)) c = gmsg_crc16_x25_update(c, pp, pn);
+        if (stored != (uint64_t)gmsg_crc16_x25_finish(c)) return GMSG_ERR_BAD_CHECKSUM;
+    }
+    (void)gmsg_unescape_in_place(wire, wire_n, &link_hdlc_hdlc_framing_.escape, &un);
+    e = link_hdlc_hdlc_split_(frame, wire, un, f);
+    if (e != GMSG_OK) link_hdlc_hdlc_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -558,6 +592,12 @@ static gmsg_error link_hdlc_hdlc_select_(const link_hdlc_hdlc_frame_* f, link_hd
     return GMSG_ERR_UNKNOWN_TYPE;
 }
 
+static gmsg_error link_hdlc_hdlc_select_restore_(uint8_t* frame, size_t size, const link_hdlc_hdlc_frame_* f, link_hdlc_hdlc_any_view* out) {
+    const gmsg_error e = link_hdlc_hdlc_select_(f, out);
+    if (e != GMSG_OK) link_hdlc_hdlc_restore_(frame, size, f->unescaped_n);
+    return e;
+}
+
 static void link_hdlc_hdlc_deliver_(const link_hdlc_hdlc_callbacks* cb, const link_hdlc_hdlc_frame_* f, const link_hdlc_hdlc_any_view* v) {
     switch (v->kind) {
         case LINK_HDLC_HDLC_BATCH: if (cb->on_batch) cb->on_batch(cb->ctx, &f->header, &v->as.batch); break;
@@ -573,7 +613,7 @@ static gmsg_error link_hdlc_hdlc_process_frame_(uint8_t* frame, size_t size, con
     link_hdlc_hdlc_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = link_hdlc_hdlc_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = link_hdlc_hdlc_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = link_hdlc_hdlc_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) link_hdlc_hdlc_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -585,7 +625,7 @@ gmsg_error link_hdlc_hdlc_parse(uint8_t* data, size_t size, link_hdlc_hdlc_any_v
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = link_hdlc_hdlc_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return link_hdlc_hdlc_select_(&f, out);
+    return link_hdlc_hdlc_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error link_hdlc_hdlc_decode(uint8_t* data, size_t size, link_hdlc_hdlc_any_message* out) {
@@ -616,7 +656,7 @@ static gmsg_error link_hdlc_hdlc_stream_process_(gmsg_stream* gs, uint8_t* frame
     gmsg_error e = GMSG_OK;
     if (s->mode_ == link_hdlc_hdlc_mode_deliver_) return link_hdlc_hdlc_process_frame_(frame, n, &s->cb);
     if ((e = link_hdlc_hdlc_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = link_hdlc_hdlc_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = link_hdlc_hdlc_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -626,10 +666,12 @@ static gmsg_error link_hdlc_hdlc_stream_process_(gmsg_stream* gs, uint8_t* frame
     }
     if (s->mode_ == link_hdlc_hdlc_mode_message_) {
         switch (s->got_.message.kind) {
-            case LINK_HDLC_HDLC_BATCH: s->msg_->kind = LINK_HDLC_HDLC_BATCH; return link_hdlc_batch_view_to_struct(&s->got_.message.as.batch, &s->msg_->as.batch);
-            case LINK_HDLC_HDLC_PING: s->msg_->kind = LINK_HDLC_HDLC_PING; return link_hdlc_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case LINK_HDLC_HDLC_BATCH: s->msg_->kind = LINK_HDLC_HDLC_BATCH; e = link_hdlc_batch_view_to_struct(&s->got_.message.as.batch, &s->msg_->as.batch); break;
+            case LINK_HDLC_HDLC_PING: s->msg_->kind = LINK_HDLC_HDLC_PING; e = link_hdlc_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) link_hdlc_hdlc_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }
@@ -886,16 +928,14 @@ typedef struct link_hdlc_summed_frame_ {
     link_hdlc_summed_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } link_hdlc_summed_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
-static gmsg_error link_hdlc_summed_open_(uint8_t* frame, size_t size, link_hdlc_summed_frame_* f) {
+/* Split an unescaped frame into header and body. */
+static gmsg_error link_hdlc_summed_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, link_hdlc_summed_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
-    if (size < 5) return GMSG_ERR_TRUNCATED;
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 1, &link_hdlc_summed_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
+    (void)frame;
     if (interior_n < 3) return GMSG_ERR_TRUNCATED;
     {
         const uint64_t stored = gmsg_load_uint(interior + interior_n - 2, 2, GMSG_ENDIAN_LITTLE);
@@ -905,6 +945,28 @@ static gmsg_error link_hdlc_summed_open_(uint8_t* frame, size_t size, link_hdlc_
     f->body = interior + 1;
     f->body_size = interior_n - 1 - 2;
     return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void link_hdlc_summed_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 1, 1, unescaped_n, &link_hdlc_summed_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. the frame is unescaped in place, and holds the bytes as received again on failure. */
+static gmsg_error link_hdlc_summed_open_(uint8_t* frame, size_t size, link_hdlc_summed_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 5) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 1;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &link_hdlc_summed_framing_.escape, &un)) != GMSG_OK) return e;
+    (void)gmsg_unescape_in_place(wire, wire_n, &link_hdlc_summed_framing_.escape, &un);
+    e = link_hdlc_summed_split_(frame, wire, un, f);
+    if (e != GMSG_OK) link_hdlc_summed_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -918,6 +980,12 @@ static gmsg_error link_hdlc_summed_select_(const link_hdlc_summed_frame_* f, lin
     }
     out->kind = LINK_HDLC_SUMMED_NONE;
     return GMSG_ERR_UNKNOWN_TYPE;
+}
+
+static gmsg_error link_hdlc_summed_select_restore_(uint8_t* frame, size_t size, const link_hdlc_summed_frame_* f, link_hdlc_summed_any_view* out) {
+    const gmsg_error e = link_hdlc_summed_select_(f, out);
+    if (e != GMSG_OK) link_hdlc_summed_restore_(frame, size, f->unescaped_n);
+    return e;
 }
 
 static void link_hdlc_summed_deliver_(const link_hdlc_summed_callbacks* cb, const link_hdlc_summed_frame_* f, const link_hdlc_summed_any_view* v) {
@@ -934,7 +1002,7 @@ static gmsg_error link_hdlc_summed_process_frame_(uint8_t* frame, size_t size, c
     link_hdlc_summed_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = link_hdlc_summed_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = link_hdlc_summed_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = link_hdlc_summed_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) link_hdlc_summed_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -946,7 +1014,7 @@ gmsg_error link_hdlc_summed_parse(uint8_t* data, size_t size, link_hdlc_summed_a
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = link_hdlc_summed_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return link_hdlc_summed_select_(&f, out);
+    return link_hdlc_summed_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error link_hdlc_summed_decode(uint8_t* data, size_t size, link_hdlc_summed_any_message* out) {
@@ -976,7 +1044,7 @@ static gmsg_error link_hdlc_summed_stream_process_(gmsg_stream* gs, uint8_t* fra
     gmsg_error e = GMSG_OK;
     if (s->mode_ == link_hdlc_summed_mode_deliver_) return link_hdlc_summed_process_frame_(frame, n, &s->cb);
     if ((e = link_hdlc_summed_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = link_hdlc_summed_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = link_hdlc_summed_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -986,9 +1054,11 @@ static gmsg_error link_hdlc_summed_stream_process_(gmsg_stream* gs, uint8_t* fra
     }
     if (s->mode_ == link_hdlc_summed_mode_message_) {
         switch (s->got_.message.kind) {
-            case LINK_HDLC_SUMMED_PING: s->msg_->kind = LINK_HDLC_SUMMED_PING; return link_hdlc_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case LINK_HDLC_SUMMED_PING: s->msg_->kind = LINK_HDLC_SUMMED_PING; e = link_hdlc_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) link_hdlc_summed_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }

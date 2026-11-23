@@ -69,6 +69,7 @@ public:
         has_header_ = !text_ && !p.header->fields.empty();
         escape_ = p.framing.escape.enabled;
         wire_cs_ = escape_ && p.checksum.present && p.checksum.over_wire;
+        cs_first_ = escape_ && !text_ && p.checksum.present && !p.checksum.over_wire && !p.checksum.custom;
         stream_ = p.framing.type != FT::None && p.max_frame > 0;
         all_struct_ = std::all_of(p.messages.begin(), p.messages.end(), [](const Message* m) { return m->want_struct; });
         n_ = c.names.prefix + snake(p.name);
@@ -293,6 +294,7 @@ private:
         if (text_) s_.line("gmsg_str type_id;  /* text: the first token */");
         s_.line("const uint8_t* body;");
         s_.line("size_t body_size;");
+        if (escape_) s_.line("size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */");
         s_.close("} " + n_ + "_frame_;");
         s_.line();
     }
@@ -303,53 +305,148 @@ private:
     std::string S() const { return sz(p_.suffix_size); }
 
     void emit_open() {
-        s_.line("/* Validate one complete frame (as delimited by the scanner) and split it into header and body." +
-                std::string(escape_ ? " Unescapes in place." : "") + " */");
+        if (escape_) emit_open_escaped();
+        else emit_open_plain();
+    }
+
+    void emit_open_plain() {
+        s_.line("/* Validate one complete frame (as delimited by the scanner) and split it into header and body. */");
         s_.open("static gmsg_error " + n_ + "_open_(" + buf_ + " frame, size_t size, " + n_ + "_frame_* f) {");
         s_.line("gmsg_error e = GMSG_OK;");
         s_.line("(void)e;");
-        // (sizes are unsigned: checks against 0 are left out, as they can never fail)
+        emit_size_check();
+        s_.line("const size_t interior_n = size - " + P() + " - " + S() + ";");
+        s_.line("const uint8_t* interior = frame + " + P() + ";");
+        emit_split_body(true);
+        s_.close();
+        s_.line();
+    }
+
+    // (sizes are unsigned: checks against 0 are left out, as they can never fail)
+    void emit_size_check() {
         if (const auto overhead = p_.prefix_size + p_.header_size + p_.trailer_size + p_.suffix_size; overhead > 0)
             s_.line("if (size < " + sz(overhead) + ") " + fail("TRUNCATED"));
+    }
+
+    /// Escaped protocols: the checksum (built-in or over the wire) is verified before the frame is unescaped in
+    /// place, and a frame that fails later is escaped again, so the buffer holds the bytes as received.
+    void emit_open_escaped() {
+        const bool check_first = cs_first_ || wire_cs_;
+        s_.line("/* Split an unescaped frame into header and body. */");
+        s_.open("static gmsg_error " + n_ + "_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, " + n_ +
+                "_frame_* f) {");
+        s_.line("gmsg_error e = GMSG_OK;");
+        s_.line("(void)e;");
+        s_.line("(void)frame;");
+        emit_split_body(!check_first);
+        s_.close();
+        s_.line();
+        s_.line("/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */");
+        s_.open("static void " + n_ + "_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {");
+        s_.line("size_t k = 0;");
+        s_.line("(void)gmsg_escape_in_place(frame, size - " + S() + ", " + P() + ", unescaped_n, " + esc() + ", &k);");
+        s_.close();
+        s_.line();
+        s_.line(std::string("/* Validate one complete frame (as delimited by the scanner) and split it into header and body.") +
+                (check_first ? " The checksum is verified first;" : "") +
+                " the frame is unescaped in place, and holds the bytes as received again on failure. */");
+        s_.open("static gmsg_error " + n_ + "_open_(" + buf_ + " frame, size_t size, " + n_ + "_frame_* f) {");
+        s_.line("gmsg_error e = GMSG_OK;");
+        s_.line("(void)e;");
+        emit_size_check();
         if (wire_cs_) emit_wire_checksum();
-        if (escape_) {
-            s_.line("size_t interior_n = 0;");
-            s_.line(try_("gmsg_unescape_in_place(frame + " + P() + ", size - " + P() + " - " + S() + ", " + esc() + ", &interior_n)"));
-        } else {
-            s_.line("const size_t interior_n = size - " + P() + " - " + S() + ";");
+        s_.line("uint8_t* wire = frame + " + P() + ";");
+        s_.line("const size_t wire_n = size - " + P() + " - " + S() + ";");
+        s_.line("size_t un = 0;");
+        s_.line(try_("gmsg_check_escaped(wire, wire_n, " + esc() + ", &un)"));
+        if (check_first) emit_escaped_checksum();
+        s_.line("(void)gmsg_unescape_in_place(wire, wire_n, " + esc() + ", &un);");
+        s_.line("e = " + n_ + "_split_(frame, wire, un, f);");
+        s_.line("if (e != GMSG_OK) " + n_ + "_restore_(frame, size, un);");
+        s_.line("else f->unescaped_n = un;");
+        s_.line("return e;");
+        s_.close();
+        s_.line();
+    }
+
+    std::string checksum_ctype() const {
+        const auto n = p_.checksum.size;
+        return n <= 1 ? "uint8_t" : n <= 2 ? "uint16_t" : n <= 4 ? "uint32_t" : "uint64_t";
+    }
+
+    /// Verify the checksum of an escaped binary frame without modifying it (stored value and, unless it was computed
+    /// over the wire, the computed value read through the escaping).
+    void emit_escaped_checksum() {
+        s_.line("if (un < " + sz(p_.header_size + p_.trailer_size) + ") " + fail("TRUNCATED"));
+        s_.open("{");
+        s_.line("uint8_t sb[" + T() + "];");
+        s_.line("uint64_t stored;");
+        s_.line("size_t k = 0, pn = 0;");
+        s_.line("const uint8_t* pp = NULL;");
+        s_.line("gmsg_unescape_iter it;");
+        s_.line("gmsg_unescape_iter_init(&it, wire, wire_n, " + esc() + ", un - " + T() + ", un);");
+        s_.open("while (gmsg_unescape_next(&it, &pp, &pn)) {");
+        s_.line("size_t j;");
+        s_.line("for (j = 0; j < pn; ++j) sb[k++] = pp[j];");
+        s_.close();
+        s_.line("stored = gmsg_load_uint(sb, " + T() + ", " + endian_expr(p_.checksum.endian) + ");");
+        if (wire_cs_) {
+            s_.line("if (stored != computed) " + fail("BAD_CHECKSUM"));
+            s_.close();
+            return;
         }
-        s_.line("const uint8_t* interior = frame + " + P() + ";");
+        std::string init, upd, fin;
+        if (p_.checksum.crc) {
+            const auto& q = *p_.checksum.crc;
+            auto hex = [](std::uint64_t v) {
+                std::ostringstream os;
+                os << "UINT64_C(0x" << std::hex << std::uppercase << v << ")";
+                return os.str();
+            };
+            s_.line("const gmsg_crc_params cp = {" + std::to_string(q.width) + ", " + (q.refin ? "true" : "false") + ", " +
+                    (q.refout ? "true" : "false") + ", " + hex(q.poly) + ", " + hex(q.init) + ", " + hex(q.xorout) + "};");
+            s_.line("uint64_t c = gmsg_crc_init(&cp);");
+            upd = "gmsg_crc_update(&cp, c, ";
+            fin = "gmsg_crc_finish(&cp, c)";
+        } else {
+            const auto& a = p_.checksum.algo;
+            s_.line(checksum_ctype() + " c = gmsg_" + a + "_init();");
+            upd = "gmsg_" + a + "_update(c, ";
+            fin = "(uint64_t)gmsg_" + a + "_finish(c)";
+        }
+        if (p_.checksum.covers == ChecksumSpec::Covers::All) s_.line("c = " + upd + "frame, " + P() + ");");
+        const std::string from = p_.checksum.covers == ChecksumSpec::Covers::Body ? H() : "0";
+        s_.line("gmsg_unescape_iter_init(&it, wire, wire_n, " + esc() + ", " + from + ", un - " + T() + ");");
+        s_.line("while (gmsg_unescape_next(&it, &pp, &pn)) c = " + upd + "pp, pn);");
+        s_.line("if (stored != " + fin + ") " + fail("BAD_CHECKSUM"));
+        s_.close();
+    }
+
+    /// Body shared by open (plain) and split (escaped): sizes, checksum (unless verified before), header, body.
+    void emit_split_body(bool with_checksum) {
         if (text_) {
             emit_open_text();
-            s_.close();
-            s_.line();
             return;
         }
         if (p_.header_size + p_.trailer_size > 0)
             s_.line("if (interior_n < " + sz(p_.header_size + p_.trailer_size) + ") " + fail("TRUNCATED"));
-        if (p_.checksum.present) {
+        if (p_.checksum.present && with_checksum) {
+            std::string ptr, len;
+            switch (p_.checksum.covers) {
+                case ChecksumSpec::Covers::HeaderBody: ptr = "interior"; len = "interior_n - " + T(); break;
+                case ChecksumSpec::Covers::Body: ptr = "interior + " + H(); len = "interior_n - " + H() + " - " + T(); break;
+                case ChecksumSpec::Covers::All: ptr = "frame"; len = P() + " + interior_n - " + T(); break;
+            }
             s_.open("{");
             s_.line("const uint64_t stored = gmsg_load_uint(interior + interior_n - " + T() + ", " + T() + ", " +
                     endian_expr(p_.checksum.endian) + ");");
-            if (wire_cs_) {
-                s_.line("if (stored != computed) " + fail("BAD_CHECKSUM"));
-            } else {
-                std::string ptr, len;
-                switch (p_.checksum.covers) {
-                    case ChecksumSpec::Covers::HeaderBody: ptr = "interior"; len = "interior_n - " + T(); break;
-                    case ChecksumSpec::Covers::Body: ptr = "interior + " + H(); len = "interior_n - " + H() + " - " + T(); break;
-                    case ChecksumSpec::Covers::All: ptr = "frame"; len = P() + " + interior_n - " + T(); break;
-                }
-                s_.line("if (stored != " + checksum_call(p_.checksum, ptr, len) + ") " + fail("BAD_CHECKSUM"));
-            }
+            s_.line("if (stored != " + checksum_call(p_.checksum, ptr, len) + ") " + fail("BAD_CHECKSUM"));
             s_.close();
         }
         if (has_header_) s_.line(try_(hv_ + "_from(interior, " + H() + ", &f->header)"));
         s_.line("f->body = interior + " + H() + ";");
         s_.line("f->body_size = interior_n - " + H() + " - " + T() + ";");
         s_.line("return GMSG_OK;");
-        s_.close();
-        s_.line();
     }
 
     std::string ch(char c) const {
@@ -426,6 +523,12 @@ private:
         s_.close();
     }
 
+    /// Select the message of an opened frame; escaped protocols restore the frame when that fails.
+    std::string select_call(const std::string& frame, const std::string& size, const std::string& out) const {
+        if (!escape_) return n_ + "_select_(&f, " + out + ")";
+        return n_ + "_select_restore_(" + frame + ", " + size + ", &f, " + out + ")";
+    }
+
     void emit_select() {
         s_.line("/* Decode the message view selected by the frame's type id (message_type). */");
         s_.open("static gmsg_error " + n_ + "_select_(const " + n_ + "_frame_* f, " + n_ + "_any_view* out) {");
@@ -463,6 +566,15 @@ private:
         }
         s_.close();
         s_.line();
+        if (escape_) {
+            s_.open("static gmsg_error " + n_ + "_select_restore_(uint8_t* frame, size_t size, const " + n_ + "_frame_* f, " + n_ +
+                    "_any_view* out) {");
+            s_.line("const gmsg_error e = " + n_ + "_select_(f, out);");
+            s_.line("if (e != GMSG_OK) " + n_ + "_restore_(frame, size, f->unescaped_n);");
+            s_.line("return e;");
+            s_.close();
+            s_.line();
+        }
     }
 
     void emit_deliver() {
@@ -486,7 +598,7 @@ private:
         s_.line(n_ + "_any_view v;");
         s_.line("gmsg_error e = GMSG_OK;");
         s_.line(try_(n_ + "_open_(frame, size, &f)"));
-        s_.line(try_(n_ + "_select_(&f, &v)"));
+        s_.line(try_(select_call("frame", "size", "&v")));
         s_.line("if (cb) " + n_ + "_deliver_(cb, &f, &v);");
         s_.line("return GMSG_OK;");
         s_.close();
@@ -506,7 +618,7 @@ private:
         s_.line("gmsg_error e = GMSG_OK;");
         scan_one();
         s_.line(try_(n_ + "_open_(data, s.size, &f)"));
-        s_.line("return " + n_ + "_select_(&f, out);");
+        s_.line("return " + select_call("data", "s.size", "out") + ";");
         s_.close();
         s_.line();
         if (all_struct_) {
@@ -543,7 +655,7 @@ private:
         s_.line("gmsg_error e = GMSG_OK;");
         s_.line("if (s->mode_ == " + mode("deliver") + ") return " + n_ + "_process_frame_(frame, n, &s->cb);");
         s_.line(try_(n_ + "_open_(frame, n, &f)"));
-        s_.line(try_(n_ + "_select_(&f, &s->got_.message)"));
+        s_.line(try_(select_call("frame", "n", "&s->got_.message")));
         if (has_header_) s_.line("s->got_.header = f.header;");
         s_.line("s->got_.bytes = frame;");
         s_.line("s->got_.size = n;");
@@ -554,11 +666,17 @@ private:
         if (all_struct_) {
             s_.open("if (s->mode_ == " + mode("message") + ") {");
             s_.open("switch (s->got_.message.kind) {");
+            const std::string ret = escape_ ? "e = " : "return ";
+            const std::string brk = escape_ ? " break;" : "";
             for (const auto* m : p_.messages)
-                s_.line("case " + kind(*m) + ": s->msg_->kind = " + kind(*m) + "; return " + view_name(c_, *m) + "_to_struct(&s->got_.message.as." +
-                        member(*m) + ", &s->msg_->as." + member(*m) + ");");
-            s_.line("default: " + fail("UNKNOWN_TYPE"));
+                s_.line("case " + kind(*m) + ": s->msg_->kind = " + kind(*m) + "; " + ret + view_name(c_, *m) + "_to_struct(&s->got_.message.as." +
+                        member(*m) + ", &s->msg_->as." + member(*m) + ");" + brk);
+            s_.line("default: " + (escape_ ? std::string("e = GMSG_ERR_UNKNOWN_TYPE; break;") : fail("UNKNOWN_TYPE")));
             s_.close();
+            if (escape_) {
+                s_.line("if (e != GMSG_OK) " + n_ + "_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */");
+                s_.line("return e;");
+            }
             s_.close();
         }
         s_.line("return GMSG_OK;");
@@ -856,7 +974,8 @@ private:
     CodeWriter& h_;
     CodeWriter& s_;
     const Protocol& p_;
-    bool text_ = false, has_header_ = false, escape_ = false, wire_cs_ = false, stream_ = false, all_struct_ = false;
+    bool text_ = false, has_header_ = false, escape_ = false, wire_cs_ = false, cs_first_ = false, stream_ = false,
+         all_struct_ = false;
     std::string n_, M_, hv_, ht_, buf_, cfg_;
 };
 

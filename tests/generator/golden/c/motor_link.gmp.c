@@ -427,25 +427,59 @@ typedef struct motor_motor_link_frame_ {
     motor_motor_link_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } motor_motor_link_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
-static gmsg_error motor_motor_link_open_(uint8_t* frame, size_t size, motor_motor_link_frame_* f) {
+/* Split an unescaped frame into header and body. */
+static gmsg_error motor_motor_link_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, motor_motor_link_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
-    if (size < 5) return GMSG_ERR_TRUNCATED;
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 0, &motor_motor_link_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
+    (void)frame;
     if (interior_n < 4) return GMSG_ERR_TRUNCATED;
-    {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 2, 2, GMSG_ENDIAN_BIG);
-        if (stored != (uint64_t)gmsg_crc16_ccitt_compute(interior, interior_n - 2)) return GMSG_ERR_BAD_CHECKSUM;
-    }
     if ((e = motor_motor_link_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
     f->body = interior + 2;
     f->body_size = interior_n - 2 - 2;
     return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void motor_motor_link_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 0, 1, unescaped_n, &motor_motor_link_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
+static gmsg_error motor_motor_link_open_(uint8_t* frame, size_t size, motor_motor_link_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 5) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 0;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &motor_motor_link_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 4) return GMSG_ERR_TRUNCATED;
+    {
+        uint8_t sb[2];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &motor_motor_link_framing_.escape, un - 2, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 2, GMSG_ENDIAN_BIG);
+        uint16_t c = gmsg_crc16_ccitt_init();
+        gmsg_unescape_iter_init(&it, wire, wire_n, &motor_motor_link_framing_.escape, 0, un - 2);
+        while (gmsg_unescape_next(&it, &pp, &pn)) c = gmsg_crc16_ccitt_update(c, pp, pn);
+        if (stored != (uint64_t)gmsg_crc16_ccitt_finish(c)) return GMSG_ERR_BAD_CHECKSUM;
+    }
+    (void)gmsg_unescape_in_place(wire, wire_n, &motor_motor_link_framing_.escape, &un);
+    e = motor_motor_link_split_(frame, wire, un, f);
+    if (e != GMSG_OK) motor_motor_link_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -469,6 +503,12 @@ static gmsg_error motor_motor_link_select_(const motor_motor_link_frame_* f, mot
     return GMSG_ERR_UNKNOWN_TYPE;
 }
 
+static gmsg_error motor_motor_link_select_restore_(uint8_t* frame, size_t size, const motor_motor_link_frame_* f, motor_motor_link_any_view* out) {
+    const gmsg_error e = motor_motor_link_select_(f, out);
+    if (e != GMSG_OK) motor_motor_link_restore_(frame, size, f->unescaped_n);
+    return e;
+}
+
 static void motor_motor_link_deliver_(const motor_motor_link_callbacks* cb, const motor_motor_link_frame_* f, const motor_motor_link_any_view* v) {
     switch (v->kind) {
         case MOTOR_MOTOR_LINK_SET_SPEED: if (cb->on_set_speed) cb->on_set_speed(cb->ctx, &f->header, &v->as.set_speed); break;
@@ -485,7 +525,7 @@ static gmsg_error motor_motor_link_process_frame_(uint8_t* frame, size_t size, c
     motor_motor_link_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = motor_motor_link_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = motor_motor_link_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = motor_motor_link_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) motor_motor_link_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -497,7 +537,7 @@ gmsg_error motor_motor_link_parse(uint8_t* data, size_t size, motor_motor_link_a
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = motor_motor_link_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return motor_motor_link_select_(&f, out);
+    return motor_motor_link_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error motor_motor_link_decode(uint8_t* data, size_t size, motor_motor_link_any_message* out) {
@@ -529,7 +569,7 @@ static gmsg_error motor_motor_link_stream_process_(gmsg_stream* gs, uint8_t* fra
     gmsg_error e = GMSG_OK;
     if (s->mode_ == motor_motor_link_mode_deliver_) return motor_motor_link_process_frame_(frame, n, &s->cb);
     if ((e = motor_motor_link_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = motor_motor_link_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = motor_motor_link_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -539,11 +579,13 @@ static gmsg_error motor_motor_link_stream_process_(gmsg_stream* gs, uint8_t* fra
     }
     if (s->mode_ == motor_motor_link_mode_message_) {
         switch (s->got_.message.kind) {
-            case MOTOR_MOTOR_LINK_SET_SPEED: s->msg_->kind = MOTOR_MOTOR_LINK_SET_SPEED; return motor_set_speed_view_to_struct(&s->got_.message.as.set_speed, &s->msg_->as.set_speed);
-            case MOTOR_MOTOR_LINK_TELEMETRY: s->msg_->kind = MOTOR_MOTOR_LINK_TELEMETRY; return motor_telemetry_view_to_struct(&s->got_.message.as.telemetry, &s->msg_->as.telemetry);
-            case MOTOR_MOTOR_LINK_LOG: s->msg_->kind = MOTOR_MOTOR_LINK_LOG; return motor_log_view_to_struct(&s->got_.message.as.log, &s->msg_->as.log);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case MOTOR_MOTOR_LINK_SET_SPEED: s->msg_->kind = MOTOR_MOTOR_LINK_SET_SPEED; e = motor_set_speed_view_to_struct(&s->got_.message.as.set_speed, &s->msg_->as.set_speed); break;
+            case MOTOR_MOTOR_LINK_TELEMETRY: s->msg_->kind = MOTOR_MOTOR_LINK_TELEMETRY; e = motor_telemetry_view_to_struct(&s->got_.message.as.telemetry, &s->msg_->as.telemetry); break;
+            case MOTOR_MOTOR_LINK_LOG: s->msg_->kind = MOTOR_MOTOR_LINK_LOG; e = motor_log_view_to_struct(&s->got_.message.as.log, &s->msg_->as.log); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) motor_motor_link_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }

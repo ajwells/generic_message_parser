@@ -219,6 +219,8 @@ escape:
 - The checksum is computed over the unescaped bytes. Use `checksum.over: wire` for protocols that compute it over the
   escaped bytes. The checksum itself is escaped either way.
 - Decoding unescapes in place, so `parse` / `open` / `decode` take a mutable buffer.
+- The checksum is verified before the frame is unescaped, and a frame that fails later is escaped again, so after an
+  error the buffer (and the stream's resync) sees the bytes as received.
 
 ### checksum
 

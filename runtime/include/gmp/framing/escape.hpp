@@ -133,6 +133,42 @@ constexpr Result<std::size_t> unescaped_size(bytes_view wire, const EscapeConfig
     return n;
 }
 
+/// Check the escape pairs of `wire` without modifying it: the same errors as unescape_in_place, in the same order.
+/// Returns the unescaped size.
+constexpr Result<std::size_t> check_escaped(bytes_view wire, const EscapeConfig& cfg) noexcept {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < wire.size(); ++i, ++n) {
+        if (wire[i] != cfg.esc) continue;
+        if (++i >= wire.size()) return fail(Error::Truncated);
+        if (auto d = cfg.decode(wire[i]); !d) return fail(d.error());
+    }
+    return n;
+}
+
+/// Pass the unescaped bytes with index in [from, to) of `wire` to fn(bytes_view), without modifying `wire`: runs of
+/// plain bytes as views into `wire`, each escape pair as its decoded byte. `wire` must pass check_escaped().
+/// Used to verify a checksum before a frame is unescaped in place.
+template <class F>
+constexpr void for_each_unescaped(bytes_view wire, const EscapeConfig& cfg, std::size_t from, std::size_t to,
+                                  F&& fn) {
+    std::size_t u = 0, run = 0, run_n = 0;
+    for (std::size_t i = 0; i < wire.size() && u < to; ++u) {
+        if (wire[i] == cfg.esc && i + 1 < wire.size()) {
+            if (run_n) fn(wire.subspan(run, run_n));
+            run_n = 0;
+            if (u >= from) {
+                const std::uint8_t b = cfg.decode(wire[i + 1]).value_or(0);
+                fn(bytes_view(&b, 1));
+            }
+            i += 2;
+        } else {
+            if (u >= from && run_n++ == 0) run = i;
+            ++i;
+        }
+    }
+    if (run_n) fn(wire.subspan(run, run_n));
+}
+
 /// Number of escape pairs needed for `raw`.
 constexpr std::size_t escape_overhead(bytes_view raw, const EscapeConfig& cfg) noexcept {
     std::size_t n = 0;

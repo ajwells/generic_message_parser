@@ -398,6 +398,39 @@ TEST_CASE("C integer parsing matches gmp::text::parse_int") {
     }
 }
 
+TEST_CASE("C and C++ text writers write huge fixed-notation floats (no internal size limit)") {
+    std::mt19937_64 rng(6);
+    int long_tokens = 0;
+    for (int i = 0; i < 3000; ++i) {
+        const double dv = std::ldexp(static_cast<double>(rng() >> 11) / 9007199254740992.0 + 0.5, static_cast<int>(rng() % 1100) - 50) *
+                          (rng() & 1u ? -1.0 : 1.0);
+        const auto fv = static_cast<float>(dv);
+        const int precision = static_cast<int>(rng() % 40);
+        const int width = static_cast<int>(rng() % 400);
+        for (int which = 2; which < 4; ++which) {
+            std::array<std::uint8_t, 1024> a{};
+            std::array<char, 1024> b{};
+            gmp::text::TextWriter w(gmp::mut_bytes(a.data(), a.size()), ',');
+            const auto r = which == 2 ? w.float_token(dv, precision, width) : w.float_token(fv, precision, width);
+            REQUIRE(r);  // fits the buffer: must not fail
+            const std::size_t len = w.position();
+            if (len > 128) ++long_tokens;
+            std::size_t n = 0;
+            REQUIRE(gmpct_text_tokens(which, 0, 0, dv, fv, 10, precision, width, b.data(), b.size(), &n) == 0);
+            // C writes the extra 'x' token after the float: compare the float part
+            REQUIRE(n == len + 2);
+            CHECK(std::string_view(b.data(), len) == std::string_view(reinterpret_cast<const char*>(a.data()), len));
+            // one byte short: both report BufferFull
+            gmp::text::TextWriter small(gmp::mut_bytes(a.data(), len - 1), ',');
+            const auto rs = which == 2 ? small.float_token(dv, precision, width) : small.float_token(fv, precision, width);
+            REQUIRE(!rs);
+            CHECK(rs.error() == gmp::Error::BufferFull);
+            CHECK(gmpct_text_tokens(which, 0, 0, dv, fv, 10, precision, width, b.data(), len - 1, &n) == code(gmp::Error::BufferFull));
+        }
+    }
+    CHECK(long_tokens > 1000);
+}
+
 TEST_CASE("C text writer tokens match gmp::text::TextWriter") {
     std::mt19937_64 rng(5);
     for (int i = 0; i < 50000; ++i) {

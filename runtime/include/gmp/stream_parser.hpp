@@ -131,12 +131,10 @@ public:
     Polled<typename P::AnyView> poll() {
         std::optional<typename P::AnyView> out;
         if (!pull([&](mut_bytes frame) -> Error {
-                auto f = P::open(frame);
-                if (!f) return f.error();
-                auto v = P::select_message(*f);
-                if (!v) return v.error();
-                out.emplace(std::move(*v));
-                return Error::None;
+                return open_view<P>(frame, [&](const auto&, auto& v) {
+                    out.emplace(std::move(v));
+                    return Error::None;
+                });
             }))
             return {};
         return polled(std::move(*out));
@@ -147,15 +145,13 @@ public:
     Polled<typename P::Received> poll_frame() {
         std::optional<typename P::Received> out;
         if (!pull([&](mut_bytes frame) -> Error {
-                auto f = P::open(frame);
-                if (!f) return f.error();
-                auto v = P::select_message(*f);
-                if (!v) return v.error();
-                if constexpr (requires { f->header; })
-                    out.emplace(typename P::Received{f->header, std::move(*v), bytes_view(frame)});
-                else
-                    out.emplace(typename P::Received{std::move(*v), bytes_view(frame)});
-                return Error::None;
+                return open_view<P>(frame, [&](const auto& f, auto& v) {
+                    if constexpr (requires { f.header; })
+                        out.emplace(typename P::Received{f.header, std::move(v), bytes_view(frame)});
+                    else
+                        out.emplace(typename P::Received{std::move(v), bytes_view(frame)});
+                    return Error::None;
+                });
             }))
             return {};
         return polled(std::move(*out));
@@ -167,18 +163,16 @@ public:
     std::optional<typename P::AnyMessage> poll_message() {
         std::optional<typename P::AnyMessage> out;
         if (!pull([&](mut_bytes frame) -> Error {
-                auto f = P::open(frame);
-                if (!f) return f.error();
-                auto v = P::select_message(*f);
-                if (!v) return v.error();
-                return std::visit(
-                    [&](const auto& view) -> Error {
-                        auto m = view.to_struct();
-                        if (!m) return m.error();
-                        out.emplace(std::move(*m));
-                        return Error::None;
-                    },
-                    *v);
+                return open_view<P>(frame, [&](const auto&, auto& v) {
+                    return std::visit(
+                        [&](const auto& view) -> Error {
+                            auto m = view.to_struct();
+                            if (!m) return m.error();
+                            out.emplace(std::move(*m));
+                            return Error::None;
+                        },
+                        v);
+                });
             }))
             return std::nullopt;
         return out;
@@ -190,12 +184,10 @@ public:
     Polled<std::variant<typename P::AnyView, FrameError>> poll_event() {
         std::optional<typename P::AnyView> out;
         const Step s = step([&](mut_bytes frame) -> Error {
-            auto f = P::open(frame);
-            if (!f) return f.error();
-            auto v = P::select_message(*f);
-            if (!v) return v.error();
-            out.emplace(std::move(*v));
-            return Error::None;
+            return open_view<P>(frame, [&](const auto&, auto& v) {
+                out.emplace(std::move(v));
+                return Error::None;
+            });
         });
         using Event = std::variant<typename P::AnyView, FrameError>;
         if (s.kind == StepKind::need_more) return {};
@@ -210,16 +202,14 @@ public:
     Polled<V> poll_for() requires(!std::is_void_v<Handler>) {
         std::optional<V> out;
         while (pull([&](mut_bytes frame) -> Error {
-            auto f = P::open(frame);
-            if (!f) return f.error();
-            auto v = P::select_message(*f);
-            if (!v) return v.error();
-            if (const V* hit = std::get_if<V>(&*v)) {
-                out.emplace(*hit);
+            return open_view<P>(frame, [&](const auto& f, auto& v) {
+                if (const V* hit = std::get_if<V>(&v)) {
+                    out.emplace(*hit);
+                    return Error::None;
+                }
+                std::visit([&](const auto& x) { deliver(f, x); }, v);
                 return Error::None;
-            }
-            std::visit([&](const auto& x) { deliver(*f, x); }, *v);
-            return Error::None;
+            });
         })) {
             if (out) return polled(std::move(*out));
             release();  // delivered to the handler: done with that frame
@@ -248,6 +238,20 @@ private:
         Error error = Error::None;
         bytes_view bytes{};  // the frame, or the dropped bytes (valid until release())
     };
+
+    /// Open a frame and select its message view, then run use(frame_parts, view) -> Error. When any step fails,
+    /// a protocol with escaping gets the frame back as received (P::restore_frame), so resynchronisation scans
+    /// the bytes as they arrived.
+    template <class P, class Use>
+    static Error open_view(mut_bytes frame, Use&& use) {
+        auto f = P::open(frame);
+        if (!f) return f.error();
+        auto v = P::select_message(*f);
+        const Error e = v ? use(*f, *v) : v.error();
+        if constexpr (requires { P::restore_frame(frame, f->unescaped_size); })
+            if (e != Error::None) P::restore_frame(frame, f->unescaped_size);
+        return e;
+    }
 
     /// Scan to the next frame or reportable error. On a frame, `accept(frame)` validates it (and delivers or
     /// captures the message). The frame / dropped bytes stay buffered until release(), so views and

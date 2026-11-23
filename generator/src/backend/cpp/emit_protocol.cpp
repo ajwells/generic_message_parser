@@ -68,6 +68,8 @@ public:
         has_header_ = !text_ && !p.header->fields.empty();
         escape_ = p.framing.escape.enabled;
         wire_cs_ = escape_ && p.checksum.present && p.checksum.over_wire && !text_;
+        // escaped binary frames with a built-in checksum: verify it over the escaped bytes, then unescape
+        cs_first_ = escape_ && !text_ && p.checksum.present && !p.checksum.over_wire && !p.checksum.custom;
         stream_ = p.framing.type != FT::None && p.max_frame > 0;
         all_struct_ = std::all_of(p.messages.begin(), p.messages.end(), [](const Message* m) { return m->want_struct; });
         // Lowering guarantees every protocol message has a view and (text) the protocol's separator.
@@ -209,6 +211,7 @@ private:
         if (has_header_) w_.line("HeaderView header{};");
         if (text_) w_.line("std::string_view type_id{};  // text: the first token");
         w_.line("gmp::bytes_view body{};");
+        if (escape_) w_.line("std::size_t unescaped_size = 0;  ///< size of the unescaped part (for restore_frame)");
         w_.close("};");
         w_.line();
     }
@@ -225,21 +228,68 @@ private:
 
     void emit_open() {
         w_.line("/// Validate one complete frame (as delimited by scan()) and split it into header and body.");
-        if (escape_) w_.line("/// The frame is unescaped in place.");
+        if (escape_) {
+            w_.line(cs_first_ || wire_cs_ ? "/// The checksum is verified over the escaped bytes; then the frame is unescaped in place."
+                              : "/// The frame is unescaped in place.");
+            w_.line("/// On failure the frame holds the bytes as received again (see restore_frame).");
+        }
         w_.open("[[nodiscard]] static gmp::Result<Frame> open(" + frame_param() + ") noexcept {");
         w_.line("if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) " + fail("Truncated"));
         if (wire_cs_) emit_wire_checksum();
-        if (escape_) {
-            w_.line("auto n = gmp::unescape_in_place(frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size), framing_config.escape);");
-            w_.line("if (!n) return gmp::fail(n.error());");
-            w_.line("const gmp::bytes_view interior(frame.data() + prefix_size, *n);");
-        } else {
+        if (!escape_) {
             w_.line("const gmp::bytes_view interior = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);");
+            if (text_) emit_open_text();
+            else emit_open_binary();
+            w_.close();
+            w_.line();
+            return;
         }
+        w_.line("const gmp::mut_bytes wire = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);");
+        w_.line("const auto n = gmp::check_escaped(wire, framing_config.escape);");
+        w_.line("if (!n) return gmp::fail(n.error());");
+        if (cs_first_ || wire_cs_) emit_escaped_checksum();
+        w_.line("(void)gmp::unescape_in_place(wire, framing_config.escape);");
+        w_.line("const gmp::bytes_view interior(frame.data() + prefix_size, *n);");
+        w_.open("auto r = [&]() -> gmp::Result<Frame> {");
         if (text_) emit_open_text();
         else emit_open_binary();
+        w_.close("}();");
+        w_.line("if (!r) restore_frame(frame, *n);");
+        w_.line("else r->unescaped_size = *n;");
+        w_.line("return r;");
         w_.close();
         w_.line();
+        w_.line("/// Escape the unescaped part of a frame opened by open() again, so the frame holds the bytes as received");
+        w_.line("/// (an escape pair of a byte that needs no escaping comes back as the plain byte).");
+        w_.open("static void restore_frame(gmp::mut_bytes frame, std::size_t unescaped_size) noexcept {");
+        w_.line("(void)gmp::escape_in_place(frame.first(frame.size() - suffix_size), prefix_size, unescaped_size, framing_config.escape);");
+        w_.close();
+        w_.line();
+    }
+
+    /// Escaped binary frames with a built-in checksum: verify it before anything is unescaped.
+    void emit_escaped_checksum() {
+        bool fn = false;
+        const auto impl = checksum_impl(p_.checksum, fn);
+        w_.line("if (*n < header_size + trailer_size) " + fail("Truncated"));
+        w_.open("{");
+        w_.line("std::array<std::uint8_t, trailer_size> sb{};");
+        w_.line("std::size_t k = 0;");
+        w_.line("gmp::for_each_unescaped(wire, framing_config.escape, *n - trailer_size, *n, [&](gmp::bytes_view d) { for (auto b : d) sb[k++] = b; });");
+        w_.line("const auto stored = gmp::load_uint(sb.data(), trailer_size, " + endian_expr(p_.checksum.endian) + ");");
+        if (wire_cs_) {
+            w_.line("if (stored != computed) " + fail("BadChecksum"));
+            w_.close();
+            return;
+        }
+        w_.line("auto c = " + impl + "::init();");
+        if (p_.checksum.covers == ChecksumSpec::Covers::All)
+            w_.line("c = " + impl + "::update(c, gmp::bytes_view(frame.data(), prefix_size));");
+        const std::string from = p_.checksum.covers == ChecksumSpec::Covers::Body ? "header_size" : "0";
+        w_.line("gmp::for_each_unescaped(wire, framing_config.escape, " + from + ", *n - trailer_size, [&](gmp::bytes_view d) { c = " +
+                impl + "::update(c, d); });");
+        w_.line("if (stored != static_cast<std::uint64_t>(" + impl + "::finish(c))) " + fail("BadChecksum"));
+        w_.close();
     }
 
     /// checksum.over: wire - compute the checksum over the escaped bytes before unescaping.
@@ -267,7 +317,7 @@ private:
 
     void emit_open_binary() {
         w_.line("if (interior.size() < header_size + trailer_size) " + fail("Truncated"));
-        if (p_.checksum.present) {
+        if (p_.checksum.present && !cs_first_ && !wire_cs_) {
             std::string covered;
             switch (p_.checksum.covers) {
                 case ChecksumSpec::Covers::HeaderBody: covered = "interior.first(interior.size() - trailer_size)"; break;
@@ -281,8 +331,7 @@ private:
             w_.open("{");
             w_.line("const auto stored = gmp::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, " +
                     endian_expr(p_.checksum.endian) + ");");
-            if (wire_cs_) w_.line("if (stored != computed) " + fail("BadChecksum"));
-            else emit_checksum_compare(covered, "stored");
+            emit_checksum_compare(covered, "stored");
             w_.close();
         }
         w_.line("Frame f;");
@@ -387,7 +436,13 @@ private:
         w_.line("if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);");
         w_.line("auto f = open(buffer.first(s.size));");
         w_.line("if (!f) return gmp::fail(f.error());");
-        w_.line("return select_message(*f);");
+        if (escape_) {
+            w_.line("auto v = select_message(*f);");
+            w_.line("if (!v) restore_frame(buffer.first(s.size), f->unescaped_size);");
+            w_.line("return v;");
+        } else {
+            w_.line("return select_message(*f);");
+        }
         w_.close();
         if (all_struct_) {
             w_.line("/// Parse one frame and decode it into the eager message struct.");
@@ -412,7 +467,7 @@ private:
         w_.open("static gmp::Error process(gmp::mut_bytes frame, H& handler) {");
         w_.line("auto f = open(frame);");
         w_.line("if (!f) return f.error();");
-        w_.open("return visit_frame(*f, [&](const auto& v) {");
+        w_.open(std::string(escape_ ? "const gmp::Error e = " : "return ") + "visit_frame(*f, [&](const auto& v) {");
         w_.line("using V = std::decay_t<decltype(v)>;");
         if (has_header_) {
             w_.line("if constexpr (std::invocable<H&, const HeaderView&, const V&>) handler(f->header, v);");
@@ -421,6 +476,10 @@ private:
             w_.line("if constexpr (std::invocable<H&, const V&>) handler(v);");
         }
         w_.close("});");
+        if (escape_) {
+            w_.line("if (e != gmp::Error::None) restore_frame(frame, f->unescaped_size);");
+            w_.line("return e;");
+        }
         w_.close();
         w_.line();
     }
@@ -700,7 +759,8 @@ private:
     Ctx& c_;
     CodeWriter& w_;
     const Protocol& p_;
-    bool text_ = false, has_header_ = false, escape_ = false, wire_cs_ = false, stream_ = false, all_struct_ = false;
+    bool text_ = false, has_header_ = false, escape_ = false, wire_cs_ = false, cs_first_ = false, stream_ = false,
+         all_struct_ = false;
 };
 
 } // namespace

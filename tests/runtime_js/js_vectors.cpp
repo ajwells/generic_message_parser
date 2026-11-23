@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <random>
 #include <string>
 #include <string_view>
@@ -326,10 +327,8 @@ void ints(std::mt19937& rng) {
 
     begin_array("text_writer");  // [kind, value, base | precision, width, upper, text]
     for (int i = 0; i < 2000; ++i) {
-        std::array<std::uint8_t, 256> buf{};
+        std::array<std::uint8_t, 1024> buf{};  // room for the longest fixed text (|v| near 1e308 with a precision)
         gmp::text::TextWriter w(gmp::mut_bytes(buf.data(), buf.size()), ',');
-        const auto mark = out.size();
-        const bool was_first = first_item;
         bool ok = true;
         sep();
         if (rng() & 1u) {
@@ -367,11 +366,9 @@ void ints(std::mt19937& rng) {
             num(static_cast<unsigned>(width));
             raw(",false,");
         }
-        // C++ formats a float token in a 128-character buffer and fails beyond it (C and JS print the exact text)
-        if (!ok) {
-            out.resize(mark);
-            first_item = was_first;
-            continue;
+        if (!ok) {  // every token fits the buffer, so writing one must not fail
+            std::fprintf(stderr, "js_vectors: text_writer case %d failed\n", i);
+            std::exit(1);
         }
         str(std::string_view(reinterpret_cast<const char*>(buf.data()), w.position()));
         raw("]");

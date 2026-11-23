@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <string_view>
 #include <system_error>
@@ -154,17 +155,24 @@ public:
     template <class T>
     VoidResult float_token(T v, int precision = -1, int width = 0) noexcept {
         if (auto r = begin_token(); !r) return r;
-        std::array<char, 128> tmp{};
-        std::to_chars_result res;
-        if (precision >= 0) res = std::to_chars(tmp.data(), tmp.data() + tmp.size(), v, std::chars_format::fixed, precision);
-        else res = std::to_chars(tmp.data(), tmp.data() + tmp.size(), v);
-        if (res.ec != std::errc{}) return fail(Error::InvalidValue);
-        std::string_view s(tmp.data(), static_cast<std::size_t>(res.ptr - tmp.data()));
-        bool neg = !s.empty() && s.front() == '-';
-        if (neg) { if (!put('-')) return fail(Error::BufferFull); s.remove_prefix(1); }
-        for (int i = static_cast<int>(s.size()) + (neg ? 1 : 0); i < width; ++i)
-            if (!put('0')) return fail(Error::BufferFull);
-        return raw(s);
+        // formatted straight into the output, so any length fits that the output buffer can hold
+        char* const at = out_ + pos_;
+        char* const end = out_ + cap_;
+        const std::to_chars_result res = precision >= 0 ? std::to_chars(at, end, v, std::chars_format::fixed, precision)
+                                                        : std::to_chars(at, end, v);
+        if (res.ec != std::errc{}) { failed_ = true; return fail(Error::BufferFull); }
+        const auto n = static_cast<std::size_t>(res.ptr - at);
+        if (width > 0 && static_cast<std::size_t>(width) > n) {  // zero padding after the sign
+            const std::size_t pad = static_cast<std::size_t>(width) - n;
+            if (cap_ - pos_ < n + pad) { failed_ = true; return fail(Error::BufferFull); }
+            const std::size_t sign = at[0] == '-' ? 1 : 0;
+            std::memmove(at + sign + pad, at + sign, n - sign);
+            std::memset(at + sign, '0', pad);
+            pos_ += n + pad;
+            return {};
+        }
+        pos_ += n;
+        return {};
     }
 
 private:

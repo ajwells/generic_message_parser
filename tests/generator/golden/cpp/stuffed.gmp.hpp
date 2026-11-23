@@ -322,27 +322,47 @@ struct SyncLink {
     struct Frame {
         HeaderView header{};
         gmp::bytes_view body{};
+        std::size_t unescaped_size = 0;  ///< size of the unescaped part (for restore_frame)
     };
 
     /// Validate one complete frame (as delimited by scan()) and split it into header and body.
-    /// The frame is unescaped in place.
+    /// The checksum is verified over the escaped bytes; then the frame is unescaped in place.
+    /// On failure the frame holds the bytes as received again (see restore_frame).
     [[nodiscard]] static gmp::Result<Frame> open(gmp::mut_bytes frame) noexcept {
         if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmp::fail(gmp::Error::Truncated);
-        auto n = gmp::unescape_in_place(frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size), framing_config.escape);
+        const gmp::mut_bytes wire = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
+        const auto n = gmp::check_escaped(wire, framing_config.escape);
         if (!n) return gmp::fail(n.error());
-        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
-        if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+        if (*n < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
         {
-            const auto stored = gmp::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, gmp::Endian::big);
-            const auto computed = static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::compute(interior.first(interior.size() - trailer_size)));
-            if (stored != computed) return gmp::fail(gmp::Error::BadChecksum);
+            std::array<std::uint8_t, trailer_size> sb{};
+            std::size_t k = 0;
+            gmp::for_each_unescaped(wire, framing_config.escape, *n - trailer_size, *n, [&](gmp::bytes_view d) { for (auto b : d) sb[k++] = b; });
+            const auto stored = gmp::load_uint(sb.data(), trailer_size, gmp::Endian::big);
+            auto c = gmp::checksum::crc16_ccitt::init();
+            gmp::for_each_unescaped(wire, framing_config.escape, 0, *n - trailer_size, [&](gmp::bytes_view d) { c = gmp::checksum::crc16_ccitt::update(c, d); });
+            if (stored != static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::finish(c))) return gmp::fail(gmp::Error::BadChecksum);
         }
-        Frame f;
-        auto h = HeaderView::from(interior.first(header_size));
-        if (!h) return gmp::fail(h.error());
-        f.header = *h;
-        f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
-        return f;
+        (void)gmp::unescape_in_place(wire, framing_config.escape);
+        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
+        auto r = [&]() -> gmp::Result<Frame> {
+            if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+            Frame f;
+            auto h = HeaderView::from(interior.first(header_size));
+            if (!h) return gmp::fail(h.error());
+            f.header = *h;
+            f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
+            return f;
+        }();
+        if (!r) restore_frame(frame, *n);
+        else r->unescaped_size = *n;
+        return r;
+    }
+
+    /// Escape the unescaped part of a frame opened by open() again, so the frame holds the bytes as received
+    /// (an escape pair of a byte that needs no escaping comes back as the plain byte).
+    static void restore_frame(gmp::mut_bytes frame, std::size_t unescaped_size) noexcept {
+        (void)gmp::escape_in_place(frame.first(frame.size() - suffix_size), prefix_size, unescaped_size, framing_config.escape);
     }
 
     /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
@@ -379,7 +399,9 @@ struct SyncLink {
         if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
         if (!f) return gmp::fail(f.error());
-        return select_message(*f);
+        auto v = select_message(*f);
+        if (!v) restore_frame(buffer.first(s.size), f->unescaped_size);
+        return v;
     }
     /// Parse one frame and decode it into the eager message struct.
     [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::mut_bytes buffer) noexcept {
@@ -399,11 +421,13 @@ struct SyncLink {
     static gmp::Error process(gmp::mut_bytes frame, H& handler) {
         auto f = open(frame);
         if (!f) return f.error();
-        return visit_frame(*f, [&](const auto& v) {
+        const gmp::Error e = visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
             if constexpr (std::invocable<H&, const HeaderView&, const V&>) handler(f->header, v);
             else if constexpr (std::invocable<H&, const V&>) handler(v);
         });
+        if (e != gmp::Error::None) restore_frame(frame, f->unescaped_size);
+        return e;
     }
 
     /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
@@ -640,10 +664,12 @@ struct WireChecksum {
     struct Frame {
         HeaderView header{};
         gmp::bytes_view body{};
+        std::size_t unescaped_size = 0;  ///< size of the unescaped part (for restore_frame)
     };
 
     /// Validate one complete frame (as delimited by scan()) and split it into header and body.
-    /// The frame is unescaped in place.
+    /// The checksum is verified over the escaped bytes; then the frame is unescaped in place.
+    /// On failure the frame holds the bytes as received again (see restore_frame).
     [[nodiscard]] static gmp::Result<Frame> open(gmp::mut_bytes frame) noexcept {
         if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmp::fail(gmp::Error::Truncated);
         std::uint64_t computed = 0;  // checksum.over: wire
@@ -656,20 +682,37 @@ struct WireChecksum {
             if (t.kind != gmp::EscapeWalk::Kind::done) return gmp::fail(t.kind == gmp::EscapeWalk::Kind::bad ? t.error : gmp::Error::Truncated);
             computed = static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::compute(wire.first(t.wire)));
         }
-        auto n = gmp::unescape_in_place(frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size), framing_config.escape);
+        const gmp::mut_bytes wire = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
+        const auto n = gmp::check_escaped(wire, framing_config.escape);
         if (!n) return gmp::fail(n.error());
-        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
-        if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+        if (*n < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
         {
-            const auto stored = gmp::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, gmp::Endian::big);
+            std::array<std::uint8_t, trailer_size> sb{};
+            std::size_t k = 0;
+            gmp::for_each_unescaped(wire, framing_config.escape, *n - trailer_size, *n, [&](gmp::bytes_view d) { for (auto b : d) sb[k++] = b; });
+            const auto stored = gmp::load_uint(sb.data(), trailer_size, gmp::Endian::big);
             if (stored != computed) return gmp::fail(gmp::Error::BadChecksum);
         }
-        Frame f;
-        auto h = HeaderView::from(interior.first(header_size));
-        if (!h) return gmp::fail(h.error());
-        f.header = *h;
-        f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
-        return f;
+        (void)gmp::unescape_in_place(wire, framing_config.escape);
+        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
+        auto r = [&]() -> gmp::Result<Frame> {
+            if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+            Frame f;
+            auto h = HeaderView::from(interior.first(header_size));
+            if (!h) return gmp::fail(h.error());
+            f.header = *h;
+            f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
+            return f;
+        }();
+        if (!r) restore_frame(frame, *n);
+        else r->unescaped_size = *n;
+        return r;
+    }
+
+    /// Escape the unescaped part of a frame opened by open() again, so the frame holds the bytes as received
+    /// (an escape pair of a byte that needs no escaping comes back as the plain byte).
+    static void restore_frame(gmp::mut_bytes frame, std::size_t unescaped_size) noexcept {
+        (void)gmp::escape_in_place(frame.first(frame.size() - suffix_size), prefix_size, unescaped_size, framing_config.escape);
     }
 
     /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
@@ -706,7 +749,9 @@ struct WireChecksum {
         if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
         if (!f) return gmp::fail(f.error());
-        return select_message(*f);
+        auto v = select_message(*f);
+        if (!v) restore_frame(buffer.first(s.size), f->unescaped_size);
+        return v;
     }
     /// Parse one frame and decode it into the eager message struct.
     [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::mut_bytes buffer) noexcept {
@@ -726,11 +771,13 @@ struct WireChecksum {
     static gmp::Error process(gmp::mut_bytes frame, H& handler) {
         auto f = open(frame);
         if (!f) return f.error();
-        return visit_frame(*f, [&](const auto& v) {
+        const gmp::Error e = visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
             if constexpr (std::invocable<H&, const HeaderView&, const V&>) handler(f->header, v);
             else if constexpr (std::invocable<H&, const V&>) handler(v);
         });
+        if (e != gmp::Error::None) restore_frame(frame, f->unescaped_size);
+        return e;
     }
 
     /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
@@ -975,27 +1022,47 @@ struct WireLength {
     struct Frame {
         HeaderView header{};
         gmp::bytes_view body{};
+        std::size_t unescaped_size = 0;  ///< size of the unescaped part (for restore_frame)
     };
 
     /// Validate one complete frame (as delimited by scan()) and split it into header and body.
-    /// The frame is unescaped in place.
+    /// The checksum is verified over the escaped bytes; then the frame is unescaped in place.
+    /// On failure the frame holds the bytes as received again (see restore_frame).
     [[nodiscard]] static gmp::Result<Frame> open(gmp::mut_bytes frame) noexcept {
         if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmp::fail(gmp::Error::Truncated);
-        auto n = gmp::unescape_in_place(frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size), framing_config.escape);
+        const gmp::mut_bytes wire = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
+        const auto n = gmp::check_escaped(wire, framing_config.escape);
         if (!n) return gmp::fail(n.error());
-        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
-        if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+        if (*n < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
         {
-            const auto stored = gmp::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, gmp::Endian::big);
-            const auto computed = static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::compute(interior.first(interior.size() - trailer_size)));
-            if (stored != computed) return gmp::fail(gmp::Error::BadChecksum);
+            std::array<std::uint8_t, trailer_size> sb{};
+            std::size_t k = 0;
+            gmp::for_each_unescaped(wire, framing_config.escape, *n - trailer_size, *n, [&](gmp::bytes_view d) { for (auto b : d) sb[k++] = b; });
+            const auto stored = gmp::load_uint(sb.data(), trailer_size, gmp::Endian::big);
+            auto c = gmp::checksum::crc16_ccitt::init();
+            gmp::for_each_unescaped(wire, framing_config.escape, 0, *n - trailer_size, [&](gmp::bytes_view d) { c = gmp::checksum::crc16_ccitt::update(c, d); });
+            if (stored != static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::finish(c))) return gmp::fail(gmp::Error::BadChecksum);
         }
-        Frame f;
-        auto h = HeaderView::from(interior.first(header_size));
-        if (!h) return gmp::fail(h.error());
-        f.header = *h;
-        f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
-        return f;
+        (void)gmp::unescape_in_place(wire, framing_config.escape);
+        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
+        auto r = [&]() -> gmp::Result<Frame> {
+            if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+            Frame f;
+            auto h = HeaderView::from(interior.first(header_size));
+            if (!h) return gmp::fail(h.error());
+            f.header = *h;
+            f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
+            return f;
+        }();
+        if (!r) restore_frame(frame, *n);
+        else r->unescaped_size = *n;
+        return r;
+    }
+
+    /// Escape the unescaped part of a frame opened by open() again, so the frame holds the bytes as received
+    /// (an escape pair of a byte that needs no escaping comes back as the plain byte).
+    static void restore_frame(gmp::mut_bytes frame, std::size_t unescaped_size) noexcept {
+        (void)gmp::escape_in_place(frame.first(frame.size() - suffix_size), prefix_size, unescaped_size, framing_config.escape);
     }
 
     /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
@@ -1032,7 +1099,9 @@ struct WireLength {
         if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
         if (!f) return gmp::fail(f.error());
-        return select_message(*f);
+        auto v = select_message(*f);
+        if (!v) restore_frame(buffer.first(s.size), f->unescaped_size);
+        return v;
     }
     /// Parse one frame and decode it into the eager message struct.
     [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::mut_bytes buffer) noexcept {
@@ -1052,11 +1121,13 @@ struct WireLength {
     static gmp::Error process(gmp::mut_bytes frame, H& handler) {
         auto f = open(frame);
         if (!f) return f.error();
-        return visit_frame(*f, [&](const auto& v) {
+        const gmp::Error e = visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
             if constexpr (std::invocable<H&, const HeaderView&, const V&>) handler(f->header, v);
             else if constexpr (std::invocable<H&, const V&>) handler(v);
         });
+        if (e != gmp::Error::None) restore_frame(frame, f->unescaped_size);
+        return e;
     }
 
     /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
@@ -1293,27 +1364,47 @@ struct CrcLength {
     struct Frame {
         HeaderView header{};
         gmp::bytes_view body{};
+        std::size_t unescaped_size = 0;  ///< size of the unescaped part (for restore_frame)
     };
 
     /// Validate one complete frame (as delimited by scan()) and split it into header and body.
-    /// The frame is unescaped in place.
+    /// The checksum is verified over the escaped bytes; then the frame is unescaped in place.
+    /// On failure the frame holds the bytes as received again (see restore_frame).
     [[nodiscard]] static gmp::Result<Frame> open(gmp::mut_bytes frame) noexcept {
         if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmp::fail(gmp::Error::Truncated);
-        auto n = gmp::unescape_in_place(frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size), framing_config.escape);
+        const gmp::mut_bytes wire = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
+        const auto n = gmp::check_escaped(wire, framing_config.escape);
         if (!n) return gmp::fail(n.error());
-        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
-        if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+        if (*n < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
         {
-            const auto stored = gmp::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, gmp::Endian::big);
-            const auto computed = static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::compute(interior.first(interior.size() - trailer_size)));
-            if (stored != computed) return gmp::fail(gmp::Error::BadChecksum);
+            std::array<std::uint8_t, trailer_size> sb{};
+            std::size_t k = 0;
+            gmp::for_each_unescaped(wire, framing_config.escape, *n - trailer_size, *n, [&](gmp::bytes_view d) { for (auto b : d) sb[k++] = b; });
+            const auto stored = gmp::load_uint(sb.data(), trailer_size, gmp::Endian::big);
+            auto c = gmp::checksum::crc16_ccitt::init();
+            gmp::for_each_unescaped(wire, framing_config.escape, 0, *n - trailer_size, [&](gmp::bytes_view d) { c = gmp::checksum::crc16_ccitt::update(c, d); });
+            if (stored != static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::finish(c))) return gmp::fail(gmp::Error::BadChecksum);
         }
-        Frame f;
-        auto h = HeaderView::from(interior.first(header_size));
-        if (!h) return gmp::fail(h.error());
-        f.header = *h;
-        f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
-        return f;
+        (void)gmp::unescape_in_place(wire, framing_config.escape);
+        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
+        auto r = [&]() -> gmp::Result<Frame> {
+            if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+            Frame f;
+            auto h = HeaderView::from(interior.first(header_size));
+            if (!h) return gmp::fail(h.error());
+            f.header = *h;
+            f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
+            return f;
+        }();
+        if (!r) restore_frame(frame, *n);
+        else r->unescaped_size = *n;
+        return r;
+    }
+
+    /// Escape the unescaped part of a frame opened by open() again, so the frame holds the bytes as received
+    /// (an escape pair of a byte that needs no escaping comes back as the plain byte).
+    static void restore_frame(gmp::mut_bytes frame, std::size_t unescaped_size) noexcept {
+        (void)gmp::escape_in_place(frame.first(frame.size() - suffix_size), prefix_size, unescaped_size, framing_config.escape);
     }
 
     /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
@@ -1350,7 +1441,9 @@ struct CrcLength {
         if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
         if (!f) return gmp::fail(f.error());
-        return select_message(*f);
+        auto v = select_message(*f);
+        if (!v) restore_frame(buffer.first(s.size), f->unescaped_size);
+        return v;
     }
     /// Parse one frame and decode it into the eager message struct.
     [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::mut_bytes buffer) noexcept {
@@ -1370,11 +1463,13 @@ struct CrcLength {
     static gmp::Error process(gmp::mut_bytes frame, H& handler) {
         auto f = open(frame);
         if (!f) return f.error();
-        return visit_frame(*f, [&](const auto& v) {
+        const gmp::Error e = visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
             if constexpr (std::invocable<H&, const HeaderView&, const V&>) handler(f->header, v);
             else if constexpr (std::invocable<H&, const V&>) handler(v);
         });
+        if (e != gmp::Error::None) restore_frame(frame, f->unescaped_size);
+        return e;
     }
 
     /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
@@ -1611,27 +1706,47 @@ struct WireCrcLength {
     struct Frame {
         HeaderView header{};
         gmp::bytes_view body{};
+        std::size_t unescaped_size = 0;  ///< size of the unescaped part (for restore_frame)
     };
 
     /// Validate one complete frame (as delimited by scan()) and split it into header and body.
-    /// The frame is unescaped in place.
+    /// The checksum is verified over the escaped bytes; then the frame is unescaped in place.
+    /// On failure the frame holds the bytes as received again (see restore_frame).
     [[nodiscard]] static gmp::Result<Frame> open(gmp::mut_bytes frame) noexcept {
         if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmp::fail(gmp::Error::Truncated);
-        auto n = gmp::unescape_in_place(frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size), framing_config.escape);
+        const gmp::mut_bytes wire = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
+        const auto n = gmp::check_escaped(wire, framing_config.escape);
         if (!n) return gmp::fail(n.error());
-        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
-        if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+        if (*n < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
         {
-            const auto stored = gmp::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, gmp::Endian::big);
-            const auto computed = static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::compute(interior.subspan(header_size, interior.size() - header_size - trailer_size)));
-            if (stored != computed) return gmp::fail(gmp::Error::BadChecksum);
+            std::array<std::uint8_t, trailer_size> sb{};
+            std::size_t k = 0;
+            gmp::for_each_unescaped(wire, framing_config.escape, *n - trailer_size, *n, [&](gmp::bytes_view d) { for (auto b : d) sb[k++] = b; });
+            const auto stored = gmp::load_uint(sb.data(), trailer_size, gmp::Endian::big);
+            auto c = gmp::checksum::crc16_ccitt::init();
+            gmp::for_each_unescaped(wire, framing_config.escape, header_size, *n - trailer_size, [&](gmp::bytes_view d) { c = gmp::checksum::crc16_ccitt::update(c, d); });
+            if (stored != static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::finish(c))) return gmp::fail(gmp::Error::BadChecksum);
         }
-        Frame f;
-        auto h = HeaderView::from(interior.first(header_size));
-        if (!h) return gmp::fail(h.error());
-        f.header = *h;
-        f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
-        return f;
+        (void)gmp::unescape_in_place(wire, framing_config.escape);
+        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
+        auto r = [&]() -> gmp::Result<Frame> {
+            if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+            Frame f;
+            auto h = HeaderView::from(interior.first(header_size));
+            if (!h) return gmp::fail(h.error());
+            f.header = *h;
+            f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
+            return f;
+        }();
+        if (!r) restore_frame(frame, *n);
+        else r->unescaped_size = *n;
+        return r;
+    }
+
+    /// Escape the unescaped part of a frame opened by open() again, so the frame holds the bytes as received
+    /// (an escape pair of a byte that needs no escaping comes back as the plain byte).
+    static void restore_frame(gmp::mut_bytes frame, std::size_t unescaped_size) noexcept {
+        (void)gmp::escape_in_place(frame.first(frame.size() - suffix_size), prefix_size, unescaped_size, framing_config.escape);
     }
 
     /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
@@ -1668,7 +1783,9 @@ struct WireCrcLength {
         if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
         if (!f) return gmp::fail(f.error());
-        return select_message(*f);
+        auto v = select_message(*f);
+        if (!v) restore_frame(buffer.first(s.size), f->unescaped_size);
+        return v;
     }
     /// Parse one frame and decode it into the eager message struct.
     [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::mut_bytes buffer) noexcept {
@@ -1688,11 +1805,13 @@ struct WireCrcLength {
     static gmp::Error process(gmp::mut_bytes frame, H& handler) {
         auto f = open(frame);
         if (!f) return f.error();
-        return visit_frame(*f, [&](const auto& v) {
+        const gmp::Error e = visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
             if constexpr (std::invocable<H&, const HeaderView&, const V&>) handler(f->header, v);
             else if constexpr (std::invocable<H&, const V&>) handler(v);
         });
+        if (e != gmp::Error::None) restore_frame(frame, f->unescaped_size);
+        return e;
     }
 
     /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
@@ -1941,10 +2060,12 @@ struct WireCrcOverWire {
     struct Frame {
         HeaderView header{};
         gmp::bytes_view body{};
+        std::size_t unescaped_size = 0;  ///< size of the unescaped part (for restore_frame)
     };
 
     /// Validate one complete frame (as delimited by scan()) and split it into header and body.
-    /// The frame is unescaped in place.
+    /// The checksum is verified over the escaped bytes; then the frame is unescaped in place.
+    /// On failure the frame holds the bytes as received again (see restore_frame).
     [[nodiscard]] static gmp::Result<Frame> open(gmp::mut_bytes frame) noexcept {
         if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmp::fail(gmp::Error::Truncated);
         std::uint64_t computed = 0;  // checksum.over: wire
@@ -1958,20 +2079,37 @@ struct WireCrcOverWire {
             const auto h = gmp::walk_escaped(wire, 0, header_size, framing_config.escape);
             computed = static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::compute(wire.subspan(h.wire, t.wire - h.wire)));
         }
-        auto n = gmp::unescape_in_place(frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size), framing_config.escape);
+        const gmp::mut_bytes wire = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
+        const auto n = gmp::check_escaped(wire, framing_config.escape);
         if (!n) return gmp::fail(n.error());
-        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
-        if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+        if (*n < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
         {
-            const auto stored = gmp::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, gmp::Endian::big);
+            std::array<std::uint8_t, trailer_size> sb{};
+            std::size_t k = 0;
+            gmp::for_each_unescaped(wire, framing_config.escape, *n - trailer_size, *n, [&](gmp::bytes_view d) { for (auto b : d) sb[k++] = b; });
+            const auto stored = gmp::load_uint(sb.data(), trailer_size, gmp::Endian::big);
             if (stored != computed) return gmp::fail(gmp::Error::BadChecksum);
         }
-        Frame f;
-        auto h = HeaderView::from(interior.first(header_size));
-        if (!h) return gmp::fail(h.error());
-        f.header = *h;
-        f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
-        return f;
+        (void)gmp::unescape_in_place(wire, framing_config.escape);
+        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
+        auto r = [&]() -> gmp::Result<Frame> {
+            if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+            Frame f;
+            auto h = HeaderView::from(interior.first(header_size));
+            if (!h) return gmp::fail(h.error());
+            f.header = *h;
+            f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
+            return f;
+        }();
+        if (!r) restore_frame(frame, *n);
+        else r->unescaped_size = *n;
+        return r;
+    }
+
+    /// Escape the unescaped part of a frame opened by open() again, so the frame holds the bytes as received
+    /// (an escape pair of a byte that needs no escaping comes back as the plain byte).
+    static void restore_frame(gmp::mut_bytes frame, std::size_t unescaped_size) noexcept {
+        (void)gmp::escape_in_place(frame.first(frame.size() - suffix_size), prefix_size, unescaped_size, framing_config.escape);
     }
 
     /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
@@ -2008,7 +2146,9 @@ struct WireCrcOverWire {
         if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
         if (!f) return gmp::fail(f.error());
-        return select_message(*f);
+        auto v = select_message(*f);
+        if (!v) restore_frame(buffer.first(s.size), f->unescaped_size);
+        return v;
     }
     /// Parse one frame and decode it into the eager message struct.
     [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::mut_bytes buffer) noexcept {
@@ -2028,11 +2168,13 @@ struct WireCrcOverWire {
     static gmp::Error process(gmp::mut_bytes frame, H& handler) {
         auto f = open(frame);
         if (!f) return f.error();
-        return visit_frame(*f, [&](const auto& v) {
+        const gmp::Error e = visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
             if constexpr (std::invocable<H&, const HeaderView&, const V&>) handler(f->header, v);
             else if constexpr (std::invocable<H&, const V&>) handler(v);
         });
+        if (e != gmp::Error::None) restore_frame(frame, f->unescaped_size);
+        return e;
     }
 
     /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
@@ -2211,10 +2353,12 @@ struct FixedLink {
     /// A validated frame split into its parts (views into the input buffer).
     struct Frame {
         gmp::bytes_view body{};
+        std::size_t unescaped_size = 0;  ///< size of the unescaped part (for restore_frame)
     };
 
     /// Validate one complete frame (as delimited by scan()) and split it into header and body.
-    /// The frame is unescaped in place.
+    /// The checksum is verified over the escaped bytes; then the frame is unescaped in place.
+    /// On failure the frame holds the bytes as received again (see restore_frame).
     [[nodiscard]] static gmp::Result<Frame> open(gmp::mut_bytes frame) noexcept {
         if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmp::fail(gmp::Error::Truncated);
         std::uint64_t computed = 0;  // checksum.over: wire
@@ -2228,17 +2372,34 @@ struct FixedLink {
             const auto h = gmp::walk_escaped(wire, 0, header_size, framing_config.escape);
             computed = static_cast<std::uint64_t>(gmp::checksum::crc8::compute(wire.subspan(h.wire, t.wire - h.wire)));
         }
-        auto n = gmp::unescape_in_place(frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size), framing_config.escape);
+        const gmp::mut_bytes wire = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
+        const auto n = gmp::check_escaped(wire, framing_config.escape);
         if (!n) return gmp::fail(n.error());
-        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
-        if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+        if (*n < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
         {
-            const auto stored = gmp::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, gmp::Endian::big);
+            std::array<std::uint8_t, trailer_size> sb{};
+            std::size_t k = 0;
+            gmp::for_each_unescaped(wire, framing_config.escape, *n - trailer_size, *n, [&](gmp::bytes_view d) { for (auto b : d) sb[k++] = b; });
+            const auto stored = gmp::load_uint(sb.data(), trailer_size, gmp::Endian::big);
             if (stored != computed) return gmp::fail(gmp::Error::BadChecksum);
         }
-        Frame f;
-        f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
-        return f;
+        (void)gmp::unescape_in_place(wire, framing_config.escape);
+        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
+        auto r = [&]() -> gmp::Result<Frame> {
+            if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+            Frame f;
+            f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
+            return f;
+        }();
+        if (!r) restore_frame(frame, *n);
+        else r->unescaped_size = *n;
+        return r;
+    }
+
+    /// Escape the unescaped part of a frame opened by open() again, so the frame holds the bytes as received
+    /// (an escape pair of a byte that needs no escaping comes back as the plain byte).
+    static void restore_frame(gmp::mut_bytes frame, std::size_t unescaped_size) noexcept {
+        (void)gmp::escape_in_place(frame.first(frame.size() - suffix_size), prefix_size, unescaped_size, framing_config.escape);
     }
 
     /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
@@ -2264,7 +2425,9 @@ struct FixedLink {
         if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
         if (!f) return gmp::fail(f.error());
-        return select_message(*f);
+        auto v = select_message(*f);
+        if (!v) restore_frame(buffer.first(s.size), f->unescaped_size);
+        return v;
     }
     /// Parse one frame and decode it into the eager message struct.
     [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::mut_bytes buffer) noexcept {
@@ -2284,10 +2447,12 @@ struct FixedLink {
     static gmp::Error process(gmp::mut_bytes frame, H& handler) {
         auto f = open(frame);
         if (!f) return f.error();
-        return visit_frame(*f, [&](const auto& v) {
+        const gmp::Error e = visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
             if constexpr (std::invocable<H&, const V&>) handler(v);
         });
+        if (e != gmp::Error::None) restore_frame(frame, f->unescaped_size);
+        return e;
     }
 
     /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
@@ -2485,27 +2650,47 @@ struct Delimited {
     struct Frame {
         HeaderView header{};
         gmp::bytes_view body{};
+        std::size_t unescaped_size = 0;  ///< size of the unescaped part (for restore_frame)
     };
 
     /// Validate one complete frame (as delimited by scan()) and split it into header and body.
-    /// The frame is unescaped in place.
+    /// The checksum is verified over the escaped bytes; then the frame is unescaped in place.
+    /// On failure the frame holds the bytes as received again (see restore_frame).
     [[nodiscard]] static gmp::Result<Frame> open(gmp::mut_bytes frame) noexcept {
         if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmp::fail(gmp::Error::Truncated);
-        auto n = gmp::unescape_in_place(frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size), framing_config.escape);
+        const gmp::mut_bytes wire = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
+        const auto n = gmp::check_escaped(wire, framing_config.escape);
         if (!n) return gmp::fail(n.error());
-        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
-        if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+        if (*n < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
         {
-            const auto stored = gmp::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, gmp::Endian::big);
-            const auto computed = static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::compute(interior.subspan(header_size, interior.size() - header_size - trailer_size)));
-            if (stored != computed) return gmp::fail(gmp::Error::BadChecksum);
+            std::array<std::uint8_t, trailer_size> sb{};
+            std::size_t k = 0;
+            gmp::for_each_unescaped(wire, framing_config.escape, *n - trailer_size, *n, [&](gmp::bytes_view d) { for (auto b : d) sb[k++] = b; });
+            const auto stored = gmp::load_uint(sb.data(), trailer_size, gmp::Endian::big);
+            auto c = gmp::checksum::crc16_ccitt::init();
+            gmp::for_each_unescaped(wire, framing_config.escape, header_size, *n - trailer_size, [&](gmp::bytes_view d) { c = gmp::checksum::crc16_ccitt::update(c, d); });
+            if (stored != static_cast<std::uint64_t>(gmp::checksum::crc16_ccitt::finish(c))) return gmp::fail(gmp::Error::BadChecksum);
         }
-        Frame f;
-        auto h = HeaderView::from(interior.first(header_size));
-        if (!h) return gmp::fail(h.error());
-        f.header = *h;
-        f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
-        return f;
+        (void)gmp::unescape_in_place(wire, framing_config.escape);
+        const gmp::bytes_view interior(frame.data() + prefix_size, *n);
+        auto r = [&]() -> gmp::Result<Frame> {
+            if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+            Frame f;
+            auto h = HeaderView::from(interior.first(header_size));
+            if (!h) return gmp::fail(h.error());
+            f.header = *h;
+            f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
+            return f;
+        }();
+        if (!r) restore_frame(frame, *n);
+        else r->unescaped_size = *n;
+        return r;
+    }
+
+    /// Escape the unescaped part of a frame opened by open() again, so the frame holds the bytes as received
+    /// (an escape pair of a byte that needs no escaping comes back as the plain byte).
+    static void restore_frame(gmp::mut_bytes frame, std::size_t unescaped_size) noexcept {
+        (void)gmp::escape_in_place(frame.first(frame.size() - suffix_size), prefix_size, unescaped_size, framing_config.escape);
     }
 
     /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
@@ -2542,7 +2727,9 @@ struct Delimited {
         if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
         if (!f) return gmp::fail(f.error());
-        return select_message(*f);
+        auto v = select_message(*f);
+        if (!v) restore_frame(buffer.first(s.size), f->unescaped_size);
+        return v;
     }
     /// Parse one frame and decode it into the eager message struct.
     [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::mut_bytes buffer) noexcept {
@@ -2562,11 +2749,13 @@ struct Delimited {
     static gmp::Error process(gmp::mut_bytes frame, H& handler) {
         auto f = open(frame);
         if (!f) return f.error();
-        return visit_frame(*f, [&](const auto& v) {
+        const gmp::Error e = visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
             if constexpr (std::invocable<H&, const HeaderView&, const V&>) handler(f->header, v);
             else if constexpr (std::invocable<H&, const V&>) handler(v);
         });
+        if (e != gmp::Error::None) restore_frame(frame, f->unescaped_size);
+        return e;
     }
 
     /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one

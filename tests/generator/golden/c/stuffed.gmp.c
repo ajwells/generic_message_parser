@@ -288,25 +288,59 @@ typedef struct link_stuffed_sync_link_frame_ {
     link_stuffed_sync_link_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } link_stuffed_sync_link_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
-static gmsg_error link_stuffed_sync_link_open_(uint8_t* frame, size_t size, link_stuffed_sync_link_frame_* f) {
+/* Split an unescaped frame into header and body. */
+static gmsg_error link_stuffed_sync_link_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, link_stuffed_sync_link_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
-    if (size < 5) return GMSG_ERR_TRUNCATED;
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 0, &link_stuffed_sync_link_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
+    (void)frame;
     if (interior_n < 4) return GMSG_ERR_TRUNCATED;
-    {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 2, 2, GMSG_ENDIAN_BIG);
-        if (stored != (uint64_t)gmsg_crc16_ccitt_compute(interior, interior_n - 2)) return GMSG_ERR_BAD_CHECKSUM;
-    }
     if ((e = link_stuffed_sync_link_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
     f->body = interior + 2;
     f->body_size = interior_n - 2 - 2;
     return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void link_stuffed_sync_link_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 0, 1, unescaped_n, &link_stuffed_sync_link_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
+static gmsg_error link_stuffed_sync_link_open_(uint8_t* frame, size_t size, link_stuffed_sync_link_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 5) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 0;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &link_stuffed_sync_link_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 4) return GMSG_ERR_TRUNCATED;
+    {
+        uint8_t sb[2];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_sync_link_framing_.escape, un - 2, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 2, GMSG_ENDIAN_BIG);
+        uint16_t c = gmsg_crc16_ccitt_init();
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_sync_link_framing_.escape, 0, un - 2);
+        while (gmsg_unescape_next(&it, &pp, &pn)) c = gmsg_crc16_ccitt_update(c, pp, pn);
+        if (stored != (uint64_t)gmsg_crc16_ccitt_finish(c)) return GMSG_ERR_BAD_CHECKSUM;
+    }
+    (void)gmsg_unescape_in_place(wire, wire_n, &link_stuffed_sync_link_framing_.escape, &un);
+    e = link_stuffed_sync_link_split_(frame, wire, un, f);
+    if (e != GMSG_OK) link_stuffed_sync_link_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -326,6 +360,12 @@ static gmsg_error link_stuffed_sync_link_select_(const link_stuffed_sync_link_fr
     return GMSG_ERR_UNKNOWN_TYPE;
 }
 
+static gmsg_error link_stuffed_sync_link_select_restore_(uint8_t* frame, size_t size, const link_stuffed_sync_link_frame_* f, link_stuffed_sync_link_any_view* out) {
+    const gmsg_error e = link_stuffed_sync_link_select_(f, out);
+    if (e != GMSG_OK) link_stuffed_sync_link_restore_(frame, size, f->unescaped_n);
+    return e;
+}
+
 static void link_stuffed_sync_link_deliver_(const link_stuffed_sync_link_callbacks* cb, const link_stuffed_sync_link_frame_* f, const link_stuffed_sync_link_any_view* v) {
     switch (v->kind) {
         case LINK_STUFFED_SYNC_LINK_DATA: if (cb->on_data) cb->on_data(cb->ctx, &f->header, &v->as.data); break;
@@ -341,7 +381,7 @@ static gmsg_error link_stuffed_sync_link_process_frame_(uint8_t* frame, size_t s
     link_stuffed_sync_link_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = link_stuffed_sync_link_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_sync_link_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = link_stuffed_sync_link_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) link_stuffed_sync_link_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -353,7 +393,7 @@ gmsg_error link_stuffed_sync_link_parse(uint8_t* data, size_t size, link_stuffed
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = link_stuffed_sync_link_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return link_stuffed_sync_link_select_(&f, out);
+    return link_stuffed_sync_link_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error link_stuffed_sync_link_decode(uint8_t* data, size_t size, link_stuffed_sync_link_any_message* out) {
@@ -384,7 +424,7 @@ static gmsg_error link_stuffed_sync_link_stream_process_(gmsg_stream* gs, uint8_
     gmsg_error e = GMSG_OK;
     if (s->mode_ == link_stuffed_sync_link_mode_deliver_) return link_stuffed_sync_link_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_sync_link_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_sync_link_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = link_stuffed_sync_link_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -394,10 +434,12 @@ static gmsg_error link_stuffed_sync_link_stream_process_(gmsg_stream* gs, uint8_
     }
     if (s->mode_ == link_stuffed_sync_link_mode_message_) {
         switch (s->got_.message.kind) {
-            case LINK_STUFFED_SYNC_LINK_DATA: s->msg_->kind = LINK_STUFFED_SYNC_LINK_DATA; return link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data);
-            case LINK_STUFFED_SYNC_LINK_PING: s->msg_->kind = LINK_STUFFED_SYNC_LINK_PING; return link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case LINK_STUFFED_SYNC_LINK_DATA: s->msg_->kind = LINK_STUFFED_SYNC_LINK_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
+            case LINK_STUFFED_SYNC_LINK_PING: s->msg_->kind = LINK_STUFFED_SYNC_LINK_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) link_stuffed_sync_link_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }
@@ -669,9 +711,28 @@ typedef struct link_stuffed_wire_checksum_frame_ {
     link_stuffed_wire_checksum_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } link_stuffed_wire_checksum_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
+/* Split an unescaped frame into header and body. */
+static gmsg_error link_stuffed_wire_checksum_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, link_stuffed_wire_checksum_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    (void)frame;
+    if (interior_n < 4) return GMSG_ERR_TRUNCATED;
+    if ((e = link_stuffed_wire_checksum_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
+    f->body = interior + 2;
+    f->body_size = interior_n - 2 - 2;
+    return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void link_stuffed_wire_checksum_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 0, 1, unescaped_n, &link_stuffed_wire_checksum_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
 static gmsg_error link_stuffed_wire_checksum_open_(uint8_t* frame, size_t size, link_stuffed_wire_checksum_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
@@ -687,18 +748,30 @@ static gmsg_error link_stuffed_wire_checksum_open_(uint8_t* frame, size_t size, 
         if (t.kind != GMSG_WALK_DONE) return t.kind == GMSG_WALK_BAD ? t.error : GMSG_ERR_TRUNCATED;
         computed = (uint64_t)gmsg_crc16_ccitt_compute(wire, t.wire);
     }
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 0, &link_stuffed_wire_checksum_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
-    if (interior_n < 4) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 0;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &link_stuffed_wire_checksum_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 4) return GMSG_ERR_TRUNCATED;
     {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 2, 2, GMSG_ENDIAN_BIG);
+        uint8_t sb[2];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_wire_checksum_framing_.escape, un - 2, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 2, GMSG_ENDIAN_BIG);
         if (stored != computed) return GMSG_ERR_BAD_CHECKSUM;
     }
-    if ((e = link_stuffed_wire_checksum_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
-    f->body = interior + 2;
-    f->body_size = interior_n - 2 - 2;
-    return GMSG_OK;
+    (void)gmsg_unescape_in_place(wire, wire_n, &link_stuffed_wire_checksum_framing_.escape, &un);
+    e = link_stuffed_wire_checksum_split_(frame, wire, un, f);
+    if (e != GMSG_OK) link_stuffed_wire_checksum_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -718,6 +791,12 @@ static gmsg_error link_stuffed_wire_checksum_select_(const link_stuffed_wire_che
     return GMSG_ERR_UNKNOWN_TYPE;
 }
 
+static gmsg_error link_stuffed_wire_checksum_select_restore_(uint8_t* frame, size_t size, const link_stuffed_wire_checksum_frame_* f, link_stuffed_wire_checksum_any_view* out) {
+    const gmsg_error e = link_stuffed_wire_checksum_select_(f, out);
+    if (e != GMSG_OK) link_stuffed_wire_checksum_restore_(frame, size, f->unescaped_n);
+    return e;
+}
+
 static void link_stuffed_wire_checksum_deliver_(const link_stuffed_wire_checksum_callbacks* cb, const link_stuffed_wire_checksum_frame_* f, const link_stuffed_wire_checksum_any_view* v) {
     switch (v->kind) {
         case LINK_STUFFED_WIRE_CHECKSUM_DATA: if (cb->on_data) cb->on_data(cb->ctx, &f->header, &v->as.data); break;
@@ -733,7 +812,7 @@ static gmsg_error link_stuffed_wire_checksum_process_frame_(uint8_t* frame, size
     link_stuffed_wire_checksum_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = link_stuffed_wire_checksum_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_wire_checksum_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = link_stuffed_wire_checksum_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) link_stuffed_wire_checksum_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -745,7 +824,7 @@ gmsg_error link_stuffed_wire_checksum_parse(uint8_t* data, size_t size, link_stu
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = link_stuffed_wire_checksum_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return link_stuffed_wire_checksum_select_(&f, out);
+    return link_stuffed_wire_checksum_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error link_stuffed_wire_checksum_decode(uint8_t* data, size_t size, link_stuffed_wire_checksum_any_message* out) {
@@ -776,7 +855,7 @@ static gmsg_error link_stuffed_wire_checksum_stream_process_(gmsg_stream* gs, ui
     gmsg_error e = GMSG_OK;
     if (s->mode_ == link_stuffed_wire_checksum_mode_deliver_) return link_stuffed_wire_checksum_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_wire_checksum_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_wire_checksum_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = link_stuffed_wire_checksum_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -786,10 +865,12 @@ static gmsg_error link_stuffed_wire_checksum_stream_process_(gmsg_stream* gs, ui
     }
     if (s->mode_ == link_stuffed_wire_checksum_mode_message_) {
         switch (s->got_.message.kind) {
-            case LINK_STUFFED_WIRE_CHECKSUM_DATA: s->msg_->kind = LINK_STUFFED_WIRE_CHECKSUM_DATA; return link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data);
-            case LINK_STUFFED_WIRE_CHECKSUM_PING: s->msg_->kind = LINK_STUFFED_WIRE_CHECKSUM_PING; return link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case LINK_STUFFED_WIRE_CHECKSUM_DATA: s->msg_->kind = LINK_STUFFED_WIRE_CHECKSUM_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
+            case LINK_STUFFED_WIRE_CHECKSUM_PING: s->msg_->kind = LINK_STUFFED_WIRE_CHECKSUM_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) link_stuffed_wire_checksum_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }
@@ -1073,25 +1154,59 @@ typedef struct link_stuffed_wire_length_frame_ {
     link_stuffed_wire_length_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } link_stuffed_wire_length_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
-static gmsg_error link_stuffed_wire_length_open_(uint8_t* frame, size_t size, link_stuffed_wire_length_frame_* f) {
+/* Split an unescaped frame into header and body. */
+static gmsg_error link_stuffed_wire_length_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, link_stuffed_wire_length_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
-    if (size < 5) return GMSG_ERR_TRUNCATED;
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 0, &link_stuffed_wire_length_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
+    (void)frame;
     if (interior_n < 4) return GMSG_ERR_TRUNCATED;
-    {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 2, 2, GMSG_ENDIAN_BIG);
-        if (stored != (uint64_t)gmsg_crc16_ccitt_compute(interior, interior_n - 2)) return GMSG_ERR_BAD_CHECKSUM;
-    }
     if ((e = link_stuffed_wire_length_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
     f->body = interior + 2;
     f->body_size = interior_n - 2 - 2;
     return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void link_stuffed_wire_length_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 0, 1, unescaped_n, &link_stuffed_wire_length_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
+static gmsg_error link_stuffed_wire_length_open_(uint8_t* frame, size_t size, link_stuffed_wire_length_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 5) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 0;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &link_stuffed_wire_length_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 4) return GMSG_ERR_TRUNCATED;
+    {
+        uint8_t sb[2];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_wire_length_framing_.escape, un - 2, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 2, GMSG_ENDIAN_BIG);
+        uint16_t c = gmsg_crc16_ccitt_init();
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_wire_length_framing_.escape, 0, un - 2);
+        while (gmsg_unescape_next(&it, &pp, &pn)) c = gmsg_crc16_ccitt_update(c, pp, pn);
+        if (stored != (uint64_t)gmsg_crc16_ccitt_finish(c)) return GMSG_ERR_BAD_CHECKSUM;
+    }
+    (void)gmsg_unescape_in_place(wire, wire_n, &link_stuffed_wire_length_framing_.escape, &un);
+    e = link_stuffed_wire_length_split_(frame, wire, un, f);
+    if (e != GMSG_OK) link_stuffed_wire_length_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -1111,6 +1226,12 @@ static gmsg_error link_stuffed_wire_length_select_(const link_stuffed_wire_lengt
     return GMSG_ERR_UNKNOWN_TYPE;
 }
 
+static gmsg_error link_stuffed_wire_length_select_restore_(uint8_t* frame, size_t size, const link_stuffed_wire_length_frame_* f, link_stuffed_wire_length_any_view* out) {
+    const gmsg_error e = link_stuffed_wire_length_select_(f, out);
+    if (e != GMSG_OK) link_stuffed_wire_length_restore_(frame, size, f->unescaped_n);
+    return e;
+}
+
 static void link_stuffed_wire_length_deliver_(const link_stuffed_wire_length_callbacks* cb, const link_stuffed_wire_length_frame_* f, const link_stuffed_wire_length_any_view* v) {
     switch (v->kind) {
         case LINK_STUFFED_WIRE_LENGTH_DATA: if (cb->on_data) cb->on_data(cb->ctx, &f->header, &v->as.data); break;
@@ -1126,7 +1247,7 @@ static gmsg_error link_stuffed_wire_length_process_frame_(uint8_t* frame, size_t
     link_stuffed_wire_length_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = link_stuffed_wire_length_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_wire_length_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = link_stuffed_wire_length_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) link_stuffed_wire_length_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -1138,7 +1259,7 @@ gmsg_error link_stuffed_wire_length_parse(uint8_t* data, size_t size, link_stuff
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = link_stuffed_wire_length_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return link_stuffed_wire_length_select_(&f, out);
+    return link_stuffed_wire_length_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error link_stuffed_wire_length_decode(uint8_t* data, size_t size, link_stuffed_wire_length_any_message* out) {
@@ -1169,7 +1290,7 @@ static gmsg_error link_stuffed_wire_length_stream_process_(gmsg_stream* gs, uint
     gmsg_error e = GMSG_OK;
     if (s->mode_ == link_stuffed_wire_length_mode_deliver_) return link_stuffed_wire_length_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_wire_length_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_wire_length_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = link_stuffed_wire_length_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -1179,10 +1300,12 @@ static gmsg_error link_stuffed_wire_length_stream_process_(gmsg_stream* gs, uint
     }
     if (s->mode_ == link_stuffed_wire_length_mode_message_) {
         switch (s->got_.message.kind) {
-            case LINK_STUFFED_WIRE_LENGTH_DATA: s->msg_->kind = LINK_STUFFED_WIRE_LENGTH_DATA; return link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data);
-            case LINK_STUFFED_WIRE_LENGTH_PING: s->msg_->kind = LINK_STUFFED_WIRE_LENGTH_PING; return link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case LINK_STUFFED_WIRE_LENGTH_DATA: s->msg_->kind = LINK_STUFFED_WIRE_LENGTH_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
+            case LINK_STUFFED_WIRE_LENGTH_PING: s->msg_->kind = LINK_STUFFED_WIRE_LENGTH_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) link_stuffed_wire_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }
@@ -1454,25 +1577,59 @@ typedef struct link_stuffed_crc_length_frame_ {
     link_stuffed_crc_length_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } link_stuffed_crc_length_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
-static gmsg_error link_stuffed_crc_length_open_(uint8_t* frame, size_t size, link_stuffed_crc_length_frame_* f) {
+/* Split an unescaped frame into header and body. */
+static gmsg_error link_stuffed_crc_length_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, link_stuffed_crc_length_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
-    if (size < 5) return GMSG_ERR_TRUNCATED;
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 0, &link_stuffed_crc_length_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
+    (void)frame;
     if (interior_n < 4) return GMSG_ERR_TRUNCATED;
-    {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 2, 2, GMSG_ENDIAN_BIG);
-        if (stored != (uint64_t)gmsg_crc16_ccitt_compute(interior, interior_n - 2)) return GMSG_ERR_BAD_CHECKSUM;
-    }
     if ((e = link_stuffed_crc_length_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
     f->body = interior + 2;
     f->body_size = interior_n - 2 - 2;
     return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void link_stuffed_crc_length_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 0, 1, unescaped_n, &link_stuffed_crc_length_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
+static gmsg_error link_stuffed_crc_length_open_(uint8_t* frame, size_t size, link_stuffed_crc_length_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 5) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 0;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &link_stuffed_crc_length_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 4) return GMSG_ERR_TRUNCATED;
+    {
+        uint8_t sb[2];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_crc_length_framing_.escape, un - 2, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 2, GMSG_ENDIAN_BIG);
+        uint16_t c = gmsg_crc16_ccitt_init();
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_crc_length_framing_.escape, 0, un - 2);
+        while (gmsg_unescape_next(&it, &pp, &pn)) c = gmsg_crc16_ccitt_update(c, pp, pn);
+        if (stored != (uint64_t)gmsg_crc16_ccitt_finish(c)) return GMSG_ERR_BAD_CHECKSUM;
+    }
+    (void)gmsg_unescape_in_place(wire, wire_n, &link_stuffed_crc_length_framing_.escape, &un);
+    e = link_stuffed_crc_length_split_(frame, wire, un, f);
+    if (e != GMSG_OK) link_stuffed_crc_length_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -1492,6 +1649,12 @@ static gmsg_error link_stuffed_crc_length_select_(const link_stuffed_crc_length_
     return GMSG_ERR_UNKNOWN_TYPE;
 }
 
+static gmsg_error link_stuffed_crc_length_select_restore_(uint8_t* frame, size_t size, const link_stuffed_crc_length_frame_* f, link_stuffed_crc_length_any_view* out) {
+    const gmsg_error e = link_stuffed_crc_length_select_(f, out);
+    if (e != GMSG_OK) link_stuffed_crc_length_restore_(frame, size, f->unescaped_n);
+    return e;
+}
+
 static void link_stuffed_crc_length_deliver_(const link_stuffed_crc_length_callbacks* cb, const link_stuffed_crc_length_frame_* f, const link_stuffed_crc_length_any_view* v) {
     switch (v->kind) {
         case LINK_STUFFED_CRC_LENGTH_DATA: if (cb->on_data) cb->on_data(cb->ctx, &f->header, &v->as.data); break;
@@ -1507,7 +1670,7 @@ static gmsg_error link_stuffed_crc_length_process_frame_(uint8_t* frame, size_t 
     link_stuffed_crc_length_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = link_stuffed_crc_length_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_crc_length_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = link_stuffed_crc_length_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) link_stuffed_crc_length_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -1519,7 +1682,7 @@ gmsg_error link_stuffed_crc_length_parse(uint8_t* data, size_t size, link_stuffe
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = link_stuffed_crc_length_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return link_stuffed_crc_length_select_(&f, out);
+    return link_stuffed_crc_length_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error link_stuffed_crc_length_decode(uint8_t* data, size_t size, link_stuffed_crc_length_any_message* out) {
@@ -1550,7 +1713,7 @@ static gmsg_error link_stuffed_crc_length_stream_process_(gmsg_stream* gs, uint8
     gmsg_error e = GMSG_OK;
     if (s->mode_ == link_stuffed_crc_length_mode_deliver_) return link_stuffed_crc_length_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_crc_length_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_crc_length_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = link_stuffed_crc_length_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -1560,10 +1723,12 @@ static gmsg_error link_stuffed_crc_length_stream_process_(gmsg_stream* gs, uint8
     }
     if (s->mode_ == link_stuffed_crc_length_mode_message_) {
         switch (s->got_.message.kind) {
-            case LINK_STUFFED_CRC_LENGTH_DATA: s->msg_->kind = LINK_STUFFED_CRC_LENGTH_DATA; return link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data);
-            case LINK_STUFFED_CRC_LENGTH_PING: s->msg_->kind = LINK_STUFFED_CRC_LENGTH_PING; return link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case LINK_STUFFED_CRC_LENGTH_DATA: s->msg_->kind = LINK_STUFFED_CRC_LENGTH_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
+            case LINK_STUFFED_CRC_LENGTH_PING: s->msg_->kind = LINK_STUFFED_CRC_LENGTH_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) link_stuffed_crc_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }
@@ -1835,25 +2000,59 @@ typedef struct link_stuffed_wire_crc_length_frame_ {
     link_stuffed_wire_crc_length_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } link_stuffed_wire_crc_length_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
-static gmsg_error link_stuffed_wire_crc_length_open_(uint8_t* frame, size_t size, link_stuffed_wire_crc_length_frame_* f) {
+/* Split an unescaped frame into header and body. */
+static gmsg_error link_stuffed_wire_crc_length_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, link_stuffed_wire_crc_length_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
-    if (size < 5) return GMSG_ERR_TRUNCATED;
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 0, &link_stuffed_wire_crc_length_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
+    (void)frame;
     if (interior_n < 4) return GMSG_ERR_TRUNCATED;
-    {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 2, 2, GMSG_ENDIAN_BIG);
-        if (stored != (uint64_t)gmsg_crc16_ccitt_compute(interior + 2, interior_n - 2 - 2)) return GMSG_ERR_BAD_CHECKSUM;
-    }
     if ((e = link_stuffed_wire_crc_length_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
     f->body = interior + 2;
     f->body_size = interior_n - 2 - 2;
     return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void link_stuffed_wire_crc_length_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 0, 1, unescaped_n, &link_stuffed_wire_crc_length_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
+static gmsg_error link_stuffed_wire_crc_length_open_(uint8_t* frame, size_t size, link_stuffed_wire_crc_length_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 5) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 0;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &link_stuffed_wire_crc_length_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 4) return GMSG_ERR_TRUNCATED;
+    {
+        uint8_t sb[2];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_wire_crc_length_framing_.escape, un - 2, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 2, GMSG_ENDIAN_BIG);
+        uint16_t c = gmsg_crc16_ccitt_init();
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_wire_crc_length_framing_.escape, 2, un - 2);
+        while (gmsg_unescape_next(&it, &pp, &pn)) c = gmsg_crc16_ccitt_update(c, pp, pn);
+        if (stored != (uint64_t)gmsg_crc16_ccitt_finish(c)) return GMSG_ERR_BAD_CHECKSUM;
+    }
+    (void)gmsg_unescape_in_place(wire, wire_n, &link_stuffed_wire_crc_length_framing_.escape, &un);
+    e = link_stuffed_wire_crc_length_split_(frame, wire, un, f);
+    if (e != GMSG_OK) link_stuffed_wire_crc_length_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -1873,6 +2072,12 @@ static gmsg_error link_stuffed_wire_crc_length_select_(const link_stuffed_wire_c
     return GMSG_ERR_UNKNOWN_TYPE;
 }
 
+static gmsg_error link_stuffed_wire_crc_length_select_restore_(uint8_t* frame, size_t size, const link_stuffed_wire_crc_length_frame_* f, link_stuffed_wire_crc_length_any_view* out) {
+    const gmsg_error e = link_stuffed_wire_crc_length_select_(f, out);
+    if (e != GMSG_OK) link_stuffed_wire_crc_length_restore_(frame, size, f->unescaped_n);
+    return e;
+}
+
 static void link_stuffed_wire_crc_length_deliver_(const link_stuffed_wire_crc_length_callbacks* cb, const link_stuffed_wire_crc_length_frame_* f, const link_stuffed_wire_crc_length_any_view* v) {
     switch (v->kind) {
         case LINK_STUFFED_WIRE_CRC_LENGTH_DATA: if (cb->on_data) cb->on_data(cb->ctx, &f->header, &v->as.data); break;
@@ -1888,7 +2093,7 @@ static gmsg_error link_stuffed_wire_crc_length_process_frame_(uint8_t* frame, si
     link_stuffed_wire_crc_length_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = link_stuffed_wire_crc_length_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_wire_crc_length_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = link_stuffed_wire_crc_length_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) link_stuffed_wire_crc_length_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -1900,7 +2105,7 @@ gmsg_error link_stuffed_wire_crc_length_parse(uint8_t* data, size_t size, link_s
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = link_stuffed_wire_crc_length_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return link_stuffed_wire_crc_length_select_(&f, out);
+    return link_stuffed_wire_crc_length_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error link_stuffed_wire_crc_length_decode(uint8_t* data, size_t size, link_stuffed_wire_crc_length_any_message* out) {
@@ -1931,7 +2136,7 @@ static gmsg_error link_stuffed_wire_crc_length_stream_process_(gmsg_stream* gs, 
     gmsg_error e = GMSG_OK;
     if (s->mode_ == link_stuffed_wire_crc_length_mode_deliver_) return link_stuffed_wire_crc_length_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_wire_crc_length_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_wire_crc_length_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = link_stuffed_wire_crc_length_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -1941,10 +2146,12 @@ static gmsg_error link_stuffed_wire_crc_length_stream_process_(gmsg_stream* gs, 
     }
     if (s->mode_ == link_stuffed_wire_crc_length_mode_message_) {
         switch (s->got_.message.kind) {
-            case LINK_STUFFED_WIRE_CRC_LENGTH_DATA: s->msg_->kind = LINK_STUFFED_WIRE_CRC_LENGTH_DATA; return link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data);
-            case LINK_STUFFED_WIRE_CRC_LENGTH_PING: s->msg_->kind = LINK_STUFFED_WIRE_CRC_LENGTH_PING; return link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case LINK_STUFFED_WIRE_CRC_LENGTH_DATA: s->msg_->kind = LINK_STUFFED_WIRE_CRC_LENGTH_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
+            case LINK_STUFFED_WIRE_CRC_LENGTH_PING: s->msg_->kind = LINK_STUFFED_WIRE_CRC_LENGTH_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) link_stuffed_wire_crc_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }
@@ -2228,9 +2435,28 @@ typedef struct link_stuffed_wire_crc_over_wire_frame_ {
     link_stuffed_wire_crc_over_wire_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } link_stuffed_wire_crc_over_wire_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
+/* Split an unescaped frame into header and body. */
+static gmsg_error link_stuffed_wire_crc_over_wire_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, link_stuffed_wire_crc_over_wire_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    (void)frame;
+    if (interior_n < 4) return GMSG_ERR_TRUNCATED;
+    if ((e = link_stuffed_wire_crc_over_wire_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
+    f->body = interior + 2;
+    f->body_size = interior_n - 2 - 2;
+    return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void link_stuffed_wire_crc_over_wire_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 0, 1, unescaped_n, &link_stuffed_wire_crc_over_wire_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
 static gmsg_error link_stuffed_wire_crc_over_wire_open_(uint8_t* frame, size_t size, link_stuffed_wire_crc_over_wire_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
@@ -2247,18 +2473,30 @@ static gmsg_error link_stuffed_wire_crc_over_wire_open_(uint8_t* frame, size_t s
         const gmsg_escape_walk hw = gmsg_walk_escaped(wire, wire_n, 0, 2, &link_stuffed_wire_crc_over_wire_framing_.escape, 0, NULL, 0);
         computed = (uint64_t)gmsg_crc16_ccitt_compute(wire + hw.wire, t.wire - hw.wire);
     }
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 0, &link_stuffed_wire_crc_over_wire_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
-    if (interior_n < 4) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 0;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &link_stuffed_wire_crc_over_wire_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 4) return GMSG_ERR_TRUNCATED;
     {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 2, 2, GMSG_ENDIAN_BIG);
+        uint8_t sb[2];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_wire_crc_over_wire_framing_.escape, un - 2, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 2, GMSG_ENDIAN_BIG);
         if (stored != computed) return GMSG_ERR_BAD_CHECKSUM;
     }
-    if ((e = link_stuffed_wire_crc_over_wire_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
-    f->body = interior + 2;
-    f->body_size = interior_n - 2 - 2;
-    return GMSG_OK;
+    (void)gmsg_unescape_in_place(wire, wire_n, &link_stuffed_wire_crc_over_wire_framing_.escape, &un);
+    e = link_stuffed_wire_crc_over_wire_split_(frame, wire, un, f);
+    if (e != GMSG_OK) link_stuffed_wire_crc_over_wire_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -2278,6 +2516,12 @@ static gmsg_error link_stuffed_wire_crc_over_wire_select_(const link_stuffed_wir
     return GMSG_ERR_UNKNOWN_TYPE;
 }
 
+static gmsg_error link_stuffed_wire_crc_over_wire_select_restore_(uint8_t* frame, size_t size, const link_stuffed_wire_crc_over_wire_frame_* f, link_stuffed_wire_crc_over_wire_any_view* out) {
+    const gmsg_error e = link_stuffed_wire_crc_over_wire_select_(f, out);
+    if (e != GMSG_OK) link_stuffed_wire_crc_over_wire_restore_(frame, size, f->unescaped_n);
+    return e;
+}
+
 static void link_stuffed_wire_crc_over_wire_deliver_(const link_stuffed_wire_crc_over_wire_callbacks* cb, const link_stuffed_wire_crc_over_wire_frame_* f, const link_stuffed_wire_crc_over_wire_any_view* v) {
     switch (v->kind) {
         case LINK_STUFFED_WIRE_CRC_OVER_WIRE_DATA: if (cb->on_data) cb->on_data(cb->ctx, &f->header, &v->as.data); break;
@@ -2293,7 +2537,7 @@ static gmsg_error link_stuffed_wire_crc_over_wire_process_frame_(uint8_t* frame,
     link_stuffed_wire_crc_over_wire_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = link_stuffed_wire_crc_over_wire_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_wire_crc_over_wire_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = link_stuffed_wire_crc_over_wire_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) link_stuffed_wire_crc_over_wire_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -2305,7 +2549,7 @@ gmsg_error link_stuffed_wire_crc_over_wire_parse(uint8_t* data, size_t size, lin
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = link_stuffed_wire_crc_over_wire_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return link_stuffed_wire_crc_over_wire_select_(&f, out);
+    return link_stuffed_wire_crc_over_wire_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error link_stuffed_wire_crc_over_wire_decode(uint8_t* data, size_t size, link_stuffed_wire_crc_over_wire_any_message* out) {
@@ -2336,7 +2580,7 @@ static gmsg_error link_stuffed_wire_crc_over_wire_stream_process_(gmsg_stream* g
     gmsg_error e = GMSG_OK;
     if (s->mode_ == link_stuffed_wire_crc_over_wire_mode_deliver_) return link_stuffed_wire_crc_over_wire_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_wire_crc_over_wire_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_wire_crc_over_wire_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = link_stuffed_wire_crc_over_wire_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -2346,10 +2590,12 @@ static gmsg_error link_stuffed_wire_crc_over_wire_stream_process_(gmsg_stream* g
     }
     if (s->mode_ == link_stuffed_wire_crc_over_wire_mode_message_) {
         switch (s->got_.message.kind) {
-            case LINK_STUFFED_WIRE_CRC_OVER_WIRE_DATA: s->msg_->kind = LINK_STUFFED_WIRE_CRC_OVER_WIRE_DATA; return link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data);
-            case LINK_STUFFED_WIRE_CRC_OVER_WIRE_PING: s->msg_->kind = LINK_STUFFED_WIRE_CRC_OVER_WIRE_PING; return link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case LINK_STUFFED_WIRE_CRC_OVER_WIRE_DATA: s->msg_->kind = LINK_STUFFED_WIRE_CRC_OVER_WIRE_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
+            case LINK_STUFFED_WIRE_CRC_OVER_WIRE_PING: s->msg_->kind = LINK_STUFFED_WIRE_CRC_OVER_WIRE_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) link_stuffed_wire_crc_over_wire_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }
@@ -2573,9 +2819,27 @@ static gmsg_frame_scan link_stuffed_fixed_link_scan_(const uint8_t* b, size_t n)
 typedef struct link_stuffed_fixed_link_frame_ {
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } link_stuffed_fixed_link_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
+/* Split an unescaped frame into header and body. */
+static gmsg_error link_stuffed_fixed_link_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, link_stuffed_fixed_link_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    (void)frame;
+    if (interior_n < 1) return GMSG_ERR_TRUNCATED;
+    f->body = interior + 0;
+    f->body_size = interior_n - 0 - 1;
+    return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void link_stuffed_fixed_link_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 0, 1, unescaped_n, &link_stuffed_fixed_link_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
 static gmsg_error link_stuffed_fixed_link_open_(uint8_t* frame, size_t size, link_stuffed_fixed_link_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
@@ -2592,23 +2856,42 @@ static gmsg_error link_stuffed_fixed_link_open_(uint8_t* frame, size_t size, lin
         const gmsg_escape_walk hw = gmsg_walk_escaped(wire, wire_n, 0, 0, &link_stuffed_fixed_link_framing_.escape, 0, NULL, 0);
         computed = (uint64_t)gmsg_crc8_compute(wire + hw.wire, t.wire - hw.wire);
     }
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 0, &link_stuffed_fixed_link_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
-    if (interior_n < 1) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 0;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &link_stuffed_fixed_link_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 1) return GMSG_ERR_TRUNCATED;
     {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 1, 1, GMSG_ENDIAN_BIG);
+        uint8_t sb[1];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_fixed_link_framing_.escape, un - 1, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 1, GMSG_ENDIAN_BIG);
         if (stored != computed) return GMSG_ERR_BAD_CHECKSUM;
     }
-    f->body = interior + 0;
-    f->body_size = interior_n - 0 - 1;
-    return GMSG_OK;
+    (void)gmsg_unescape_in_place(wire, wire_n, &link_stuffed_fixed_link_framing_.escape, &un);
+    e = link_stuffed_fixed_link_split_(frame, wire, un, f);
+    if (e != GMSG_OK) link_stuffed_fixed_link_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
 static gmsg_error link_stuffed_fixed_link_select_(const link_stuffed_fixed_link_frame_* f, link_stuffed_fixed_link_any_view* out) {
     out->kind = LINK_STUFFED_FIXED_LINK_PING;
     return link_stuffed_ping_view_from(f->body, f->body_size, &out->as.ping);
+}
+
+static gmsg_error link_stuffed_fixed_link_select_restore_(uint8_t* frame, size_t size, const link_stuffed_fixed_link_frame_* f, link_stuffed_fixed_link_any_view* out) {
+    const gmsg_error e = link_stuffed_fixed_link_select_(f, out);
+    if (e != GMSG_OK) link_stuffed_fixed_link_restore_(frame, size, f->unescaped_n);
+    return e;
 }
 
 static void link_stuffed_fixed_link_deliver_(const link_stuffed_fixed_link_callbacks* cb, const link_stuffed_fixed_link_frame_* f, const link_stuffed_fixed_link_any_view* v) {
@@ -2626,7 +2909,7 @@ static gmsg_error link_stuffed_fixed_link_process_frame_(uint8_t* frame, size_t 
     link_stuffed_fixed_link_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = link_stuffed_fixed_link_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_fixed_link_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = link_stuffed_fixed_link_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) link_stuffed_fixed_link_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -2638,7 +2921,7 @@ gmsg_error link_stuffed_fixed_link_parse(uint8_t* data, size_t size, link_stuffe
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = link_stuffed_fixed_link_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return link_stuffed_fixed_link_select_(&f, out);
+    return link_stuffed_fixed_link_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error link_stuffed_fixed_link_decode(uint8_t* data, size_t size, link_stuffed_fixed_link_any_message* out) {
@@ -2668,7 +2951,7 @@ static gmsg_error link_stuffed_fixed_link_stream_process_(gmsg_stream* gs, uint8
     gmsg_error e = GMSG_OK;
     if (s->mode_ == link_stuffed_fixed_link_mode_deliver_) return link_stuffed_fixed_link_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_fixed_link_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_fixed_link_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = link_stuffed_fixed_link_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.bytes = frame;
     s->got_.size = n;
     if (s->mode_ == link_stuffed_fixed_link_mode_for_ && s->got_.message.kind != s->want_) {
@@ -2677,9 +2960,11 @@ static gmsg_error link_stuffed_fixed_link_stream_process_(gmsg_stream* gs, uint8
     }
     if (s->mode_ == link_stuffed_fixed_link_mode_message_) {
         switch (s->got_.message.kind) {
-            case LINK_STUFFED_FIXED_LINK_PING: s->msg_->kind = LINK_STUFFED_FIXED_LINK_PING; return link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case LINK_STUFFED_FIXED_LINK_PING: s->msg_->kind = LINK_STUFFED_FIXED_LINK_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) link_stuffed_fixed_link_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }
@@ -2899,25 +3184,59 @@ typedef struct link_stuffed_delimited_frame_ {
     link_stuffed_delimited_header_view header;
     const uint8_t* body;
     size_t body_size;
+    size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */
 } link_stuffed_delimited_frame_;
 
-/* Validate one complete frame (as delimited by the scanner) and split it into header and body. Unescapes in place. */
-static gmsg_error link_stuffed_delimited_open_(uint8_t* frame, size_t size, link_stuffed_delimited_frame_* f) {
+/* Split an unescaped frame into header and body. */
+static gmsg_error link_stuffed_delimited_split_(const uint8_t* frame, const uint8_t* interior, size_t interior_n, link_stuffed_delimited_frame_* f) {
     gmsg_error e = GMSG_OK;
     (void)e;
-    if (size < 5) return GMSG_ERR_TRUNCATED;
-    size_t interior_n = 0;
-    if ((e = gmsg_unescape_in_place(frame + 1, size - 1 - 1, &link_stuffed_delimited_framing_.escape, &interior_n)) != GMSG_OK) return e;
-    const uint8_t* interior = frame + 1;
+    (void)frame;
     if (interior_n < 3) return GMSG_ERR_TRUNCATED;
-    {
-        const uint64_t stored = gmsg_load_uint(interior + interior_n - 2, 2, GMSG_ENDIAN_BIG);
-        if (stored != (uint64_t)gmsg_crc16_ccitt_compute(interior + 1, interior_n - 1 - 2)) return GMSG_ERR_BAD_CHECKSUM;
-    }
     if ((e = link_stuffed_delimited_header_view_from(interior, 1, &f->header)) != GMSG_OK) return e;
     f->body = interior + 1;
     f->body_size = interior_n - 1 - 2;
     return GMSG_OK;
+}
+
+/* Escape the unescaped part of an opened frame again (the frame then holds the bytes as received). */
+static void link_stuffed_delimited_restore_(uint8_t* frame, size_t size, size_t unescaped_n) {
+    size_t k = 0;
+    (void)gmsg_escape_in_place(frame, size - 1, 1, unescaped_n, &link_stuffed_delimited_framing_.escape, &k);
+}
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. The checksum is verified first; the frame is unescaped in place, and holds the bytes as received again on failure. */
+static gmsg_error link_stuffed_delimited_open_(uint8_t* frame, size_t size, link_stuffed_delimited_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 5) return GMSG_ERR_TRUNCATED;
+    uint8_t* wire = frame + 1;
+    const size_t wire_n = size - 1 - 1;
+    size_t un = 0;
+    if ((e = gmsg_check_escaped(wire, wire_n, &link_stuffed_delimited_framing_.escape, &un)) != GMSG_OK) return e;
+    if (un < 3) return GMSG_ERR_TRUNCATED;
+    {
+        uint8_t sb[2];
+        uint64_t stored;
+        size_t k = 0, pn = 0;
+        const uint8_t* pp = NULL;
+        gmsg_unescape_iter it;
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_delimited_framing_.escape, un - 2, un);
+        while (gmsg_unescape_next(&it, &pp, &pn)) {
+            size_t j;
+            for (j = 0; j < pn; ++j) sb[k++] = pp[j];
+        }
+        stored = gmsg_load_uint(sb, 2, GMSG_ENDIAN_BIG);
+        uint16_t c = gmsg_crc16_ccitt_init();
+        gmsg_unescape_iter_init(&it, wire, wire_n, &link_stuffed_delimited_framing_.escape, 1, un - 2);
+        while (gmsg_unescape_next(&it, &pp, &pn)) c = gmsg_crc16_ccitt_update(c, pp, pn);
+        if (stored != (uint64_t)gmsg_crc16_ccitt_finish(c)) return GMSG_ERR_BAD_CHECKSUM;
+    }
+    (void)gmsg_unescape_in_place(wire, wire_n, &link_stuffed_delimited_framing_.escape, &un);
+    e = link_stuffed_delimited_split_(frame, wire, un, f);
+    if (e != GMSG_OK) link_stuffed_delimited_restore_(frame, size, un);
+    else f->unescaped_n = un;
+    return e;
 }
 
 /* Decode the message view selected by the frame's type id (message_type). */
@@ -2937,6 +3256,12 @@ static gmsg_error link_stuffed_delimited_select_(const link_stuffed_delimited_fr
     return GMSG_ERR_UNKNOWN_TYPE;
 }
 
+static gmsg_error link_stuffed_delimited_select_restore_(uint8_t* frame, size_t size, const link_stuffed_delimited_frame_* f, link_stuffed_delimited_any_view* out) {
+    const gmsg_error e = link_stuffed_delimited_select_(f, out);
+    if (e != GMSG_OK) link_stuffed_delimited_restore_(frame, size, f->unescaped_n);
+    return e;
+}
+
 static void link_stuffed_delimited_deliver_(const link_stuffed_delimited_callbacks* cb, const link_stuffed_delimited_frame_* f, const link_stuffed_delimited_any_view* v) {
     switch (v->kind) {
         case LINK_STUFFED_DELIMITED_DATA: if (cb->on_data) cb->on_data(cb->ctx, &f->header, &v->as.data); break;
@@ -2952,7 +3277,7 @@ static gmsg_error link_stuffed_delimited_process_frame_(uint8_t* frame, size_t s
     link_stuffed_delimited_any_view v;
     gmsg_error e = GMSG_OK;
     if ((e = link_stuffed_delimited_open_(frame, size, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_delimited_select_(&f, &v)) != GMSG_OK) return e;
+    if ((e = link_stuffed_delimited_select_restore_(frame, size, &f, &v)) != GMSG_OK) return e;
     if (cb) link_stuffed_delimited_deliver_(cb, &f, &v);
     return GMSG_OK;
 }
@@ -2964,7 +3289,7 @@ gmsg_error link_stuffed_delimited_parse(uint8_t* data, size_t size, link_stuffed
     if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
     if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
     if ((e = link_stuffed_delimited_open_(data, s.size, &f)) != GMSG_OK) return e;
-    return link_stuffed_delimited_select_(&f, out);
+    return link_stuffed_delimited_select_restore_(data, s.size, &f, out);
 }
 
 gmsg_error link_stuffed_delimited_decode(uint8_t* data, size_t size, link_stuffed_delimited_any_message* out) {
@@ -2995,7 +3320,7 @@ static gmsg_error link_stuffed_delimited_stream_process_(gmsg_stream* gs, uint8_
     gmsg_error e = GMSG_OK;
     if (s->mode_ == link_stuffed_delimited_mode_deliver_) return link_stuffed_delimited_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_delimited_open_(frame, n, &f)) != GMSG_OK) return e;
-    if ((e = link_stuffed_delimited_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    if ((e = link_stuffed_delimited_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -3005,10 +3330,12 @@ static gmsg_error link_stuffed_delimited_stream_process_(gmsg_stream* gs, uint8_
     }
     if (s->mode_ == link_stuffed_delimited_mode_message_) {
         switch (s->got_.message.kind) {
-            case LINK_STUFFED_DELIMITED_DATA: s->msg_->kind = LINK_STUFFED_DELIMITED_DATA; return link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data);
-            case LINK_STUFFED_DELIMITED_PING: s->msg_->kind = LINK_STUFFED_DELIMITED_PING; return link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping);
-            default: return GMSG_ERR_UNKNOWN_TYPE;
+            case LINK_STUFFED_DELIMITED_DATA: s->msg_->kind = LINK_STUFFED_DELIMITED_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
+            case LINK_STUFFED_DELIMITED_PING: s->msg_->kind = LINK_STUFFED_DELIMITED_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
         }
+        if (e != GMSG_OK) link_stuffed_delimited_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+        return e;
     }
     return GMSG_OK;
 }
