@@ -44,6 +44,15 @@ gmsg_error motor_set_speed_decode(const uint8_t* data, size_t size, motor_set_sp
     return motor_set_speed_read(&r, out);
 }
 
+gmsg_error motor_set_speed_decode_extra(const uint8_t* data, size_t size, motor_set_speed* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = motor_set_speed_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error motor_set_speed_encode(const motor_set_speed* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = motor_set_speed_write(m, &w);
@@ -70,15 +79,16 @@ gmsg_error motor_set_speed_view_from(const uint8_t* data, size_t size, motor_set
     if (!motor_direction_is_known((motor_direction)gmsg_load_u8(data + 2, GMSG_ENDIAN_BIG))) return GMSG_ERR_UNKNOWN_ENUM;
     out->data = data;
     out->size = 5;
+    out->extra = size - 5;
     return GMSG_OK;
 }
 
 motor_set_speed_view motor_set_speed_view_unchecked(const uint8_t* data, size_t size) {
     motor_set_speed_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 5;
+    v.extra = size - 5;
     return v;
 }
 
@@ -144,6 +154,15 @@ gmsg_error motor_telemetry_decode(const uint8_t* data, size_t size, motor_teleme
     return motor_telemetry_read(&r, out);
 }
 
+gmsg_error motor_telemetry_decode_extra(const uint8_t* data, size_t size, motor_telemetry* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = motor_telemetry_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error motor_telemetry_encode(const motor_telemetry* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = motor_telemetry_write(m, &w);
@@ -173,15 +192,16 @@ gmsg_error motor_telemetry_view_from(const uint8_t* data, size_t size, motor_tel
     if (size < 8) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 8;
+    out->extra = size - 8;
     return GMSG_OK;
 }
 
 motor_telemetry_view motor_telemetry_view_unchecked(const uint8_t* data, size_t size) {
     motor_telemetry_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 8;
+    v.extra = size - 8;
     return v;
 }
 
@@ -251,6 +271,15 @@ gmsg_error motor_log_decode(const uint8_t* data, size_t size, motor_log* out) {
     return motor_log_read(&r, out);
 }
 
+gmsg_error motor_log_decode_extra(const uint8_t* data, size_t size, motor_log* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = motor_log_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error motor_log_encode(const motor_log* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = motor_log_write(m, &w);
@@ -287,6 +316,7 @@ gmsg_error motor_log_view_from(const uint8_t* data, size_t size, motor_log_view*
     }
     v.off[2] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -349,6 +379,15 @@ gmsg_error motor_motor_link_header_decode(const uint8_t* data, size_t size, moto
     return motor_motor_link_header_read(&r, out);
 }
 
+gmsg_error motor_motor_link_header_decode_extra(const uint8_t* data, size_t size, motor_motor_link_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = motor_motor_link_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error motor_motor_link_header_encode(const motor_motor_link_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = motor_motor_link_header_write(m, &w);
@@ -372,15 +411,16 @@ gmsg_error motor_motor_link_header_view_from(const uint8_t* data, size_t size, m
     if (size < 2) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 2;
+    out->extra = size - 2;
     return GMSG_OK;
 }
 
 motor_motor_link_header_view motor_motor_link_header_view_unchecked(const uint8_t* data, size_t size) {
     motor_motor_link_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 2;
+    v.extra = size - 2;
     return v;
 }
 
@@ -420,7 +460,24 @@ void motor_motor_link_any_message_print(const motor_motor_link_any_message* v, g
 
 static const uint8_t motor_motor_link_prefix_[1] = {0x80};
 static const gmsg_length_prefixed_config motor_motor_link_framing_ = {{{0x80}, 1}, 2, 1, GMSG_ENDIAN_BIG, INT64_C(5), 5, 139, {true, 0x81, GMSG_ESCAPE_TABLE, 0x00, 2, {0x80, 0x81}, {0x00, 0x01}, {0x0u, 0x0u, 0x0u, 0x0u, 0x3u, 0x0u, 0x0u, 0x0u}}, 0, false, 0, 0, false};
-static gmsg_frame_scan motor_motor_link_scan_(const uint8_t* b, size_t n) { return gmsg_scan_length_prefixed(b, n, &motor_motor_link_framing_); }
+/* Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BAD_LENGTH as soon as the header has arrived. */
+static gmsg_frame_scan motor_motor_link_scan_(const uint8_t* b, size_t n) {
+    const gmsg_frame_scan s = gmsg_scan_length_prefixed(b, n, &motor_motor_link_framing_);
+    uint8_t h[2];
+    motor_motor_link_header_view hv;
+    int64_t body;
+    if (s.kind == GMSG_SCAN_SKIP) return s;
+    if (!gmsg_read_frame_header(b, n, motor_motor_link_framing_.sync.len, &motor_motor_link_framing_.escape, h, 2)) return s;
+    hv = motor_motor_link_header_view_unchecked(h, 2);
+    body = (int64_t)motor_motor_link_header_view_len(&hv) + INT64_C(0);
+    switch ((int64_t)motor_motor_link_header_view_type(&hv)) {
+        case INT64_C(1): if (body < 5) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* SetSpeed */
+        case INT64_C(2): if (body < 8) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Telemetry */
+        case INT64_C(3): if (body < 1) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Log */
+        default: break;
+    }
+    return s;
+}
 
 /* A validated frame split into its parts (pointers into the frame buffer). */
 typedef struct motor_motor_link_frame_ {
@@ -563,13 +620,30 @@ gmsg_error motor_motor_link_process(uint8_t* data, size_t size, const motor_moto
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { motor_motor_link_mode_deliver_ = 0, motor_motor_link_mode_capture_ = 1, motor_motor_link_mode_message_ = 2, motor_motor_link_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t motor_motor_link_extra_(const motor_motor_link_any_view* v) {
+    switch (v->kind) {
+        case MOTOR_MOTOR_LINK_SET_SPEED: return motor_set_speed_view_extra_bytes(&v->as.set_speed);
+        case MOTOR_MOTOR_LINK_TELEMETRY: return motor_telemetry_view_extra_bytes(&v->as.telemetry);
+        case MOTOR_MOTOR_LINK_LOG: return motor_log_view_extra_bytes(&v->as.log);
+        default: return 0;
+    }
+}
+
 static gmsg_error motor_motor_link_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     motor_motor_link_stream* s = (motor_motor_link_stream*)gs;
     motor_motor_link_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == motor_motor_link_mode_deliver_) return motor_motor_link_process_frame_(frame, n, &s->cb);
     if ((e = motor_motor_link_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == motor_motor_link_mode_deliver_) {
+        motor_motor_link_any_view v;
+        if ((e = motor_motor_link_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = motor_motor_link_extra_(&v);
+        motor_motor_link_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = motor_motor_link_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = motor_motor_link_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;

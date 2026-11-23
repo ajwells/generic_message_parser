@@ -136,6 +136,16 @@ gmsg_error nav_nmea_gga_decode(const uint8_t* data, size_t size, nav_nmea_gga* o
     return nav_nmea_gga_read_text(tok, n < 14 ? n : 14, out);
 }
 
+gmsg_error nav_nmea_gga_decode_extra(const uint8_t* data, size_t size, nav_nmea_gga* out, size_t* extra) {
+    gmsg_str tok[14];
+    const size_t n = gmsg_split((const char*)data, size, NAV_NMEA_GGA_SEPARATOR, tok, 14);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = nav_nmea_gga_read_text(tok, n < 14 ? n : 14, out);
+    *extra = e == GMSG_OK && n > 14 ? n - 14 : 0;
+    return e;
+}
+
 gmsg_error nav_nmea_gga_encode(const nav_nmea_gga* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_text_writer w = gmsg_text_writer_init(out, capacity, NAV_NMEA_GGA_SEPARATOR);
     const gmsg_error e = nav_nmea_gga_write_text(m, &w);
@@ -394,6 +404,16 @@ gmsg_error nav_nmea_txt_decode(const uint8_t* data, size_t size, nav_nmea_txt* o
     return nav_nmea_txt_read_text(tok, n < 4 ? n : 4, out);
 }
 
+gmsg_error nav_nmea_txt_decode_extra(const uint8_t* data, size_t size, nav_nmea_txt* out, size_t* extra) {
+    gmsg_str tok[4];
+    const size_t n = gmsg_split((const char*)data, size, NAV_NMEA_TXT_SEPARATOR, tok, 4);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = nav_nmea_txt_read_text(tok, n < 4 ? n : 4, out);
+    *extra = e == GMSG_OK && n > 4 ? n - 4 : 0;
+    return e;
+}
+
 gmsg_error nav_nmea_txt_encode(const nav_nmea_txt* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_text_writer w = gmsg_text_writer_init(out, capacity, NAV_NMEA_TXT_SEPARATOR);
     const gmsg_error e = nav_nmea_txt_write_text(m, &w);
@@ -611,13 +631,29 @@ gmsg_error nav_nmea_nmea_process(const uint8_t* data, size_t size, const nav_nme
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { nav_nmea_nmea_mode_deliver_ = 0, nav_nmea_nmea_mode_capture_ = 1, nav_nmea_nmea_mode_message_ = 2, nav_nmea_nmea_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t nav_nmea_nmea_extra_(const nav_nmea_nmea_any_view* v) {
+    switch (v->kind) {
+        case NAV_NMEA_NMEA_GGA: return nav_nmea_gga_view_extra_tokens(&v->as.gga);
+        case NAV_NMEA_NMEA_TXT: return nav_nmea_txt_view_extra_tokens(&v->as.txt);
+        default: return 0;
+    }
+}
+
 static gmsg_error nav_nmea_nmea_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     nav_nmea_nmea_stream* s = (nav_nmea_nmea_stream*)gs;
     nav_nmea_nmea_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == nav_nmea_nmea_mode_deliver_) return nav_nmea_nmea_process_frame_(frame, n, &s->cb);
     if ((e = nav_nmea_nmea_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == nav_nmea_nmea_mode_deliver_) {
+        nav_nmea_nmea_any_view v;
+        if ((e = nav_nmea_nmea_select_(&f, &v)) != GMSG_OK) return e;
+        gs->last_extra = nav_nmea_nmea_extra_(&v);
+        nav_nmea_nmea_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = nav_nmea_nmea_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = nav_nmea_nmea_extra_(&s->got_.message);
     s->got_.bytes = frame;
     s->got_.size = n;
     if (s->mode_ == nav_nmea_nmea_mode_for_ && s->got_.message.kind != s->want_) {

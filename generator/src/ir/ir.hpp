@@ -343,6 +343,13 @@ struct MessageTypeSpec {
     const Field* field = nullptr;  // derived
 };
 
+/// A body size range for one message of a length_prefixed protocol, checked as soon as the header has arrived.
+struct SizeCheck {
+    std::size_t message = 0;            // index into Protocol::messages
+    std::size_t min = 0;                // a smaller body is impossible
+    std::optional<std::size_t> max;     // a larger body is rejected (only with exact_size and a bounded message)
+};
+
 struct Protocol {
     std::string name;
     SourceLoc loc;
@@ -354,6 +361,7 @@ struct Protocol {
     ChecksumSpec checksum;
     MessageTypeSpec message_type;
     char separator = ',';                     // text: separator between id token and fields
+    bool exact_size = false;                  // a frame with data after its message fails (BadLength)
     std::vector<std::string> message_names;   // declared
     std::vector<const Message*> messages;     // resolved
     std::vector<TypeId> type_ids;          // resolved type id per message (int for a header field, string for a token)
@@ -365,6 +373,10 @@ struct Protocol {
     std::size_t suffix_size = 0;   // end delimiter
     std::size_t max_frame = 0;     // 0 = unknown (stream mode unavailable)
     std::size_t length_field_offset = 0;  // from frame start
+    // length check by message type (length_prefixed, the length counting unescaped bytes): body size =
+    // length value + length_to_body; empty when no check can reject anything
+    std::vector<SizeCheck> size_checks;
+    std::int64_t length_to_body = 0;
 };
 
 // ------------------------------------------------------------------------------------------------

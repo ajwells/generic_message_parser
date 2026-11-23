@@ -54,6 +54,16 @@ gmsg_error ext_pos_decode(const uint8_t* data, size_t size, ext_pos* out) {
     return ext_pos_read_text(tok, n < 2 ? n : 2, out);
 }
 
+gmsg_error ext_pos_decode_extra(const uint8_t* data, size_t size, ext_pos* out, size_t* extra) {
+    gmsg_str tok[2];
+    const size_t n = gmsg_split((const char*)data, size, EXT_POS_SEPARATOR, tok, 2);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = ext_pos_read_text(tok, n < 2 ? n : 2, out);
+    *extra = e == GMSG_OK && n > 2 ? n - 2 : 0;
+    return e;
+}
+
 gmsg_error ext_pos_encode(const ext_pos* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_text_writer w = gmsg_text_writer_init(out, capacity, EXT_POS_SEPARATOR);
     const gmsg_error e = ext_pos_write_text(m, &w);
@@ -137,6 +147,7 @@ gmsg_error ext_blob_view_from(const uint8_t* data, size_t size, ext_blob_view* o
     pos = size;
     v.off[2] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -268,13 +279,28 @@ gmsg_error ext_text_pos_process(const uint8_t* data, size_t size, const ext_text
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { ext_text_pos_mode_deliver_ = 0, ext_text_pos_mode_capture_ = 1, ext_text_pos_mode_message_ = 2, ext_text_pos_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t ext_text_pos_extra_(const ext_text_pos_any_view* v) {
+    switch (v->kind) {
+        case EXT_TEXT_POS_POS: return ext_pos_view_extra_tokens(&v->as.pos);
+        default: return 0;
+    }
+}
+
 static gmsg_error ext_text_pos_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     ext_text_pos_stream* s = (ext_text_pos_stream*)gs;
     ext_text_pos_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == ext_text_pos_mode_deliver_) return ext_text_pos_process_frame_(frame, n, &s->cb);
     if ((e = ext_text_pos_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == ext_text_pos_mode_deliver_) {
+        ext_text_pos_any_view v;
+        if ((e = ext_text_pos_select_(&f, &v)) != GMSG_OK) return e;
+        gs->last_extra = ext_text_pos_extra_(&v);
+        ext_text_pos_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = ext_text_pos_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = ext_text_pos_extra_(&s->got_.message);
     s->got_.bytes = frame;
     s->got_.size = n;
     if (s->mode_ == ext_text_pos_mode_for_ && s->got_.message.kind != s->want_) {
@@ -417,6 +443,15 @@ gmsg_error ext_custom_header_decode(const uint8_t* data, size_t size, ext_custom
     return ext_custom_header_read(&r, out);
 }
 
+gmsg_error ext_custom_header_decode_extra(const uint8_t* data, size_t size, ext_custom_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = ext_custom_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error ext_custom_header_encode(const ext_custom_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = ext_custom_header_write(m, &w);
@@ -438,15 +473,16 @@ gmsg_error ext_custom_header_view_from(const uint8_t* data, size_t size, ext_cus
     if (size < 1) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 ext_custom_header_view ext_custom_header_view_unchecked(const uint8_t* data, size_t size) {
     ext_custom_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -540,13 +576,28 @@ gmsg_error ext_custom_process(const uint8_t* data, size_t size, const ext_custom
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { ext_custom_mode_deliver_ = 0, ext_custom_mode_capture_ = 1, ext_custom_mode_message_ = 2, ext_custom_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t ext_custom_extra_(const ext_custom_any_view* v) {
+    switch (v->kind) {
+        case EXT_CUSTOM_BLOB: return ext_blob_view_extra_bytes(&v->as.blob);
+        default: return 0;
+    }
+}
+
 static gmsg_error ext_custom_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     ext_custom_stream* s = (ext_custom_stream*)gs;
     ext_custom_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == ext_custom_mode_deliver_) return ext_custom_process_frame_(frame, n, &s->cb);
     if ((e = ext_custom_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == ext_custom_mode_deliver_) {
+        ext_custom_any_view v;
+        if ((e = ext_custom_select_(&f, &v)) != GMSG_OK) return e;
+        gs->last_extra = ext_custom_extra_(&v);
+        ext_custom_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = ext_custom_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = ext_custom_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;

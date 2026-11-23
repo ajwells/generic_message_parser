@@ -103,6 +103,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Mixed.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Mixed.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Mixed.write(w, m); return w.toBytes(); }
     encode() { return Mixed.encode(this); }
@@ -137,7 +139,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Mixed';
     static minWireSize = 9;
 
@@ -178,6 +181,7 @@
       pos += 2;
       v.#o[6] = pos;
       v.#b = data.subarray(0, pos);
+      v.#x = data.length - pos;
       return v;
     }
     /** A view over data already validated by from() (no checks). */
@@ -186,6 +190,8 @@
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get state() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get count() { return gmsg.load(this.#b, 2, 'u8', 'big'); }
     get items() { return gmsg.fixedArray(this.#b.subarray(3, 3 + (this.#o[3] - this.#o[2])), 2, (b) => gmsg.load(b, 0, 'u16', 'big')); }
@@ -282,6 +288,11 @@
       return Reading.readText(gmsg.text.split(s, ',').slice(0, 1));
     }
     static decode(bytes) { return Reading.decodeText(gmsg.latin1String(gmsg.toBytes(bytes))); }
+    /** Like decode(bytes): { message, extra }, `extra` = tokens after the message's own (which decode ignores). */
+    static decodeWithExtra(bytes) {
+      const all = gmsg.text.split(typeof bytes === 'string' ? bytes : gmsg.latin1String(gmsg.toBytes(bytes)), ',');
+      return { message: Reading.readText(all.slice(0, 1)), extra: Math.max(0, all.length - 1) };
+    }
     /** The record as text. */
     static encodeText(m) { const w = new gmsg.text.TextWriter(','); Reading.writeText(w, m); return w.toString(); }
     static encode(m) { return gmsg.latin1Bytes(Reading.encodeText(m)); }
@@ -326,6 +337,8 @@
     get raw() { return this.#text; }
     /** Number of tokens actually present in the record (may differ from tokenCount). */
     get presentTokens() { return this.#n; }
+    /** Tokens after the message's own (ignored; a protocol with exact_size rejects them). */
+    get extraTokens() { return Math.max(0, this.#n - 1); }
     token(i) { return i < this.#tok.length ? this.#tok[i] : ''; }
     get raw_() { return gmsg.text.parseInt(this.token(0), 'i32', 10); }
     get raw_scaled() { return Number(this.raw_) * 0.10000000000000001 + 0; }

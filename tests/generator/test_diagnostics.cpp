@@ -210,6 +210,32 @@ messages:
     CHECK_FALSE(m.fields[4]->limit_checks[0].integer);
 }
 
+TEST_CASE("exact_size does not apply to fixed framing") {
+    expect_error(R"(
+messages:
+  A:
+    fields: [ { name: x, type: u8 } ]
+protocols:
+  P:
+    exact_size: true
+    framing: { type: fixed, size: 4 }
+    messages: [A]
+)", "exact_size does not apply to fixed framing");
+    const auto r = compile(R"(
+messages:
+  A:
+    fields: [ { name: x, type: u8 } ]
+protocols:
+  P:
+    exact_size: true
+    header: [ { name: len, type: u8 } ]
+    framing: { type: length_prefixed, length: { field: len }, max_frame: 8 }
+    messages: [A]
+)");
+    INFO(r.text);
+    CHECK(r.ok);
+}
+
 TEST_CASE("text message restrictions") {
     expect_error("messages:\n  T:\n    format: text\n    fields:\n      - { name: b, type: bytes, length: 2 }\n",
                  "not supported in text messages");

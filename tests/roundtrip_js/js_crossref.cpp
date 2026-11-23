@@ -131,6 +131,8 @@ void message(const char* schema, const char* name, const std::vector<Bytes>& see
         else {
             c += ",\"view\":{\"multi\":" + js(text(*v));
             if constexpr (requires { v->wire_size(); }) c += ",\"size\":" + std::to_string(v->wire_size());
+            if constexpr (requires { v->extra_bytes(); }) c += ",\"extra\":" + std::to_string(v->extra_bytes());
+            if constexpr (requires { v->extra_tokens(); }) c += ",\"extra\":" + std::to_string(v->extra_tokens());
             c += "}";
         }
         cases += (cases.empty() ? "" : ",\n") + c + "}";
@@ -205,8 +207,10 @@ struct ProtocolCase {
                         for (int j = 0, n = 1 + static_cast<int>(rng() % 5); j < n; ++j) wire.push_back(static_cast<std::uint8_t>(rng()));
                     }
                 }
-                for (const std::size_t chunk : {std::size_t{1}, std::size_t{5}, wire.size() ? wire.size() : 1}) {
-                    std::string ev;
+                // chunk 0 is the recovery run: chunks of 3 with resync (r) / flush (f) / tick (t) / nothing (.) after
+                // each chunk, then 8 idle ticks; the clock advances by 1 per op and the idle timeout is 2
+                for (const std::size_t chunk : {std::size_t{1}, std::size_t{5}, wire.size() ? wire.size() : 1, std::size_t{0}}) {
+                    std::string ev, ops;
                     typename P::template Stream<> parser;  // the real C++ stream: resyncs over the bytes as received
                     auto on_view = [&](const auto& v) { ev += "M:" + text(v, true) + "\n"; };
                     auto handler = gmp::overloaded{
@@ -223,13 +227,34 @@ struct ProtocolCase {
                             }
                         },
                     };
-                    for (std::size_t pos = 0; pos < wire.size(); pos += chunk)
-                        (void)parser.feed(gmp::bytes_view(wire.data() + pos, std::min(chunk, wire.size() - pos)), handler);
+                    if (chunk) {
+                        for (std::size_t pos = 0; pos < wire.size(); pos += chunk)
+                            (void)parser.feed(gmp::bytes_view(wire.data() + pos, std::min(chunk, wire.size() - pos)), handler);
+                    } else {
+                        parser.set_idle_timeout(2);
+                        std::uint32_t now = 0;
+                        auto op = [&](char c) {
+                            ops += c;
+                            ++now;
+                            const bool did = c == 'r' ? parser.resync(handler) : c == 'f' ? parser.flush(handler)
+                                           : c == 't' ? parser.tick(now, handler) : false;
+                            ev += std::string("R") + (did ? "1" : "0") + "\n";
+                            while (parser.next(handler)) {}
+                        };
+                        for (std::size_t pos = 0; pos < wire.size(); pos += 3) {
+                            (void)parser.feed(gmp::bytes_view(wire.data() + pos, std::min<std::size_t>(3, wire.size() - pos)), handler);
+                            const auto k = rng() % 12;
+                            op(k == 0 ? 'r' : k == 1 ? 'f' : k < 8 ? 't' : '.');
+                        }
+                        for (int k = 0; k < 8; ++k) op('t');
+                    }
                     const auto& st = parser.stats();
                     streams += (streams.empty() ? "" : ",\n") + std::string("{\"hex\":") + hex(wire) +
-                               ",\"chunk\":" + std::to_string(chunk) + ",\"events\":" + js(ev) + ",\"stats\":[" +
-                               std::to_string(st.frames) + "," + std::to_string(st.frame_errors) + "," +
-                               std::to_string(st.bytes_skipped) + "," + std::to_string(st.overflows) + "]}";
+                               ",\"chunk\":" + std::to_string(chunk) + ",\"ops\":" + js(ops) + ",\"events\":" + js(ev) +
+                               ",\"stats\":[" + std::to_string(st.frames) + "," + std::to_string(st.frame_errors) + "," +
+                               std::to_string(st.bytes_skipped) + "," + std::to_string(st.overflows) + "," +
+                               std::to_string(st.resyncs) + "," + std::to_string(st.flushes) + "," +
+                               std::to_string(st.frames_with_extra) + "]}";
                 }
             }
         }
@@ -409,6 +434,8 @@ int main() {
     ProtocolCase<fr::WholeFrame>{"framing", "WholeFrame", {}}.add(r1).add(nt).add(r2).done();
     ProtocolCase<fr::EscapedWithEnd>{"framing", "EscapedWithEnd", {}}.add(r1).add(nt).add(r2).done();
     ProtocolCase<fr::FixedWithEnd>{"framing", "FixedWithEnd", {}}.add(r1).add(r2).done();
+    ProtocolCase<fr::Loose>{"framing", "Loose", {}}.add(r1).add(nt).add(r2).done();
+    ProtocolCase<fr::Exact>{"framing", "Exact", {}}.add(r1).add(nt).add(r2).done();
 
     // ---- hdlc (custom type, custom checksum) ----------------------------------------------------------------
     namespace hd = link::hdlc;

@@ -391,6 +391,7 @@
     if (fmt === 'text' && !['delimited', 'none', 'custom'].includes(fr.type)) add('error', t, p.name, 'text protocols need delimited framing');
     const L = G.protocolLayout(s, p);
     if (fr.type === 'fixed' && L.maxFrame == null) add('error', t, p.name, "fixed framing needs 'size' unless all messages share one fixed size");
+    if (fr.type === 'fixed' && p.exact_size) add('error', t, p.name, 'exact_size does not apply to fixed framing (shorter messages are zero padded to the frame size)');
     if (fr.type !== 'none' && L.maxFrame == null) add('error', t, p.name, "set max_frame (message sizes are not bounded)");
     if (p.checksum.enabled && p.checksum.algo === '__crc') {
       const w = G.parseInt(p.checksum.crc.width);

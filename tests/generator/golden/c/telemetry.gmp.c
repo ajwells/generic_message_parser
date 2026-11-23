@@ -36,6 +36,15 @@ gmsg_error acme_telemetry_extended_decode(const uint8_t* data, size_t size, acme
     return acme_telemetry_extended_read(&r, out);
 }
 
+gmsg_error acme_telemetry_extended_decode_extra(const uint8_t* data, size_t size, acme_telemetry_extended* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = acme_telemetry_extended_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error acme_telemetry_extended_encode(const acme_telemetry_extended* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = acme_telemetry_extended_write(m, &w);
@@ -60,15 +69,16 @@ gmsg_error acme_telemetry_extended_view_from(const uint8_t* data, size_t size, a
     if (size < 6) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 6;
+    out->extra = size - 6;
     return GMSG_OK;
 }
 
 acme_telemetry_extended_view acme_telemetry_extended_view_unchecked(const uint8_t* data, size_t size) {
     acme_telemetry_extended_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 6;
+    v.extra = size - 6;
     return v;
 }
 
@@ -193,6 +203,15 @@ gmsg_error acme_telemetry_status_decode(const uint8_t* data, size_t size, acme_t
     return acme_telemetry_status_read(&r, out);
 }
 
+gmsg_error acme_telemetry_status_decode_extra(const uint8_t* data, size_t size, acme_telemetry_status* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = acme_telemetry_status_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error acme_telemetry_status_encode(const acme_telemetry_status* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = acme_telemetry_status_write(m, &w);
@@ -272,6 +291,7 @@ gmsg_error acme_telemetry_status_view_from(const uint8_t* data, size_t size, acm
     pos += 8;
     v.off[8] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -374,6 +394,15 @@ gmsg_error acme_telemetry_command_decode(const uint8_t* data, size_t size, acme_
     return acme_telemetry_command_read(&r, out);
 }
 
+gmsg_error acme_telemetry_command_decode_extra(const uint8_t* data, size_t size, acme_telemetry_command* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = acme_telemetry_command_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error acme_telemetry_command_encode(const acme_telemetry_command* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = acme_telemetry_command_write(m, &w);
@@ -415,6 +444,7 @@ gmsg_error acme_telemetry_command_view_from(const uint8_t* data, size_t size, ac
     }
     v.off[3] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -495,6 +525,15 @@ gmsg_error acme_telemetry_log_decode(const uint8_t* data, size_t size, acme_tele
     return acme_telemetry_log_read(&r, out);
 }
 
+gmsg_error acme_telemetry_log_decode_extra(const uint8_t* data, size_t size, acme_telemetry_log* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = acme_telemetry_log_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error acme_telemetry_log_encode(const acme_telemetry_log* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = acme_telemetry_log_write(m, &w);
@@ -536,6 +575,7 @@ gmsg_error acme_telemetry_log_view_from(const uint8_t* data, size_t size, acme_t
     pos = size;
     v.off[3] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -603,6 +643,15 @@ gmsg_error acme_telemetry_binary_link_header_decode(const uint8_t* data, size_t 
     return acme_telemetry_binary_link_header_read(&r, out);
 }
 
+gmsg_error acme_telemetry_binary_link_header_decode_extra(const uint8_t* data, size_t size, acme_telemetry_binary_link_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = acme_telemetry_binary_link_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error acme_telemetry_binary_link_header_encode(const acme_telemetry_binary_link_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = acme_telemetry_binary_link_header_write(m, &w);
@@ -626,15 +675,16 @@ gmsg_error acme_telemetry_binary_link_header_view_from(const uint8_t* data, size
     if (size < 3) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 3;
+    out->extra = size - 3;
     return GMSG_OK;
 }
 
 acme_telemetry_binary_link_header_view acme_telemetry_binary_link_header_view_unchecked(const uint8_t* data, size_t size) {
     acme_telemetry_binary_link_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 3;
+    v.extra = size - 3;
     return v;
 }
 
@@ -674,7 +724,24 @@ void acme_telemetry_binary_link_any_message_print(const acme_telemetry_binary_li
 
 static const uint8_t acme_telemetry_binary_link_prefix_[2] = {0xAA, 0x55};
 static const gmsg_length_prefixed_config acme_telemetry_binary_link_framing_ = {{{0xAA, 0x55}, 2}, 3, 2, GMSG_ENDIAN_BIG, INT64_C(7), 7, 256, {false, 0, 0, 0, 0, {0}, {0}, {0}}, 0, false, 0, 0, false};
-static gmsg_frame_scan acme_telemetry_binary_link_scan_(const uint8_t* b, size_t n) { return gmsg_scan_length_prefixed(b, n, &acme_telemetry_binary_link_framing_); }
+/* Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BAD_LENGTH as soon as the header has arrived. */
+static gmsg_frame_scan acme_telemetry_binary_link_scan_(const uint8_t* b, size_t n) {
+    const gmsg_frame_scan s = gmsg_scan_length_prefixed(b, n, &acme_telemetry_binary_link_framing_);
+    uint8_t h[3];
+    acme_telemetry_binary_link_header_view hv;
+    int64_t body;
+    if (s.kind == GMSG_SCAN_SKIP) return s;
+    if (!gmsg_read_frame_header(b, n, acme_telemetry_binary_link_framing_.sync.len, &acme_telemetry_binary_link_framing_.escape, h, 3)) return s;
+    hv = acme_telemetry_binary_link_header_view_unchecked(h, 3);
+    body = (int64_t)acme_telemetry_binary_link_header_view_len(&hv) + INT64_C(0);
+    switch ((int64_t)acme_telemetry_binary_link_header_view_msg_id(&hv)) {
+        case INT64_C(1): if (body < 14) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Status */
+        case INT64_C(2): if (body < 3) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Command */
+        case INT64_C(3): if (body < 2) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Log */
+        default: break;
+    }
+    return s;
+}
 
 /* A validated frame split into its parts (pointers into the frame buffer). */
 typedef struct acme_telemetry_binary_link_frame_ {
@@ -776,13 +843,30 @@ gmsg_error acme_telemetry_binary_link_process(const uint8_t* data, size_t size, 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { acme_telemetry_binary_link_mode_deliver_ = 0, acme_telemetry_binary_link_mode_capture_ = 1, acme_telemetry_binary_link_mode_message_ = 2, acme_telemetry_binary_link_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t acme_telemetry_binary_link_extra_(const acme_telemetry_binary_link_any_view* v) {
+    switch (v->kind) {
+        case ACME_TELEMETRY_BINARY_LINK_STATUS: return acme_telemetry_status_view_extra_bytes(&v->as.status);
+        case ACME_TELEMETRY_BINARY_LINK_COMMAND: return acme_telemetry_command_view_extra_bytes(&v->as.command);
+        case ACME_TELEMETRY_BINARY_LINK_LOG: return acme_telemetry_log_view_extra_bytes(&v->as.log);
+        default: return 0;
+    }
+}
+
 static gmsg_error acme_telemetry_binary_link_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     acme_telemetry_binary_link_stream* s = (acme_telemetry_binary_link_stream*)gs;
     acme_telemetry_binary_link_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == acme_telemetry_binary_link_mode_deliver_) return acme_telemetry_binary_link_process_frame_(frame, n, &s->cb);
     if ((e = acme_telemetry_binary_link_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == acme_telemetry_binary_link_mode_deliver_) {
+        acme_telemetry_binary_link_any_view v;
+        if ((e = acme_telemetry_binary_link_select_(&f, &v)) != GMSG_OK) return e;
+        gs->last_extra = acme_telemetry_binary_link_extra_(&v);
+        acme_telemetry_binary_link_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = acme_telemetry_binary_link_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = acme_telemetry_binary_link_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;

@@ -149,6 +149,8 @@ private:
             w_.line("AnyView message;");
             w_.line(escape_ ? "gmp::bytes_view bytes{};  ///< the frame in the buffer (unescaped in place: only header and body are meaningful)"
                             : "gmp::bytes_view bytes{};  ///< the whole frame as received");
+            w_.line(std::string("std::size_t extra = 0;  ///< ") + (text_ ? "tokens" : "bytes") +
+                    " in the frame after the message (ignored" + (p_.exact_size ? "; always 0 with exact_size)" : ")"));
             w_.close("};");
         }
         w_.line();
@@ -186,7 +188,11 @@ private:
                                    (fr.length_covers == FramingSpec::LengthCovers::BodyChecksum ? "true" : "false")
                              : std::string()) +
                         "};");
-                w_.line("static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_length_prefixed(b, framing_config); }");
+                if (p_.size_checks.empty()) {
+                    w_.line("static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_length_prefixed(b, framing_config); }");
+                    break;
+                }
+                emit_checked_scan();
                 break;
             }
             case FT::Delimited:
@@ -203,6 +209,42 @@ private:
             }
         }
         w_.line();
+    }
+
+    /// Condition rejecting `body` for one size check ("" when it cannot reject anything).
+    static std::string size_fail(const SizeCheck& c) {
+        std::string s;
+        if (c.min > 0) s = "body < " + std::to_string(c.min);
+        if (c.max) s += (s.empty() ? "" : " || ") + std::string("body > ") + std::to_string(*c.max);
+        return s;
+    }
+
+    /// length_prefixed scan that also rejects a length the frame's message type cannot have, as soon as the header has
+    /// arrived (instead of waiting for a body that may never come).
+    void emit_checked_scan() {
+        w_.line(std::string("/// Scan for a frame. A length the frame's message type cannot have (") +
+                (p_.exact_size ? "shorter or longer than the message" : "shorter than the message") +
+                ") is rejected with BadLength as soon as the header has arrived.");
+        w_.open("static gmp::FrameScan scan(gmp::bytes_view b) noexcept {");
+        w_.line("const gmp::FrameScan s = gmp::scan_length_prefixed(b, framing_config);");
+        w_.line("if (s.kind == gmp::FrameScan::Kind::skip) return s;");
+        w_.line("std::array<std::uint8_t, header_size> h{};");
+        w_.line("if (!gmp::read_frame_header(b, framing_config.sync.len, framing_config.escape, gmp::mut_bytes(h))) return s;");
+        w_.line("const auto hv = HeaderView::unchecked(gmp::bytes_view(h));");
+        w_.line("const std::int64_t body = static_cast<std::int64_t>(hv." + ident(p_.framing.length->name) + "()) + " +
+                int_literal(p_.length_to_body) + ";");
+        if (p_.message_type.kind == MessageTypeSpec::Kind::None) {
+            w_.line("if (" + size_fail(p_.size_checks.front()) + ") return gmp::FrameScan::skip(1, gmp::Error::BadLength);");
+        } else {
+            w_.open("switch (gmp::to_int(hv." + ident(p_.message_type.field->name) + "())) {");
+            for (const auto& c : p_.size_checks)
+                w_.line("case " + type_id_literal(c.message) + ": if (" + size_fail(c) +
+                        ") return gmp::FrameScan::skip(1, gmp::Error::BadLength); break;  // " + p_.messages[c.message]->name);
+            w_.line("default: break;");
+            w_.close();
+        }
+        w_.line("return s;");
+        w_.close();
     }
 
     void emit_frame_struct() {
@@ -388,6 +430,7 @@ private:
             const auto v = view_name(*p_.messages[i]);
             w_.line("auto v = " + v + "::from(f.body);");
             w_.line("if (!v) return v.error();");
+            if (p_.exact_size) w_.line("if (gmp::extra_of(*v) != 0) return gmp::Error::BadLength;  // exact_size");
             w_.line("fn(*v);");
             w_.line("return gmp::Error::None;");
         };
@@ -462,13 +505,15 @@ private:
     void emit_process() {
         w_.line("/// StreamParser hook: validate a frame, select its message type and deliver it to `handler`.");
         w_.line("/// The handler is called as handler(header_view, message_view) or handler(message_view),");
-        w_.line("/// whichever it accepts; message types it does not accept are ignored.");
+        w_.line("/// whichever it accepts; message types it does not accept are ignored. `extra` (if given) receives the");
+        w_.line(std::string("/// ") + (text_ ? "tokens" : "bytes") + " after the message in the frame.");
         w_.line("template <class H>");
-        w_.open("static gmp::Error process(gmp::mut_bytes frame, H& handler) {");
+        w_.open("static gmp::Error process(gmp::mut_bytes frame, H& handler, std::size_t* extra = nullptr) {");
         w_.line("auto f = open(frame);");
         w_.line("if (!f) return f.error();");
         w_.open(std::string(escape_ ? "const gmp::Error e = " : "return ") + "visit_frame(*f, [&](const auto& v) {");
         w_.line("using V = std::decay_t<decltype(v)>;");
+        w_.line("if (extra) *extra = gmp::extra_of(v);");
         if (has_header_) {
             w_.line("if constexpr (std::invocable<H&, const HeaderView&, const V&>) handler(f->header, v);");
             w_.line("else if constexpr (std::invocable<H&, const V&>) handler(v);");

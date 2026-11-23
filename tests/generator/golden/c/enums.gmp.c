@@ -32,6 +32,15 @@ gmsg_error test_enums_inner_decode(const uint8_t* data, size_t size, test_enums_
     return test_enums_inner_read(&r, out);
 }
 
+gmsg_error test_enums_inner_decode_extra(const uint8_t* data, size_t size, test_enums_inner* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_enums_inner_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_enums_inner_encode(const test_enums_inner* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_enums_inner_write(m, &w);
@@ -54,15 +63,16 @@ gmsg_error test_enums_inner_view_from(const uint8_t* data, size_t size, test_enu
     if (!test_enums_color_is_known((test_enums_color)gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG))) return GMSG_ERR_UNKNOWN_ENUM;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 test_enums_inner_view test_enums_inner_view_unchecked(const uint8_t* data, size_t size) {
     test_enums_inner_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -171,6 +181,15 @@ gmsg_error test_enums_sample_decode(const uint8_t* data, size_t size, test_enums
     return test_enums_sample_read(&r, out);
 }
 
+gmsg_error test_enums_sample_decode_extra(const uint8_t* data, size_t size, test_enums_sample* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_enums_sample_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_enums_sample_encode(const test_enums_sample* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_enums_sample_write(m, &w);
@@ -259,6 +278,7 @@ gmsg_error test_enums_sample_view_from(const uint8_t* data, size_t size, test_en
     }
     v.off[7] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -352,6 +372,15 @@ gmsg_error test_enums_tail_decode(const uint8_t* data, size_t size, test_enums_t
     return test_enums_tail_read(&r, out);
 }
 
+gmsg_error test_enums_tail_decode_extra(const uint8_t* data, size_t size, test_enums_tail* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_enums_tail_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_enums_tail_encode(const test_enums_tail* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_enums_tail_write(m, &w);
@@ -392,6 +421,7 @@ gmsg_error test_enums_tail_view_from(const uint8_t* data, size_t size, test_enum
     }
     v.off[1] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -464,6 +494,16 @@ gmsg_error test_enums_line_decode(const uint8_t* data, size_t size, test_enums_l
     const size_t n = gmsg_split((const char*)data, size, TEST_ENUMS_LINE_SEPARATOR, tok, 2);
     gmsg_memset(out, 0, sizeof *out);
     return test_enums_line_read_text(tok, n < 2 ? n : 2, out);
+}
+
+gmsg_error test_enums_line_decode_extra(const uint8_t* data, size_t size, test_enums_line* out, size_t* extra) {
+    gmsg_str tok[2];
+    const size_t n = gmsg_split((const char*)data, size, TEST_ENUMS_LINE_SEPARATOR, tok, 2);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_enums_line_read_text(tok, n < 2 ? n : 2, out);
+    *extra = e == GMSG_OK && n > 2 ? n - 2 : 0;
+    return e;
 }
 
 gmsg_error test_enums_line_encode(const test_enums_line* m, uint8_t* out, size_t capacity, size_t* written) {

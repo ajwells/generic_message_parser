@@ -170,6 +170,12 @@ void emit_struct(Ctx& c, const Message& m) {
     w.line("return " + m.name + ".readText(gmsg.text.split(s, " + sep + ").slice(0, " + sz(m.token_count) + "));");
     w.close();
     w.line("static decode(bytes) { return " + m.name + ".decodeText(gmsg.latin1String(gmsg.toBytes(bytes))); }");
+    w.line("/** Like decode(bytes): { message, extra }, `extra` = tokens after the message's own (which decode ignores). */");
+    w.open("static decodeWithExtra(bytes) {");
+    w.line("const all = gmsg.text.split(typeof bytes === 'string' ? bytes : gmsg.latin1String(gmsg.toBytes(bytes)), " + sep + ");");
+    w.line("return { message: " + m.name + ".readText(all.slice(0, " + sz(m.token_count) + ")), extra: Math.max(0, all.length - " +
+           sz(m.token_count) + ") };");
+    w.close();
     w.line("/** The record as text. */");
     w.line("static encodeText(m) { const w = new gmsg.text.TextWriter(" + sep + "); " + m.name + ".writeText(w, m); return w.toString(); }");
     w.line("static encode(m) { return gmsg.latin1Bytes(" + m.name + ".encodeText(m)); }");
@@ -215,6 +221,8 @@ void emit_view(Ctx& c, const Message& m) {
     w.line("get raw() { return this.#text; }");
     w.line("/** Number of tokens actually present in the record (may differ from tokenCount). */");
     w.line("get presentTokens() { return this.#n; }");
+    w.line("/** Tokens after the message's own (ignored; a protocol with exact_size rejects them). */");
+    w.line("get extraTokens() { return Math.max(0, this.#n - " + sz(m.token_count) + "); }");
     w.line("token(i) { return i < this.#tok.length ? this.#tok[i] : ''; }");
     for (const auto& fp : m.fields) {
         const auto& f = *fp;

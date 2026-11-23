@@ -130,7 +130,7 @@ window.GMP = window.GMP || {};
   });
 
   G.newProtocol = (over = {}) => ({
-    uid: G.uid(), name: 'Protocol', format: '', endian: '', separator: '', doc: '',
+    uid: G.uid(), name: 'Protocol', format: '', endian: '', separator: '', doc: '', exact_size: false,
     header: [],
     framing: {
       type: 'none', syncMode: 'hex', sync: '', endMode: 'hex', end: '', size: '',

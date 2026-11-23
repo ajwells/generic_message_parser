@@ -124,6 +124,8 @@ void cross_check(const std::vector<Bytes>& valid, CApi<C> capi, CViewApi<CV> vap
         REQUIRE(static_cast<int>(ve) == (cppv ? 0 : code(cppv.error())));
         if (cppv) {
             REQUIRE(v.size == cppv->wire_size());
+            CHECK(v.extra == cppv->extra_bytes());
+            CHECK(v.extra == in.size() - v.size);
             same_view(*cppv, v);
             print_compare::same(*cppv, vapi.print, v);
         }

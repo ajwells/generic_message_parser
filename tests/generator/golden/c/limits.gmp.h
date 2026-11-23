@@ -32,6 +32,8 @@ gmsg_error test_limits_inner_read(gmsg_reader* r, test_limits_inner* m);
 gmsg_error test_limits_inner_write(const test_limits_inner* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_limits_inner_decode(const uint8_t* data, size_t size, test_limits_inner* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_limits_inner_decode_extra(const uint8_t* data, size_t size, test_limits_inner* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_limits_inner_encode(const test_limits_inner* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -41,9 +43,10 @@ void test_limits_inner_print(const test_limits_inner* m, gmsg_printer* p);
 typedef struct test_limits_inner_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } test_limits_inner_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_limits_inner_view_from(const uint8_t* data, size_t size, test_limits_inner_view* out);
 /* Build a view over data already validated by test_limits_inner_view_from() (no checks). */
 test_limits_inner_view test_limits_inner_view_unchecked(const uint8_t* data, size_t size);
@@ -51,6 +54,8 @@ test_limits_inner_view test_limits_inner_view_unchecked(const uint8_t* data, siz
 gmsg_error test_limits_inner_view_to_struct(const test_limits_inner_view* v, test_limits_inner* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_limits_inner_view_print(const test_limits_inner_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_limits_inner_view_extra_bytes(const test_limits_inner_view* v) { return v->extra; }
 
 static inline uint8_t test_limits_inner_view_pct(const test_limits_inner_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -113,6 +118,8 @@ gmsg_error test_limits_sample_read(gmsg_reader* r, test_limits_sample* m);
 gmsg_error test_limits_sample_write(const test_limits_sample* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_limits_sample_decode(const uint8_t* data, size_t size, test_limits_sample* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_limits_sample_decode_extra(const uint8_t* data, size_t size, test_limits_sample* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_limits_sample_encode(const test_limits_sample* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -127,11 +134,12 @@ static inline void test_limits_sample_set_temp_scaled(test_limits_sample* m, dou
 typedef struct test_limits_sample_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[13];  /* field offsets */
     uint64_t present;  /* one bit per conditional field */
 } test_limits_sample_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_limits_sample_view_from(const uint8_t* data, size_t size, test_limits_sample_view* out);
 /* Build a view over data already validated by test_limits_sample_view_from() (no checks). */
 test_limits_sample_view test_limits_sample_view_unchecked(const uint8_t* data, size_t size);
@@ -139,6 +147,8 @@ test_limits_sample_view test_limits_sample_view_unchecked(const uint8_t* data, s
 gmsg_error test_limits_sample_view_to_struct(const test_limits_sample_view* v, test_limits_sample* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_limits_sample_view_print(const test_limits_sample_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_limits_sample_view_extra_bytes(const test_limits_sample_view* v) { return v->extra; }
 
 /* [%RH] */
 static inline uint16_t test_limits_sample_view_humidity(const test_limits_sample_view* v) {
@@ -199,6 +209,8 @@ gmsg_error test_limits_tail_read(gmsg_reader* r, test_limits_tail* m);
 gmsg_error test_limits_tail_write(const test_limits_tail* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_limits_tail_decode(const uint8_t* data, size_t size, test_limits_tail* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_limits_tail_decode_extra(const uint8_t* data, size_t size, test_limits_tail* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_limits_tail_encode(const test_limits_tail* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -208,10 +220,11 @@ void test_limits_tail_print(const test_limits_tail* m, gmsg_printer* p);
 typedef struct test_limits_tail_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[2];  /* field offsets */
 } test_limits_tail_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_limits_tail_view_from(const uint8_t* data, size_t size, test_limits_tail_view* out);
 /* Build a view over data already validated by test_limits_tail_view_from() (no checks). */
 test_limits_tail_view test_limits_tail_view_unchecked(const uint8_t* data, size_t size);
@@ -219,6 +232,8 @@ test_limits_tail_view test_limits_tail_view_unchecked(const uint8_t* data, size_
 gmsg_error test_limits_tail_view_to_struct(const test_limits_tail_view* v, test_limits_tail* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_limits_tail_view_print(const test_limits_tail_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_limits_tail_view_extra_bytes(const test_limits_tail_view* v) { return v->extra; }
 
 static inline size_t test_limits_tail_view_rest_count(const test_limits_tail_view* v) { return (size_t)(v->off[1] - v->off[0]) / 2; }
 static inline uint16_t test_limits_tail_view_rest_at(const test_limits_tail_view* v, size_t i) { return gmsg_load_u16(v->data + 0 + i * 2, GMSG_ENDIAN_BIG); }
@@ -241,6 +256,8 @@ gmsg_error test_limits_line_read_text(const gmsg_str* tok, size_t ntok, test_lim
 gmsg_error test_limits_line_write_text(const test_limits_line* m, gmsg_text_writer* w);
 /* Decode text data[0..size) / encode into out[0..capacity) (*written may be NULL). */
 gmsg_error test_limits_line_decode(const uint8_t* data, size_t size, test_limits_line* out);
+/* Like _decode; *extra receives the number of tokens after the message's own (which _decode ignores). */
+gmsg_error test_limits_line_decode_extra(const uint8_t* data, size_t size, test_limits_line* out, size_t* extra);
 gmsg_error test_limits_line_encode(const test_limits_line* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
 void test_limits_line_print(const test_limits_line* m, gmsg_printer* p);
@@ -260,6 +277,8 @@ gmsg_error test_limits_line_view_to_struct(const test_limits_line_view* v, test_
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_limits_line_view_print(const test_limits_line_view* v, gmsg_printer* p);
 static inline size_t test_limits_line_view_present_tokens(const test_limits_line_view* v) { return v->ntok; }
+/* Tokens after the message's own (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_limits_line_view_extra_tokens(const test_limits_line_view* v) { return v->ntok > 4 ? v->ntok - 4 : 0; }
 static inline gmsg_str test_limits_line_view_token(const test_limits_line_view* v, size_t i) { return i < 4 ? v->tok[i] : gmsg_str_make(NULL, 0); }
 static inline gmsg_error test_limits_line_view_speed(const test_limits_line_view* v, double* out) {
     gmsg_error e = GMSG_OK;

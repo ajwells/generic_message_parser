@@ -73,6 +73,8 @@ gmsg_error nav_nmea_gga_read_text(const gmsg_str* tok, size_t ntok, nav_nmea_gga
 gmsg_error nav_nmea_gga_write_text(const nav_nmea_gga* m, gmsg_text_writer* w);
 /* Decode text data[0..size) / encode into out[0..capacity) (*written may be NULL). */
 gmsg_error nav_nmea_gga_decode(const uint8_t* data, size_t size, nav_nmea_gga* out);
+/* Like _decode; *extra receives the number of tokens after the message's own (which _decode ignores). */
+gmsg_error nav_nmea_gga_decode_extra(const uint8_t* data, size_t size, nav_nmea_gga* out, size_t* extra);
 gmsg_error nav_nmea_gga_encode(const nav_nmea_gga* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
 void nav_nmea_gga_print(const nav_nmea_gga* m, gmsg_printer* p);
@@ -92,6 +94,8 @@ gmsg_error nav_nmea_gga_view_to_struct(const nav_nmea_gga_view* v, nav_nmea_gga*
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void nav_nmea_gga_view_print(const nav_nmea_gga_view* v, gmsg_printer* p);
 static inline size_t nav_nmea_gga_view_present_tokens(const nav_nmea_gga_view* v) { return v->ntok; }
+/* Tokens after the message's own (ignored; a protocol with exact_size rejects them). */
+static inline size_t nav_nmea_gga_view_extra_tokens(const nav_nmea_gga_view* v) { return v->ntok > 14 ? v->ntok - 14 : 0; }
 static inline gmsg_str nav_nmea_gga_view_token(const nav_nmea_gga_view* v, size_t i) { return i < 14 ? v->tok[i] : gmsg_str_make(NULL, 0); }
 static inline gmsg_error nav_nmea_gga_view_utc_time(const nav_nmea_gga_view* v, double* out) {
     gmsg_error e = GMSG_OK;
@@ -194,6 +198,8 @@ gmsg_error nav_nmea_txt_read_text(const gmsg_str* tok, size_t ntok, nav_nmea_txt
 gmsg_error nav_nmea_txt_write_text(const nav_nmea_txt* m, gmsg_text_writer* w);
 /* Decode text data[0..size) / encode into out[0..capacity) (*written may be NULL). */
 gmsg_error nav_nmea_txt_decode(const uint8_t* data, size_t size, nav_nmea_txt* out);
+/* Like _decode; *extra receives the number of tokens after the message's own (which _decode ignores). */
+gmsg_error nav_nmea_txt_decode_extra(const uint8_t* data, size_t size, nav_nmea_txt* out, size_t* extra);
 gmsg_error nav_nmea_txt_encode(const nav_nmea_txt* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
 void nav_nmea_txt_print(const nav_nmea_txt* m, gmsg_printer* p);
@@ -213,6 +219,8 @@ gmsg_error nav_nmea_txt_view_to_struct(const nav_nmea_txt_view* v, nav_nmea_txt*
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void nav_nmea_txt_view_print(const nav_nmea_txt_view* v, gmsg_printer* p);
 static inline size_t nav_nmea_txt_view_present_tokens(const nav_nmea_txt_view* v) { return v->ntok; }
+/* Tokens after the message's own (ignored; a protocol with exact_size rejects them). */
+static inline size_t nav_nmea_txt_view_extra_tokens(const nav_nmea_txt_view* v) { return v->ntok > 4 ? v->ntok - 4 : 0; }
 static inline gmsg_str nav_nmea_txt_view_token(const nav_nmea_txt_view* v, size_t i) { return i < 4 ? v->tok[i] : gmsg_str_make(NULL, 0); }
 static inline gmsg_error nav_nmea_txt_view_total(const nav_nmea_txt_view* v, uint8_t* out) {
     gmsg_error e = GMSG_OK;
@@ -290,6 +298,7 @@ typedef struct nav_nmea_nmea_received {
     nav_nmea_nmea_any_view message;
     const uint8_t* bytes;  /* the frame as received */
     size_t size;
+    size_t extra;  /* tokens in the frame after the message (ignored) */
 } nav_nmea_nmea_received;
 
 /* Result of nav_nmea_nmea_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -330,6 +339,13 @@ gmsg_error nav_nmea_nmea_stream_init(nav_nmea_nmea_stream* s, uint8_t* buf, size
 static inline size_t nav_nmea_nmea_stream_feed(nav_nmea_nmea_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t nav_nmea_nmea_stream_push(nav_nmea_nmea_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool nav_nmea_nmea_stream_next(nav_nmea_nmea_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool nav_nmea_nmea_stream_resync(nav_nmea_nmea_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool nav_nmea_nmea_stream_flush(nav_nmea_nmea_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void nav_nmea_nmea_stream_set_idle_timeout(nav_nmea_nmea_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool nav_nmea_nmea_stream_tick(nav_nmea_nmea_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void nav_nmea_nmea_stream_reset(nav_nmea_nmea_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* nav_nmea_nmea_stream_stats(const nav_nmea_nmea_stream* s) { return &s->base.stats; }
 static inline gmsg_error nav_nmea_nmea_stream_last_error(const nav_nmea_nmea_stream* s) { return s->base.last_error; }

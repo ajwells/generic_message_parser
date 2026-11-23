@@ -534,8 +534,9 @@
       } else nd.error = `type "${f.type}" not supported in text`;
       nodes.push(nd);
     }
-    if (toks.length > ti) nodes.push(node(`+${toks.length - ti} extra token${toks.length - ti > 1 ? 's' : ''}`, 'pad', toks[ti].start, toks[toks.length - 1].end, { note: 'ignored by the decoder' }));
-    return { nodes, error };
+    const extra = Math.max(0, toks.length - ti);
+    if (extra) nodes.push(node(`+${extra} extra token${extra > 1 ? 's' : ''}`, 'pad', toks[ti].start, toks[toks.length - 1].end, { note: 'ignored by the decoder' }));
+    return { nodes, error, extra };
   }
 
   // ----------------------------------------------------------------------------------------------
@@ -562,7 +563,7 @@
     const sync = Uint8Array.from(L.prefix), suffix = Uint8Array.from(L.suffix);
     const whole = (b) => ({ kind: 'frame', size: b.length, consume: b.length, onError: b.length });
     if (fr.type === 'none' || fr.type === 'custom') return { scan: whole, escape: esc };
-    let raw, lengthInfo = null;
+    let raw, lengthInfo = null, sizeCheck = null;
     if (fr.type === 'fixed') {
       const sizes = L.bodies.map((b) => b.layout.size);
       const size = G.parseInt(fr.size) || (sizes.length && sizes.every((x) => x != null) ? L.overhead + Math.max(...sizes) : L.maxFrame);
@@ -589,6 +590,34 @@
       };
       raw = (b) => gmsg.scanLengthPrefixed(b, cfg);
       lengthInfo = { lengthOffset, lengthSize, lengthEndian, add, countsWire };
+      // length check by message type (gmpc derive_size_checks): as soon as the header has arrived, a body size the
+      // frame's message cannot have is rejected (BadLength); the maximum only with exact_size
+      const typeRow = p.message_type.kind === 'field' ? G.messageLayout(s, hm).rows.find((x) => x.field.name === p.message_type.field) : null;
+      if (!countsWire && !L.text && (p.message_type.kind === 'none' || typeRow)) {
+        const toBody = adjust - (fr.covers === 'body_checksum' ? L.trailer : fr.covers === 'header_body' ? L.headerSize
+          : fr.covers === 'all' ? L.prefix.length + L.headerSize + L.trailer : 0);
+        const typeEndian = typeRow && (typeRow.field.endian || G.protoEndian(s, p));
+        const typeSize = typeRow && (G.PRIM_SIZE[typeRow.field.type] || G.PRIM_SIZE[(G.findEnum(s, typeRow.field.type) || {}).type] || 1);
+        const bodyOf = (m) => L.bodies.find((x) => x.message === m);
+        const messageFor = (id) => L.bodies.map((x) => x.message).find((m) => {
+          if (G.isInt(m.type_id)) return G.parseInt(m.type_id) === id;
+          const e = G.findEnum(s, typeRow.field.type);
+          const v = e && e.values.find((x) => x.name === m.type_id);
+          return v && G.parseInt(v.value) === id;
+        });
+        sizeCheck = (b) => {
+          const h = gmsg.readFrameHeader(b, L.prefix.length, escape && escape.enabled ? escape : null, L.headerSize);
+          if (!h) return '';
+          const body = Number(gmsg.loadUint(h, row.offset, lengthSize, lengthEndian)) + toBody;
+          const m = p.message_type.kind === 'none' ? (L.bodies[0] || {}).message : messageFor(Number(gmsg.loadUint(h, typeRow.offset, typeSize, typeEndian)));
+          const lay = m && bodyOf(m) && bodyOf(m).layout;
+          if (!lay) return '';
+          const max = p.exact_size ? (lay.size ?? lay.max) : null;
+          if (body < lay.min || (max != null && body > max))
+            return `length gives a ${body}-byte body; ${m.name} needs ${max == null ? `at least ${lay.min}` : lay.min === max ? `${max}` : `${lay.min}..${max}`} bytes`;
+          return '';
+        };
+      }
     } else {
       const cfg = { start: sync, end: suffix, escape, maxFrame };
       raw = (b) => gmsg.scanDelimited(b, cfg);
@@ -617,6 +646,10 @@
       escape: esc,
       scan(b) {
         const r = raw(b);
+        if (r.kind !== 'skip' && sizeCheck) {
+          const bad = sizeCheck(b);
+          if (bad) return { kind: 'skip', size: 1, error: bad };
+        }
         if (r.kind === 'frame') return { kind: 'frame', size: r.size, consume: r.consume, onError: r.consumeOnError };
         if (r.kind === 'skip') return { kind: 'skip', size: r.size, error: describe(b, r) };
         return { kind: 'need_more', want: r.size > b.length ? r.size : 0 };
@@ -708,7 +741,9 @@
         const r = decodeText(s, msg, buf, bodyStart, bodyEnd);
         const mn = node(msg.name, 'message', bodyStart, bodyEnd, { children: r.nodes, value: `type_id ${q(id)}`, type: 'message', msg, top: true });
         frame.nodes.push(mn);
+        frame.extra = r.extra;
         if (r.nodes.some((n) => n.error)) err(fieldErrors(r.nodes));
+        else if (r.extra && p.exact_size) err(`${r.extra} token${r.extra > 1 ? 's' : ''} after the message (exact_size: BadLength)`);
       }
       if (ckNode) frame.nodes.push(ckNode);
       remap(frame.nodes.slice(pre ? 1 : 0), origin, fend - suf);
@@ -765,12 +800,18 @@
         frame.message = msg.name;
         const r = decodeBinary(s, msg, buf, hs, buf.length - tr);
         const mn = node(msg.name, 'message', hs, r.pos, { children: r.nodes, type: 'message', value: msg.type_id ? `type_id ${msg.type_id}` : '', msg, top: true });
+        const extra = r.error ? 0 : buf.length - tr - r.pos;
         const trailing = r.pos < buf.length - tr
-          ? node(`+${buf.length - tr - r.pos} trailing`, 'pad', r.pos, buf.length - tr, { note: fr.type === 'fixed' ? 'fixed-frame padding' : 'bytes after the message (ignored)', raw: D.hex(buf.slice(r.pos, buf.length - tr)) })
+          ? node(`+${buf.length - tr - r.pos} trailing`, 'pad', r.pos, buf.length - tr, {
+            note: fr.type === 'fixed' ? 'fixed-frame padding' : p.exact_size ? 'bytes after the message (exact_size: rejected)' : 'bytes after the message (ignored)',
+            raw: D.hex(buf.slice(r.pos, buf.length - tr)),
+          })
           : null;
         inner.splice(p.header.length ? 1 : 0, 0, ...(trailing ? [mn, trailing] : [mn]));
+        frame.extra = fr.type === 'fixed' ? 0 : extra;
         if (r.error) err(r.error);
         else if (hasError(r.nodes)) err(fieldErrors(r.nodes));
+        else if (frame.extra && p.exact_size) err(`${frame.extra} byte${frame.extra > 1 ? 's' : ''} after the message (exact_size: BadLength)`);
       }
       remap(inner, origin, fend - suf);
       frame.nodes.push(...inner);

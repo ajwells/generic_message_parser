@@ -79,6 +79,8 @@ gmsg_error acme_telemetry_extended_read(gmsg_reader* r, acme_telemetry_extended*
 gmsg_error acme_telemetry_extended_write(const acme_telemetry_extended* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error acme_telemetry_extended_decode(const uint8_t* data, size_t size, acme_telemetry_extended* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error acme_telemetry_extended_decode_extra(const uint8_t* data, size_t size, acme_telemetry_extended* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error acme_telemetry_extended_encode(const acme_telemetry_extended* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -91,9 +93,10 @@ static inline void acme_telemetry_extended_set_temperature_scaled(acme_telemetry
 typedef struct acme_telemetry_extended_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } acme_telemetry_extended_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error acme_telemetry_extended_view_from(const uint8_t* data, size_t size, acme_telemetry_extended_view* out);
 /* Build a view over data already validated by acme_telemetry_extended_view_from() (no checks). */
 acme_telemetry_extended_view acme_telemetry_extended_view_unchecked(const uint8_t* data, size_t size);
@@ -101,6 +104,8 @@ acme_telemetry_extended_view acme_telemetry_extended_view_unchecked(const uint8_
 gmsg_error acme_telemetry_extended_view_to_struct(const acme_telemetry_extended_view* v, acme_telemetry_extended* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void acme_telemetry_extended_view_print(const acme_telemetry_extended_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t acme_telemetry_extended_view_extra_bytes(const acme_telemetry_extended_view* v) { return v->extra; }
 
 /* [degC] */
 static inline int16_t acme_telemetry_extended_view_temperature(const acme_telemetry_extended_view* v) {
@@ -161,6 +166,8 @@ gmsg_error acme_telemetry_status_read(gmsg_reader* r, acme_telemetry_status* m);
 gmsg_error acme_telemetry_status_write(const acme_telemetry_status* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error acme_telemetry_status_decode(const uint8_t* data, size_t size, acme_telemetry_status* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error acme_telemetry_status_decode_extra(const uint8_t* data, size_t size, acme_telemetry_status* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error acme_telemetry_status_encode(const acme_telemetry_status* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -173,11 +180,12 @@ static inline void acme_telemetry_status_set_voltage_scaled(acme_telemetry_statu
 typedef struct acme_telemetry_status_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[9];  /* field offsets */
     uint64_t present;  /* one bit per conditional field */
 } acme_telemetry_status_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error acme_telemetry_status_view_from(const uint8_t* data, size_t size, acme_telemetry_status_view* out);
 /* Build a view over data already validated by acme_telemetry_status_view_from() (no checks). */
 acme_telemetry_status_view acme_telemetry_status_view_unchecked(const uint8_t* data, size_t size);
@@ -185,6 +193,8 @@ acme_telemetry_status_view acme_telemetry_status_view_unchecked(const uint8_t* d
 gmsg_error acme_telemetry_status_view_to_struct(const acme_telemetry_status_view* v, acme_telemetry_status* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void acme_telemetry_status_view_print(const acme_telemetry_status_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t acme_telemetry_status_view_extra_bytes(const acme_telemetry_status_view* v) { return v->extra; }
 
 /* [V] */
 static inline uint16_t acme_telemetry_status_view_voltage(const acme_telemetry_status_view* v) {
@@ -230,6 +240,8 @@ gmsg_error acme_telemetry_command_read(gmsg_reader* r, acme_telemetry_command* m
 gmsg_error acme_telemetry_command_write(const acme_telemetry_command* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error acme_telemetry_command_decode(const uint8_t* data, size_t size, acme_telemetry_command* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error acme_telemetry_command_decode_extra(const uint8_t* data, size_t size, acme_telemetry_command* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error acme_telemetry_command_encode(const acme_telemetry_command* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -239,10 +251,11 @@ void acme_telemetry_command_print(const acme_telemetry_command* m, gmsg_printer*
 typedef struct acme_telemetry_command_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[4];  /* field offsets */
 } acme_telemetry_command_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error acme_telemetry_command_view_from(const uint8_t* data, size_t size, acme_telemetry_command_view* out);
 /* Build a view over data already validated by acme_telemetry_command_view_from() (no checks). */
 acme_telemetry_command_view acme_telemetry_command_view_unchecked(const uint8_t* data, size_t size);
@@ -250,6 +263,8 @@ acme_telemetry_command_view acme_telemetry_command_view_unchecked(const uint8_t*
 gmsg_error acme_telemetry_command_view_to_struct(const acme_telemetry_command_view* v, acme_telemetry_command* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void acme_telemetry_command_view_print(const acme_telemetry_command_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t acme_telemetry_command_view_extra_bytes(const acme_telemetry_command_view* v) { return v->extra; }
 
 static inline uint16_t acme_telemetry_command_view_opcode(const acme_telemetry_command_view* v) {
     return gmsg_load_u16(v->data + 0, GMSG_ENDIAN_BIG);
@@ -279,6 +294,8 @@ gmsg_error acme_telemetry_log_read(gmsg_reader* r, acme_telemetry_log* m);
 gmsg_error acme_telemetry_log_write(const acme_telemetry_log* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error acme_telemetry_log_decode(const uint8_t* data, size_t size, acme_telemetry_log* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error acme_telemetry_log_decode_extra(const uint8_t* data, size_t size, acme_telemetry_log* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error acme_telemetry_log_encode(const acme_telemetry_log* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -288,10 +305,11 @@ void acme_telemetry_log_print(const acme_telemetry_log* m, gmsg_printer* p);
 typedef struct acme_telemetry_log_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[4];  /* field offsets */
 } acme_telemetry_log_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error acme_telemetry_log_view_from(const uint8_t* data, size_t size, acme_telemetry_log_view* out);
 /* Build a view over data already validated by acme_telemetry_log_view_from() (no checks). */
 acme_telemetry_log_view acme_telemetry_log_view_unchecked(const uint8_t* data, size_t size);
@@ -299,6 +317,8 @@ acme_telemetry_log_view acme_telemetry_log_view_unchecked(const uint8_t* data, s
 gmsg_error acme_telemetry_log_view_to_struct(const acme_telemetry_log_view* v, acme_telemetry_log* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void acme_telemetry_log_view_print(const acme_telemetry_log_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t acme_telemetry_log_view_extra_bytes(const acme_telemetry_log_view* v) { return v->extra; }
 
 static inline uint8_t acme_telemetry_log_view_level(const acme_telemetry_log_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -326,6 +346,8 @@ gmsg_error acme_telemetry_binary_link_header_read(gmsg_reader* r, acme_telemetry
 gmsg_error acme_telemetry_binary_link_header_write(const acme_telemetry_binary_link_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error acme_telemetry_binary_link_header_decode(const uint8_t* data, size_t size, acme_telemetry_binary_link_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error acme_telemetry_binary_link_header_decode_extra(const uint8_t* data, size_t size, acme_telemetry_binary_link_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error acme_telemetry_binary_link_header_encode(const acme_telemetry_binary_link_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -335,9 +357,10 @@ void acme_telemetry_binary_link_header_print(const acme_telemetry_binary_link_he
 typedef struct acme_telemetry_binary_link_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } acme_telemetry_binary_link_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error acme_telemetry_binary_link_header_view_from(const uint8_t* data, size_t size, acme_telemetry_binary_link_header_view* out);
 /* Build a view over data already validated by acme_telemetry_binary_link_header_view_from() (no checks). */
 acme_telemetry_binary_link_header_view acme_telemetry_binary_link_header_view_unchecked(const uint8_t* data, size_t size);
@@ -345,6 +368,8 @@ acme_telemetry_binary_link_header_view acme_telemetry_binary_link_header_view_un
 gmsg_error acme_telemetry_binary_link_header_view_to_struct(const acme_telemetry_binary_link_header_view* v, acme_telemetry_binary_link_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void acme_telemetry_binary_link_header_view_print(const acme_telemetry_binary_link_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t acme_telemetry_binary_link_header_view_extra_bytes(const acme_telemetry_binary_link_header_view* v) { return v->extra; }
 
 static inline acme_telemetry_msg_id acme_telemetry_binary_link_header_view_msg_id(const acme_telemetry_binary_link_header_view* v) {
     return (acme_telemetry_msg_id)gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -402,6 +427,7 @@ typedef struct acme_telemetry_binary_link_received {
     acme_telemetry_binary_link_any_view message;
     const uint8_t* bytes;  /* the frame as received */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } acme_telemetry_binary_link_received;
 
 /* Result of acme_telemetry_binary_link_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -446,6 +472,13 @@ gmsg_error acme_telemetry_binary_link_stream_init(acme_telemetry_binary_link_str
 static inline size_t acme_telemetry_binary_link_stream_feed(acme_telemetry_binary_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t acme_telemetry_binary_link_stream_push(acme_telemetry_binary_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool acme_telemetry_binary_link_stream_next(acme_telemetry_binary_link_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool acme_telemetry_binary_link_stream_resync(acme_telemetry_binary_link_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool acme_telemetry_binary_link_stream_flush(acme_telemetry_binary_link_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void acme_telemetry_binary_link_stream_set_idle_timeout(acme_telemetry_binary_link_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool acme_telemetry_binary_link_stream_tick(acme_telemetry_binary_link_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void acme_telemetry_binary_link_stream_reset(acme_telemetry_binary_link_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* acme_telemetry_binary_link_stream_stats(const acme_telemetry_binary_link_stream* s) { return &s->base.stats; }
 static inline gmsg_error acme_telemetry_binary_link_stream_last_error(const acme_telemetry_binary_link_stream* s) { return s->base.last_error; }

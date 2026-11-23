@@ -32,6 +32,15 @@ gmsg_error test_limits_inner_decode(const uint8_t* data, size_t size, test_limit
     return test_limits_inner_read(&r, out);
 }
 
+gmsg_error test_limits_inner_decode_extra(const uint8_t* data, size_t size, test_limits_inner* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_limits_inner_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_limits_inner_encode(const test_limits_inner* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_limits_inner_write(m, &w);
@@ -54,15 +63,16 @@ gmsg_error test_limits_inner_view_from(const uint8_t* data, size_t size, test_li
     if ((uint64_t)(gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG)) > UINT64_C(100)) return GMSG_ERR_VALUE_OUT_OF_LIMITS;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 test_limits_inner_view test_limits_inner_view_unchecked(const uint8_t* data, size_t size) {
     test_limits_inner_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -231,6 +241,15 @@ gmsg_error test_limits_sample_decode(const uint8_t* data, size_t size, test_limi
     return test_limits_sample_read(&r, out);
 }
 
+gmsg_error test_limits_sample_decode_extra(const uint8_t* data, size_t size, test_limits_sample* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_limits_sample_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_limits_sample_encode(const test_limits_sample* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_limits_sample_write(m, &w);
@@ -360,6 +379,7 @@ gmsg_error test_limits_sample_view_from(const uint8_t* data, size_t size, test_l
     }
     v.off[12] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -475,6 +495,15 @@ gmsg_error test_limits_tail_decode(const uint8_t* data, size_t size, test_limits
     return test_limits_tail_read(&r, out);
 }
 
+gmsg_error test_limits_tail_decode_extra(const uint8_t* data, size_t size, test_limits_tail* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_limits_tail_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_limits_tail_encode(const test_limits_tail* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_limits_tail_write(m, &w);
@@ -515,6 +544,7 @@ gmsg_error test_limits_tail_view_from(const uint8_t* data, size_t size, test_lim
     }
     v.off[1] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -614,6 +644,16 @@ gmsg_error test_limits_line_decode(const uint8_t* data, size_t size, test_limits
     const size_t n = gmsg_split((const char*)data, size, TEST_LIMITS_LINE_SEPARATOR, tok, 4);
     gmsg_memset(out, 0, sizeof *out);
     return test_limits_line_read_text(tok, n < 4 ? n : 4, out);
+}
+
+gmsg_error test_limits_line_decode_extra(const uint8_t* data, size_t size, test_limits_line* out, size_t* extra) {
+    gmsg_str tok[4];
+    const size_t n = gmsg_split((const char*)data, size, TEST_LIMITS_LINE_SEPARATOR, tok, 4);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_limits_line_read_text(tok, n < 4 ? n : 4, out);
+    *extra = e == GMSG_OK && n > 4 ? n - 4 : 0;
+    return e;
 }
 
 gmsg_error test_limits_line_encode(const test_limits_line* m, uint8_t* out, size_t capacity, size_t* written) {

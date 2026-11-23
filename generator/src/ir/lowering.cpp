@@ -649,6 +649,8 @@ private:
     // protocols
     // ---------------------------------------------------------------------------------------------
     void lower_protocol(Protocol& p) {
+        if (p.exact_size && p.framing.type == FramingSpec::Type::Fixed)
+            d_.error(p.loc, "protocol '" + p.name + "': exact_size does not apply to fixed framing (shorter messages are zero padded to the frame size)");
         auto& hdr = *p.header;
         resolve_message(hdr);
         layout_message(hdr);
@@ -680,6 +682,33 @@ private:
         lower_message_type(p);
         lower_checksum(p);
         lower_framing(p);
+        derive_size_checks(p);
+    }
+
+    /// Body size ranges per message type, checked by the scanner as soon as the header has arrived, so an impossible
+    /// length is rejected (BadLength) instead of waiting for bytes. Without exact_size a longer body is valid (data
+    /// after the message is ignored), so only the minimum applies.
+    void derive_size_checks(Protocol& p) {
+        p.size_checks.clear();
+        const auto& fr = p.framing;
+        if (fr.type != FramingSpec::Type::LengthPrefixed || fr.length_counts_wire || !fr.length || p.format != Format::Binary) return;
+        if (p.message_type.kind == MessageTypeSpec::Kind::Token) return;
+        const auto P = static_cast<std::int64_t>(p.prefix_size), H = static_cast<std::int64_t>(p.header_size),
+                   T = static_cast<std::int64_t>(p.trailer_size);
+        switch (fr.length_covers) {
+            case FramingSpec::LengthCovers::Body: p.length_to_body = fr.length_adjust; break;
+            case FramingSpec::LengthCovers::BodyChecksum: p.length_to_body = fr.length_adjust - T; break;
+            case FramingSpec::LengthCovers::HeaderBody: p.length_to_body = fr.length_adjust - H; break;
+            case FramingSpec::LengthCovers::All: p.length_to_body = fr.length_adjust - P - H - T; break;
+        }
+        for (std::size_t i = 0; i < p.messages.size(); ++i) {
+            const Message& m = *p.messages[i];
+            SizeCheck c;
+            c.message = i;
+            c.min = m.min_size;
+            if (p.exact_size) c.max = m.static_size ? m.static_size : m.max_size;
+            if (c.min > 0 || c.max) p.size_checks.push_back(c);
+        }
     }
 
     void lower_message_type(Protocol& p) {

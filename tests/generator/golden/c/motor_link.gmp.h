@@ -53,6 +53,8 @@ gmsg_error motor_set_speed_read(gmsg_reader* r, motor_set_speed* m);
 gmsg_error motor_set_speed_write(const motor_set_speed* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error motor_set_speed_decode(const uint8_t* data, size_t size, motor_set_speed* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error motor_set_speed_decode_extra(const uint8_t* data, size_t size, motor_set_speed* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error motor_set_speed_encode(const motor_set_speed* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -62,9 +64,10 @@ void motor_set_speed_print(const motor_set_speed* m, gmsg_printer* p);
 typedef struct motor_set_speed_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } motor_set_speed_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error motor_set_speed_view_from(const uint8_t* data, size_t size, motor_set_speed_view* out);
 /* Build a view over data already validated by motor_set_speed_view_from() (no checks). */
 motor_set_speed_view motor_set_speed_view_unchecked(const uint8_t* data, size_t size);
@@ -72,6 +75,8 @@ motor_set_speed_view motor_set_speed_view_unchecked(const uint8_t* data, size_t 
 gmsg_error motor_set_speed_view_to_struct(const motor_set_speed_view* v, motor_set_speed* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void motor_set_speed_view_print(const motor_set_speed_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t motor_set_speed_view_extra_bytes(const motor_set_speed_view* v) { return v->extra; }
 
 static inline uint16_t motor_set_speed_view_rpm(const motor_set_speed_view* v) {
     return gmsg_load_u16(v->data + 0, GMSG_ENDIAN_BIG);
@@ -102,6 +107,8 @@ gmsg_error motor_telemetry_read(gmsg_reader* r, motor_telemetry* m);
 gmsg_error motor_telemetry_write(const motor_telemetry* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error motor_telemetry_decode(const uint8_t* data, size_t size, motor_telemetry* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error motor_telemetry_decode_extra(const uint8_t* data, size_t size, motor_telemetry* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error motor_telemetry_encode(const motor_telemetry* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -116,9 +123,10 @@ static inline void motor_telemetry_set_temperature_scaled(motor_telemetry* m, do
 typedef struct motor_telemetry_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } motor_telemetry_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error motor_telemetry_view_from(const uint8_t* data, size_t size, motor_telemetry_view* out);
 /* Build a view over data already validated by motor_telemetry_view_from() (no checks). */
 motor_telemetry_view motor_telemetry_view_unchecked(const uint8_t* data, size_t size);
@@ -126,6 +134,8 @@ motor_telemetry_view motor_telemetry_view_unchecked(const uint8_t* data, size_t 
 gmsg_error motor_telemetry_view_to_struct(const motor_telemetry_view* v, motor_telemetry* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void motor_telemetry_view_print(const motor_telemetry_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t motor_telemetry_view_extra_bytes(const motor_telemetry_view* v) { return v->extra; }
 
 static inline uint16_t motor_telemetry_view_seq(const motor_telemetry_view* v) {
     return gmsg_load_u16(v->data + 0, GMSG_ENDIAN_BIG);
@@ -160,6 +170,8 @@ gmsg_error motor_log_read(gmsg_reader* r, motor_log* m);
 gmsg_error motor_log_write(const motor_log* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error motor_log_decode(const uint8_t* data, size_t size, motor_log* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error motor_log_decode_extra(const uint8_t* data, size_t size, motor_log* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error motor_log_encode(const motor_log* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -169,10 +181,11 @@ void motor_log_print(const motor_log* m, gmsg_printer* p);
 typedef struct motor_log_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[3];  /* field offsets */
 } motor_log_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error motor_log_view_from(const uint8_t* data, size_t size, motor_log_view* out);
 /* Build a view over data already validated by motor_log_view_from() (no checks). */
 motor_log_view motor_log_view_unchecked(const uint8_t* data, size_t size);
@@ -180,6 +193,8 @@ motor_log_view motor_log_view_unchecked(const uint8_t* data, size_t size);
 gmsg_error motor_log_view_to_struct(const motor_log_view* v, motor_log* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void motor_log_view_print(const motor_log_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t motor_log_view_extra_bytes(const motor_log_view* v) { return v->extra; }
 
 static inline uint8_t motor_log_view_len(const motor_log_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -204,6 +219,8 @@ gmsg_error motor_motor_link_header_read(gmsg_reader* r, motor_motor_link_header*
 gmsg_error motor_motor_link_header_write(const motor_motor_link_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error motor_motor_link_header_decode(const uint8_t* data, size_t size, motor_motor_link_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error motor_motor_link_header_decode_extra(const uint8_t* data, size_t size, motor_motor_link_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error motor_motor_link_header_encode(const motor_motor_link_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -213,9 +230,10 @@ void motor_motor_link_header_print(const motor_motor_link_header* m, gmsg_printe
 typedef struct motor_motor_link_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } motor_motor_link_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error motor_motor_link_header_view_from(const uint8_t* data, size_t size, motor_motor_link_header_view* out);
 /* Build a view over data already validated by motor_motor_link_header_view_from() (no checks). */
 motor_motor_link_header_view motor_motor_link_header_view_unchecked(const uint8_t* data, size_t size);
@@ -223,6 +241,8 @@ motor_motor_link_header_view motor_motor_link_header_view_unchecked(const uint8_
 gmsg_error motor_motor_link_header_view_to_struct(const motor_motor_link_header_view* v, motor_motor_link_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void motor_motor_link_header_view_print(const motor_motor_link_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t motor_motor_link_header_view_extra_bytes(const motor_motor_link_header_view* v) { return v->extra; }
 
 static inline uint8_t motor_motor_link_header_view_type(const motor_motor_link_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -280,6 +300,7 @@ typedef struct motor_motor_link_received {
     motor_motor_link_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } motor_motor_link_received;
 
 /* Result of motor_motor_link_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -324,6 +345,13 @@ gmsg_error motor_motor_link_stream_init(motor_motor_link_stream* s, uint8_t* buf
 static inline size_t motor_motor_link_stream_feed(motor_motor_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t motor_motor_link_stream_push(motor_motor_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool motor_motor_link_stream_next(motor_motor_link_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool motor_motor_link_stream_resync(motor_motor_link_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool motor_motor_link_stream_flush(motor_motor_link_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void motor_motor_link_stream_set_idle_timeout(motor_motor_link_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool motor_motor_link_stream_tick(motor_motor_link_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void motor_motor_link_stream_reset(motor_motor_link_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* motor_motor_link_stream_stats(const motor_motor_link_stream* s) { return &s->base.stats; }
 static inline gmsg_error motor_motor_link_stream_last_error(const motor_motor_link_stream* s) { return s->base.last_error; }

@@ -37,7 +37,8 @@ std::string ident(const std::string& name) {
         "union", "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "while", "xor", "xor_eq",
         "read", "write", "decode", "encode", "from", "unchecked", "data", "wire_size", "min_wire_size",
         "max_wire_size", "to_struct", "token", "pack", "unpack", "check", "read_text", "write_text",
-        "decode_text", "encode_text", "raw", "present_tokens", "print_to",
+        "decode_text", "encode_text", "raw", "present_tokens", "print_to", "extra_bytes", "extra_tokens",
+        "extraBytes", "extraTokens", "decodeWithExtra",
         // JavaScript: Object.prototype members and the members of generated classes
         "constructor", "prototype", "__proto__", "toString", "toLocaleString", "valueOf", "toJSON", "hasOwnProperty",
         "isPrototypeOf", "propertyIsEnumerable", "printTo", "toStruct", "wireSize", "messageName", "ranges",

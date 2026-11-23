@@ -478,6 +478,7 @@
       ${field('Format', select(`${b}.format`, p.format, inherit(['binary', 'text'], d.format)))}
       ${field('Endian', select(`${b}.endian`, p.endian, inherit(['big', 'little'], d.endian)), 'header & checksum')}
       ${fmt === 'text' ? field('Separator', input(`${b}.separator`, p.separator, { placeholder: d.separator, mono: true })) : '<div></div>'}
+      ${p.framing.type !== 'fixed' || p.exact_size ? `<div class="span-2">${check(`${b}.exact_size`, !!p.exact_size, `Exact size (reject ${fmt === 'text' ? 'tokens' : 'bytes'} after the message)`)}</div>` : ''}
       ${field('Doc', input(`${b}.doc`, p.doc, { placeholder: 'Description' }), '', 'span-2')}
     </div>`);
 

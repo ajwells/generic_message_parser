@@ -188,6 +188,8 @@ private:
         h_.line("gmsg_error " + t_ + "_write_text(const " + t_ + "* m, gmsg_text_writer* w);");
         h_.line("/* Decode text data[0..size) / encode into out[0..capacity) (*written may be NULL). */");
         h_.line("gmsg_error " + t_ + "_decode(const uint8_t* data, size_t size, " + t_ + "* out);");
+        h_.line("/* Like _decode; *extra receives the number of tokens after the message's own (which _decode ignores). */");
+        h_.line("gmsg_error " + t_ + "_decode_extra(const uint8_t* data, size_t size, " + t_ + "* out, size_t* extra);");
         h_.line("gmsg_error " + t_ + "_encode(const " + t_ + "* m, uint8_t* out, size_t capacity, size_t* written);");
         h_.line("/* Human readable dump (gmp/c/print.h). */");
         h_.line("void " + t_ + "_print(const " + t_ + "* m, gmsg_printer* p);");
@@ -283,6 +285,16 @@ private:
         s_.line("return " + t_ + "_read_text(tok, n < " + sz(m_.token_count) + " ? n : " + sz(m_.token_count) + ", out);");
         s_.close();
         s_.line();
+        s_.open("gmsg_error " + t_ + "_decode_extra(const uint8_t* data, size_t size, " + t_ + "* out, size_t* extra) {");
+        s_.line("gmsg_str tok[" + sz(m_.token_count ? m_.token_count : 1) + "];");
+        s_.line("const size_t n = gmsg_split((const char*)data, size, " + M + "_SEPARATOR, tok, " + sz(m_.token_count) + ");");
+        s_.line("gmsg_error e;");
+        s_.line("gmsg_memset(out, 0, sizeof *out);");
+        s_.line("e = " + t_ + "_read_text(tok, n < " + sz(m_.token_count) + " ? n : " + sz(m_.token_count) + ", out);");
+        s_.line("*extra = e == GMSG_OK && n > " + sz(m_.token_count) + " ? n - " + sz(m_.token_count) + " : 0;");
+        s_.line("return e;");
+        s_.close();
+        s_.line();
         s_.open("gmsg_error " + t_ + "_encode(const " + t_ + "* m, uint8_t* out, size_t capacity, size_t* written) {");
         s_.line("gmsg_text_writer w = gmsg_text_writer_init(out, capacity, " + M + "_SEPARATOR);");
         s_.line("const gmsg_error e = " + t_ + "_write_text(m, &w);");
@@ -327,7 +339,7 @@ private:
         h_.line("size_t ntok;  /* tokens present in the record (may differ from the token count) */");
         h_.close("} " + v_ + ";");
         h_.line();
-        for (const char* fn : {"from", "unchecked", "to_struct", "present_tokens", "token", "print"}) names.add(fn, "function");
+        for (const char* fn : {"from", "unchecked", "to_struct", "present_tokens", "extra_tokens", "token", "print"}) names.add(fn, "function");
         h_.line("/* Tokenise data[0..size); never fails (fields are checked when they are read). */");
         h_.line("gmsg_error " + v_ + "_from(const uint8_t* data, size_t size, " + v_ + "* out);");
         h_.line(v_ + " " + v_ + "_unchecked(const uint8_t* data, size_t size);");
@@ -335,6 +347,9 @@ private:
         h_.line("/* Human readable dump (gmp/c/print.h); same text as the struct. */");
         h_.line("void " + v_ + "_print(const " + v_ + "* v, gmsg_printer* p);");
         h_.line("static inline size_t " + v_ + "_present_tokens(const " + v_ + "* v) { return v->ntok; }");
+        h_.line("/* Tokens after the message's own (ignored; a protocol with exact_size rejects them). */");
+        h_.line("static inline size_t " + v_ + "_extra_tokens(const " + v_ + "* v) { return v->ntok > " + sz(m_.token_count) +
+                " ? v->ntok - " + sz(m_.token_count) + " : 0; }");
         h_.line("static inline gmsg_str " + v_ + "_token(const " + v_ + "* v, size_t i) { return i < " + sz(m_.token_count) +
                 " ? v->tok[i] : gmsg_str_make(NULL, 0); }");
         for (const auto& fp : m_.fields) {

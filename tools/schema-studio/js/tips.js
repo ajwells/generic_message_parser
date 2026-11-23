@@ -163,6 +163,7 @@
     'protocol.format': { t: 'Format', k: 'format', d: 'Binary frames or text sentences.', v: FORMAT },
     'protocol.endian': { t: 'Endian', k: 'endian', d: 'Byte order of the header fields and the checksum.', v: ENDIAN },
     'protocol.separator': { t: 'Separator', k: 'separator', d: 'Text token separator.' },
+    'protocol.exact_size': { t: 'Exact size', k: 'exact_size', d: 'A frame with data after its message (more bytes, or more tokens, than the message uses) fails with BadLength. Without it such frames are decoded and the extra data is ignored, but reported (Received::extra, extra_bytes() / extra_tokens(), stats frames_with_extra). Not for fixed framing, which pads shorter messages.' },
     'protocol.doc': { t: 'Doc', k: 'doc', d: 'Description copied into the generated code.' },
     'protocol.framing.type': {
       t: 'Framing', k: 'framing.type', d: 'How frames are found in a byte stream.',

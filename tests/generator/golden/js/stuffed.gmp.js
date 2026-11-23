@@ -47,6 +47,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Data.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Data.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Data.write(w, m); return w.toBytes(); }
     encode() { return Data.encode(this); }
@@ -68,7 +70,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Data';
     static minWireSize = 1;
 
@@ -88,6 +91,7 @@
       }
       v.#o[2] = pos;
       v.#b = data.subarray(0, pos);
+      v.#x = data.length - pos;
       return v;
     }
     /** A view over data already validated by from() (no checks). */
@@ -96,6 +100,8 @@
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get n() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get data_() { return this.#b.subarray(1, 1 + (this.#o[2] - this.#o[1])); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -152,6 +158,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Ping.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Ping.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Ping.write(w, m); return w.toBytes(); }
     encode() { return Ping.encode(this); }
@@ -171,7 +179,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Ping';
     static minWireSize = 4;
     static wireSize = 4;
@@ -180,14 +189,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 4) gmsg.fail(Err.Truncated);
-      return new PingView(data.subarray(0, 4), null, null);
+      return new PingView(data.subarray(0, 4), null, null, data.length - 4);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new PingView(data.subarray(0, 4), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new PingView(data.subarray(0, 4), null, null, data.length - 4); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get seq() { return gmsg.load(this.#b, 0, 'u32', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
      *  property (null for padding and constants). */
@@ -241,6 +252,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return SyncLinkHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = SyncLinkHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); SyncLinkHeader.write(w, m); return w.toBytes(); }
     encode() { return SyncLinkHeader.encode(this); }
@@ -262,7 +275,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'SyncLinkHeader';
     static minWireSize = 2;
     static wireSize = 2;
@@ -271,14 +285,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 2) gmsg.fail(Err.Truncated);
-      return new SyncLinkHeaderView(data.subarray(0, 2), null, null);
+      return new SyncLinkHeaderView(data.subarray(0, 2), null, null, data.length - 2);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new SyncLinkHeaderView(data.subarray(0, 2), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new SyncLinkHeaderView(data.subarray(0, 2), null, null, data.length - 2); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get kind() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get len() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -327,7 +343,20 @@
     static messages = [Data, Ping];
     static escape = gmsg.indexEscape(129, [128, 129], 0);
     static framing = { sync: this.prefix, lengthOffset: 2, lengthSize: 1, lengthEndian: 'big', add: 5, minFrame: 5, maxFrame: this.maxFrame, escape: this.escape, suffixLen: 0 };
-    static scan(b) { return gmsg.scanLengthPrefixed(b, SyncLink.framing); }
+    /** Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BadLength as soon as the header has arrived. */
+    static scan(b) {
+      const s = gmsg.scanLengthPrefixed(b, SyncLink.framing);
+      if (s.kind === 'skip') return s;
+      const h = gmsg.readFrameHeader(b, SyncLink.framing.sync.length, SyncLink.framing.escape, 2);
+      if (!h) return s;
+      const hv = SyncLink.HeaderView.unchecked(h);
+      const body = Number(hv.len) + 0;
+      const bad = { kind: 'skip', size: 1, consume: 0, consumeOnError: 0, error: Err.BadLength };
+      const id = gmsg.toInt(hv.kind);
+      if (id === 1n && (body < 1)) return bad;  // Data
+      if (id === 2n && (body < 4)) return bad;  // Ping
+      return s;
+    }
     /** Validate one complete frame (as found by scan()) and split it: { header, body } (text: { typeId, body }). */
     static open(frame) {
       frame = gmsg.toBytes(frame);
@@ -446,6 +475,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return WireChecksumHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = WireChecksumHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); WireChecksumHeader.write(w, m); return w.toBytes(); }
     encode() { return WireChecksumHeader.encode(this); }
@@ -467,7 +498,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'WireChecksumHeader';
     static minWireSize = 2;
     static wireSize = 2;
@@ -476,14 +508,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 2) gmsg.fail(Err.Truncated);
-      return new WireChecksumHeaderView(data.subarray(0, 2), null, null);
+      return new WireChecksumHeaderView(data.subarray(0, 2), null, null, data.length - 2);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new WireChecksumHeaderView(data.subarray(0, 2), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new WireChecksumHeaderView(data.subarray(0, 2), null, null, data.length - 2); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get kind() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get len() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -532,7 +566,20 @@
     static messages = [Data, Ping];
     static escape = gmsg.indexEscape(129, [128, 129], 0);
     static framing = { sync: this.prefix, lengthOffset: 2, lengthSize: 1, lengthEndian: 'big', add: 5, minFrame: 5, maxFrame: this.maxFrame, escape: this.escape, suffixLen: 0 };
-    static scan(b) { return gmsg.scanLengthPrefixed(b, WireChecksum.framing); }
+    /** Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BadLength as soon as the header has arrived. */
+    static scan(b) {
+      const s = gmsg.scanLengthPrefixed(b, WireChecksum.framing);
+      if (s.kind === 'skip') return s;
+      const h = gmsg.readFrameHeader(b, WireChecksum.framing.sync.length, WireChecksum.framing.escape, 2);
+      if (!h) return s;
+      const hv = WireChecksum.HeaderView.unchecked(h);
+      const body = Number(hv.len) + 0;
+      const bad = { kind: 'skip', size: 1, consume: 0, consumeOnError: 0, error: Err.BadLength };
+      const id = gmsg.toInt(hv.kind);
+      if (id === 1n && (body < 1)) return bad;  // Data
+      if (id === 2n && (body < 4)) return bad;  // Ping
+      return s;
+    }
     /** Validate one complete frame (as found by scan()) and split it: { header, body } (text: { typeId, body }). */
     static open(frame) {
       frame = gmsg.toBytes(frame);
@@ -663,6 +710,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return WireLengthHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = WireLengthHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); WireLengthHeader.write(w, m); return w.toBytes(); }
     encode() { return WireLengthHeader.encode(this); }
@@ -684,7 +733,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'WireLengthHeader';
     static minWireSize = 2;
     static wireSize = 2;
@@ -693,14 +743,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 2) gmsg.fail(Err.Truncated);
-      return new WireLengthHeaderView(data.subarray(0, 2), null, null);
+      return new WireLengthHeaderView(data.subarray(0, 2), null, null, data.length - 2);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new WireLengthHeaderView(data.subarray(0, 2), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new WireLengthHeaderView(data.subarray(0, 2), null, null, data.length - 2); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get kind() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get len() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -868,6 +920,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return CrcLengthHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = CrcLengthHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); CrcLengthHeader.write(w, m); return w.toBytes(); }
     encode() { return CrcLengthHeader.encode(this); }
@@ -889,7 +943,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'CrcLengthHeader';
     static minWireSize = 2;
     static wireSize = 2;
@@ -898,14 +953,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 2) gmsg.fail(Err.Truncated);
-      return new CrcLengthHeaderView(data.subarray(0, 2), null, null);
+      return new CrcLengthHeaderView(data.subarray(0, 2), null, null, data.length - 2);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new CrcLengthHeaderView(data.subarray(0, 2), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new CrcLengthHeaderView(data.subarray(0, 2), null, null, data.length - 2); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get kind() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get len() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -954,7 +1011,20 @@
     static messages = [Data, Ping];
     static escape = gmsg.indexEscape(129, [128, 129], 0);
     static framing = { sync: this.prefix, lengthOffset: 2, lengthSize: 1, lengthEndian: 'big', add: 3, minFrame: 5, maxFrame: this.maxFrame, escape: this.escape, suffixLen: 0 };
-    static scan(b) { return gmsg.scanLengthPrefixed(b, CrcLength.framing); }
+    /** Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BadLength as soon as the header has arrived. */
+    static scan(b) {
+      const s = gmsg.scanLengthPrefixed(b, CrcLength.framing);
+      if (s.kind === 'skip') return s;
+      const h = gmsg.readFrameHeader(b, CrcLength.framing.sync.length, CrcLength.framing.escape, 2);
+      if (!h) return s;
+      const hv = CrcLength.HeaderView.unchecked(h);
+      const body = Number(hv.len) + -2;
+      const bad = { kind: 'skip', size: 1, consume: 0, consumeOnError: 0, error: Err.BadLength };
+      const id = gmsg.toInt(hv.kind);
+      if (id === 1n && (body < 1)) return bad;  // Data
+      if (id === 2n && (body < 4)) return bad;  // Ping
+      return s;
+    }
     /** Validate one complete frame (as found by scan()) and split it: { header, body } (text: { typeId, body }). */
     static open(frame) {
       frame = gmsg.toBytes(frame);
@@ -1073,6 +1143,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return WireCrcLengthHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = WireCrcLengthHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); WireCrcLengthHeader.write(w, m); return w.toBytes(); }
     encode() { return WireCrcLengthHeader.encode(this); }
@@ -1094,7 +1166,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'WireCrcLengthHeader';
     static minWireSize = 2;
     static wireSize = 2;
@@ -1103,14 +1176,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 2) gmsg.fail(Err.Truncated);
-      return new WireCrcLengthHeaderView(data.subarray(0, 2), null, null);
+      return new WireCrcLengthHeaderView(data.subarray(0, 2), null, null, data.length - 2);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new WireCrcLengthHeaderView(data.subarray(0, 2), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new WireCrcLengthHeaderView(data.subarray(0, 2), null, null, data.length - 2); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get kind() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get len() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -1290,6 +1365,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return WireCrcOverWireHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = WireCrcOverWireHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); WireCrcOverWireHeader.write(w, m); return w.toBytes(); }
     encode() { return WireCrcOverWireHeader.encode(this); }
@@ -1311,7 +1388,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'WireCrcOverWireHeader';
     static minWireSize = 2;
     static wireSize = 2;
@@ -1320,14 +1398,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 2) gmsg.fail(Err.Truncated);
-      return new WireCrcOverWireHeaderView(data.subarray(0, 2), null, null);
+      return new WireCrcOverWireHeaderView(data.subarray(0, 2), null, null, data.length - 2);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new WireCrcOverWireHeaderView(data.subarray(0, 2), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new WireCrcOverWireHeaderView(data.subarray(0, 2), null, null, data.length - 2); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get kind() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get len() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -1602,6 +1682,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return DelimitedHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = DelimitedHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); DelimitedHeader.write(w, m); return w.toBytes(); }
     encode() { return DelimitedHeader.encode(this); }
@@ -1621,7 +1703,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'DelimitedHeader';
     static minWireSize = 1;
     static wireSize = 1;
@@ -1630,14 +1713,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 1) gmsg.fail(Err.Truncated);
-      return new DelimitedHeaderView(data.subarray(0, 1), null, null);
+      return new DelimitedHeaderView(data.subarray(0, 1), null, null, data.length - 1);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new DelimitedHeaderView(data.subarray(0, 1), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new DelimitedHeaderView(data.subarray(0, 1), null, null, data.length - 1); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get kind() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
      *  property (null for padding and constants). */

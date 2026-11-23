@@ -102,6 +102,15 @@ gmsg_error test_computed_packed_decode(const uint8_t* data, size_t size, test_co
     return test_computed_packed_read(&r, out);
 }
 
+gmsg_error test_computed_packed_decode_extra(const uint8_t* data, size_t size, test_computed_packed* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_computed_packed_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_computed_packed_encode(const test_computed_packed* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_computed_packed_write(m, &w);
@@ -206,6 +215,7 @@ gmsg_error test_computed_packed_view_from(const uint8_t* data, size_t size, test
     }
     v.off[9] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }

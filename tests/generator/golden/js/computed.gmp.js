@@ -162,6 +162,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Packed.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Packed.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Packed.write(w, m); return w.toBytes(); }
     encode() { return Packed.encode(this); }
@@ -222,7 +224,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Packed';
     static minWireSize = 12;
 
@@ -264,6 +267,7 @@
       }
       v.#o[9] = pos;
       v.#b = data.subarray(0, pos);
+      v.#x = data.length - pos;
       return v;
     }
     /** A view over data already validated by from() (no checks). */
@@ -272,6 +276,8 @@
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get b0() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get b1() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
     get b2() { return gmsg.load(this.#b, 2, 'u8', 'big'); }

@@ -41,6 +41,15 @@ gmsg_error link_stuffed_data_decode(const uint8_t* data, size_t size, link_stuff
     return link_stuffed_data_read(&r, out);
 }
 
+gmsg_error link_stuffed_data_decode_extra(const uint8_t* data, size_t size, link_stuffed_data* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_stuffed_data_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_stuffed_data_encode(const link_stuffed_data* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_stuffed_data_write(m, &w);
@@ -77,6 +86,7 @@ gmsg_error link_stuffed_data_view_from(const uint8_t* data, size_t size, link_st
     }
     v.off[2] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -133,6 +143,15 @@ gmsg_error link_stuffed_ping_decode(const uint8_t* data, size_t size, link_stuff
     return link_stuffed_ping_read(&r, out);
 }
 
+gmsg_error link_stuffed_ping_decode_extra(const uint8_t* data, size_t size, link_stuffed_ping* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_stuffed_ping_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_stuffed_ping_encode(const link_stuffed_ping* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_stuffed_ping_write(m, &w);
@@ -154,15 +173,16 @@ gmsg_error link_stuffed_ping_view_from(const uint8_t* data, size_t size, link_st
     if (size < 4) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 4;
+    out->extra = size - 4;
     return GMSG_OK;
 }
 
 link_stuffed_ping_view link_stuffed_ping_view_unchecked(const uint8_t* data, size_t size) {
     link_stuffed_ping_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 4;
+    v.extra = size - 4;
     return v;
 }
 
@@ -212,6 +232,15 @@ gmsg_error link_stuffed_sync_link_header_decode(const uint8_t* data, size_t size
     return link_stuffed_sync_link_header_read(&r, out);
 }
 
+gmsg_error link_stuffed_sync_link_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_sync_link_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_stuffed_sync_link_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_stuffed_sync_link_header_encode(const link_stuffed_sync_link_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_stuffed_sync_link_header_write(m, &w);
@@ -235,15 +264,16 @@ gmsg_error link_stuffed_sync_link_header_view_from(const uint8_t* data, size_t s
     if (size < 2) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 2;
+    out->extra = size - 2;
     return GMSG_OK;
 }
 
 link_stuffed_sync_link_header_view link_stuffed_sync_link_header_view_unchecked(const uint8_t* data, size_t size) {
     link_stuffed_sync_link_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 2;
+    v.extra = size - 2;
     return v;
 }
 
@@ -281,7 +311,23 @@ void link_stuffed_sync_link_any_message_print(const link_stuffed_sync_link_any_m
 
 static const uint8_t link_stuffed_sync_link_prefix_[1] = {0x80};
 static const gmsg_length_prefixed_config link_stuffed_sync_link_framing_ = {{{0x80}, 1}, 2, 1, GMSG_ENDIAN_BIG, INT64_C(5), 5, 251, {true, 0x81, GMSG_ESCAPE_TABLE, 0x00, 2, {0x80, 0x81}, {0x00, 0x01}, {0x0u, 0x0u, 0x0u, 0x0u, 0x3u, 0x0u, 0x0u, 0x0u}}, 0, false, 0, 0, false};
-static gmsg_frame_scan link_stuffed_sync_link_scan_(const uint8_t* b, size_t n) { return gmsg_scan_length_prefixed(b, n, &link_stuffed_sync_link_framing_); }
+/* Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BAD_LENGTH as soon as the header has arrived. */
+static gmsg_frame_scan link_stuffed_sync_link_scan_(const uint8_t* b, size_t n) {
+    const gmsg_frame_scan s = gmsg_scan_length_prefixed(b, n, &link_stuffed_sync_link_framing_);
+    uint8_t h[2];
+    link_stuffed_sync_link_header_view hv;
+    int64_t body;
+    if (s.kind == GMSG_SCAN_SKIP) return s;
+    if (!gmsg_read_frame_header(b, n, link_stuffed_sync_link_framing_.sync.len, &link_stuffed_sync_link_framing_.escape, h, 2)) return s;
+    hv = link_stuffed_sync_link_header_view_unchecked(h, 2);
+    body = (int64_t)link_stuffed_sync_link_header_view_len(&hv) + INT64_C(0);
+    switch ((int64_t)link_stuffed_sync_link_header_view_kind(&hv)) {
+        case INT64_C(1): if (body < 1) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Data */
+        case INT64_C(2): if (body < 4) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Ping */
+        default: break;
+    }
+    return s;
+}
 
 /* A validated frame split into its parts (pointers into the frame buffer). */
 typedef struct link_stuffed_sync_link_frame_ {
@@ -418,13 +464,29 @@ gmsg_error link_stuffed_sync_link_process(uint8_t* data, size_t size, const link
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { link_stuffed_sync_link_mode_deliver_ = 0, link_stuffed_sync_link_mode_capture_ = 1, link_stuffed_sync_link_mode_message_ = 2, link_stuffed_sync_link_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t link_stuffed_sync_link_extra_(const link_stuffed_sync_link_any_view* v) {
+    switch (v->kind) {
+        case LINK_STUFFED_SYNC_LINK_DATA: return link_stuffed_data_view_extra_bytes(&v->as.data);
+        case LINK_STUFFED_SYNC_LINK_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
+        default: return 0;
+    }
+}
+
 static gmsg_error link_stuffed_sync_link_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     link_stuffed_sync_link_stream* s = (link_stuffed_sync_link_stream*)gs;
     link_stuffed_sync_link_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == link_stuffed_sync_link_mode_deliver_) return link_stuffed_sync_link_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_sync_link_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == link_stuffed_sync_link_mode_deliver_) {
+        link_stuffed_sync_link_any_view v;
+        if ((e = link_stuffed_sync_link_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = link_stuffed_sync_link_extra_(&v);
+        link_stuffed_sync_link_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = link_stuffed_sync_link_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = link_stuffed_sync_link_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -635,6 +697,15 @@ gmsg_error link_stuffed_wire_checksum_header_decode(const uint8_t* data, size_t 
     return link_stuffed_wire_checksum_header_read(&r, out);
 }
 
+gmsg_error link_stuffed_wire_checksum_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_wire_checksum_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_stuffed_wire_checksum_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_stuffed_wire_checksum_header_encode(const link_stuffed_wire_checksum_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_stuffed_wire_checksum_header_write(m, &w);
@@ -658,15 +729,16 @@ gmsg_error link_stuffed_wire_checksum_header_view_from(const uint8_t* data, size
     if (size < 2) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 2;
+    out->extra = size - 2;
     return GMSG_OK;
 }
 
 link_stuffed_wire_checksum_header_view link_stuffed_wire_checksum_header_view_unchecked(const uint8_t* data, size_t size) {
     link_stuffed_wire_checksum_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 2;
+    v.extra = size - 2;
     return v;
 }
 
@@ -704,7 +776,23 @@ void link_stuffed_wire_checksum_any_message_print(const link_stuffed_wire_checks
 
 static const uint8_t link_stuffed_wire_checksum_prefix_[1] = {0x80};
 static const gmsg_length_prefixed_config link_stuffed_wire_checksum_framing_ = {{{0x80}, 1}, 2, 1, GMSG_ENDIAN_BIG, INT64_C(5), 5, 251, {true, 0x81, GMSG_ESCAPE_TABLE, 0x00, 2, {0x80, 0x81}, {0x00, 0x01}, {0x0u, 0x0u, 0x0u, 0x0u, 0x3u, 0x0u, 0x0u, 0x0u}}, 0, false, 0, 0, false};
-static gmsg_frame_scan link_stuffed_wire_checksum_scan_(const uint8_t* b, size_t n) { return gmsg_scan_length_prefixed(b, n, &link_stuffed_wire_checksum_framing_); }
+/* Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BAD_LENGTH as soon as the header has arrived. */
+static gmsg_frame_scan link_stuffed_wire_checksum_scan_(const uint8_t* b, size_t n) {
+    const gmsg_frame_scan s = gmsg_scan_length_prefixed(b, n, &link_stuffed_wire_checksum_framing_);
+    uint8_t h[2];
+    link_stuffed_wire_checksum_header_view hv;
+    int64_t body;
+    if (s.kind == GMSG_SCAN_SKIP) return s;
+    if (!gmsg_read_frame_header(b, n, link_stuffed_wire_checksum_framing_.sync.len, &link_stuffed_wire_checksum_framing_.escape, h, 2)) return s;
+    hv = link_stuffed_wire_checksum_header_view_unchecked(h, 2);
+    body = (int64_t)link_stuffed_wire_checksum_header_view_len(&hv) + INT64_C(0);
+    switch ((int64_t)link_stuffed_wire_checksum_header_view_kind(&hv)) {
+        case INT64_C(1): if (body < 1) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Data */
+        case INT64_C(2): if (body < 4) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Ping */
+        default: break;
+    }
+    return s;
+}
 
 /* A validated frame split into its parts (pointers into the frame buffer). */
 typedef struct link_stuffed_wire_checksum_frame_ {
@@ -849,13 +937,29 @@ gmsg_error link_stuffed_wire_checksum_process(uint8_t* data, size_t size, const 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { link_stuffed_wire_checksum_mode_deliver_ = 0, link_stuffed_wire_checksum_mode_capture_ = 1, link_stuffed_wire_checksum_mode_message_ = 2, link_stuffed_wire_checksum_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t link_stuffed_wire_checksum_extra_(const link_stuffed_wire_checksum_any_view* v) {
+    switch (v->kind) {
+        case LINK_STUFFED_WIRE_CHECKSUM_DATA: return link_stuffed_data_view_extra_bytes(&v->as.data);
+        case LINK_STUFFED_WIRE_CHECKSUM_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
+        default: return 0;
+    }
+}
+
 static gmsg_error link_stuffed_wire_checksum_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     link_stuffed_wire_checksum_stream* s = (link_stuffed_wire_checksum_stream*)gs;
     link_stuffed_wire_checksum_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == link_stuffed_wire_checksum_mode_deliver_) return link_stuffed_wire_checksum_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_wire_checksum_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == link_stuffed_wire_checksum_mode_deliver_) {
+        link_stuffed_wire_checksum_any_view v;
+        if ((e = link_stuffed_wire_checksum_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = link_stuffed_wire_checksum_extra_(&v);
+        link_stuffed_wire_checksum_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = link_stuffed_wire_checksum_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = link_stuffed_wire_checksum_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -1078,6 +1182,15 @@ gmsg_error link_stuffed_wire_length_header_decode(const uint8_t* data, size_t si
     return link_stuffed_wire_length_header_read(&r, out);
 }
 
+gmsg_error link_stuffed_wire_length_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_wire_length_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_stuffed_wire_length_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_stuffed_wire_length_header_encode(const link_stuffed_wire_length_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_stuffed_wire_length_header_write(m, &w);
@@ -1101,15 +1214,16 @@ gmsg_error link_stuffed_wire_length_header_view_from(const uint8_t* data, size_t
     if (size < 2) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 2;
+    out->extra = size - 2;
     return GMSG_OK;
 }
 
 link_stuffed_wire_length_header_view link_stuffed_wire_length_header_view_unchecked(const uint8_t* data, size_t size) {
     link_stuffed_wire_length_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 2;
+    v.extra = size - 2;
     return v;
 }
 
@@ -1284,13 +1398,29 @@ gmsg_error link_stuffed_wire_length_process(uint8_t* data, size_t size, const li
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { link_stuffed_wire_length_mode_deliver_ = 0, link_stuffed_wire_length_mode_capture_ = 1, link_stuffed_wire_length_mode_message_ = 2, link_stuffed_wire_length_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t link_stuffed_wire_length_extra_(const link_stuffed_wire_length_any_view* v) {
+    switch (v->kind) {
+        case LINK_STUFFED_WIRE_LENGTH_DATA: return link_stuffed_data_view_extra_bytes(&v->as.data);
+        case LINK_STUFFED_WIRE_LENGTH_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
+        default: return 0;
+    }
+}
+
 static gmsg_error link_stuffed_wire_length_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     link_stuffed_wire_length_stream* s = (link_stuffed_wire_length_stream*)gs;
     link_stuffed_wire_length_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == link_stuffed_wire_length_mode_deliver_) return link_stuffed_wire_length_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_wire_length_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == link_stuffed_wire_length_mode_deliver_) {
+        link_stuffed_wire_length_any_view v;
+        if ((e = link_stuffed_wire_length_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = link_stuffed_wire_length_extra_(&v);
+        link_stuffed_wire_length_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = link_stuffed_wire_length_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = link_stuffed_wire_length_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -1501,6 +1631,15 @@ gmsg_error link_stuffed_crc_length_header_decode(const uint8_t* data, size_t siz
     return link_stuffed_crc_length_header_read(&r, out);
 }
 
+gmsg_error link_stuffed_crc_length_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_crc_length_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_stuffed_crc_length_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_stuffed_crc_length_header_encode(const link_stuffed_crc_length_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_stuffed_crc_length_header_write(m, &w);
@@ -1524,15 +1663,16 @@ gmsg_error link_stuffed_crc_length_header_view_from(const uint8_t* data, size_t 
     if (size < 2) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 2;
+    out->extra = size - 2;
     return GMSG_OK;
 }
 
 link_stuffed_crc_length_header_view link_stuffed_crc_length_header_view_unchecked(const uint8_t* data, size_t size) {
     link_stuffed_crc_length_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 2;
+    v.extra = size - 2;
     return v;
 }
 
@@ -1570,7 +1710,23 @@ void link_stuffed_crc_length_any_message_print(const link_stuffed_crc_length_any
 
 static const uint8_t link_stuffed_crc_length_prefix_[1] = {0x80};
 static const gmsg_length_prefixed_config link_stuffed_crc_length_framing_ = {{{0x80}, 1}, 2, 1, GMSG_ENDIAN_BIG, INT64_C(3), 5, 251, {true, 0x81, GMSG_ESCAPE_TABLE, 0x00, 2, {0x80, 0x81}, {0x00, 0x01}, {0x0u, 0x0u, 0x0u, 0x0u, 0x3u, 0x0u, 0x0u, 0x0u}}, 0, false, 0, 0, false};
-static gmsg_frame_scan link_stuffed_crc_length_scan_(const uint8_t* b, size_t n) { return gmsg_scan_length_prefixed(b, n, &link_stuffed_crc_length_framing_); }
+/* Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BAD_LENGTH as soon as the header has arrived. */
+static gmsg_frame_scan link_stuffed_crc_length_scan_(const uint8_t* b, size_t n) {
+    const gmsg_frame_scan s = gmsg_scan_length_prefixed(b, n, &link_stuffed_crc_length_framing_);
+    uint8_t h[2];
+    link_stuffed_crc_length_header_view hv;
+    int64_t body;
+    if (s.kind == GMSG_SCAN_SKIP) return s;
+    if (!gmsg_read_frame_header(b, n, link_stuffed_crc_length_framing_.sync.len, &link_stuffed_crc_length_framing_.escape, h, 2)) return s;
+    hv = link_stuffed_crc_length_header_view_unchecked(h, 2);
+    body = (int64_t)link_stuffed_crc_length_header_view_len(&hv) + INT64_C(-2);
+    switch ((int64_t)link_stuffed_crc_length_header_view_kind(&hv)) {
+        case INT64_C(1): if (body < 1) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Data */
+        case INT64_C(2): if (body < 4) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Ping */
+        default: break;
+    }
+    return s;
+}
 
 /* A validated frame split into its parts (pointers into the frame buffer). */
 typedef struct link_stuffed_crc_length_frame_ {
@@ -1707,13 +1863,29 @@ gmsg_error link_stuffed_crc_length_process(uint8_t* data, size_t size, const lin
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { link_stuffed_crc_length_mode_deliver_ = 0, link_stuffed_crc_length_mode_capture_ = 1, link_stuffed_crc_length_mode_message_ = 2, link_stuffed_crc_length_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t link_stuffed_crc_length_extra_(const link_stuffed_crc_length_any_view* v) {
+    switch (v->kind) {
+        case LINK_STUFFED_CRC_LENGTH_DATA: return link_stuffed_data_view_extra_bytes(&v->as.data);
+        case LINK_STUFFED_CRC_LENGTH_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
+        default: return 0;
+    }
+}
+
 static gmsg_error link_stuffed_crc_length_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     link_stuffed_crc_length_stream* s = (link_stuffed_crc_length_stream*)gs;
     link_stuffed_crc_length_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == link_stuffed_crc_length_mode_deliver_) return link_stuffed_crc_length_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_crc_length_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == link_stuffed_crc_length_mode_deliver_) {
+        link_stuffed_crc_length_any_view v;
+        if ((e = link_stuffed_crc_length_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = link_stuffed_crc_length_extra_(&v);
+        link_stuffed_crc_length_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = link_stuffed_crc_length_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = link_stuffed_crc_length_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -1924,6 +2096,15 @@ gmsg_error link_stuffed_wire_crc_length_header_decode(const uint8_t* data, size_
     return link_stuffed_wire_crc_length_header_read(&r, out);
 }
 
+gmsg_error link_stuffed_wire_crc_length_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_wire_crc_length_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_stuffed_wire_crc_length_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_stuffed_wire_crc_length_header_encode(const link_stuffed_wire_crc_length_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_stuffed_wire_crc_length_header_write(m, &w);
@@ -1947,15 +2128,16 @@ gmsg_error link_stuffed_wire_crc_length_header_view_from(const uint8_t* data, si
     if (size < 2) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 2;
+    out->extra = size - 2;
     return GMSG_OK;
 }
 
 link_stuffed_wire_crc_length_header_view link_stuffed_wire_crc_length_header_view_unchecked(const uint8_t* data, size_t size) {
     link_stuffed_wire_crc_length_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 2;
+    v.extra = size - 2;
     return v;
 }
 
@@ -2130,13 +2312,29 @@ gmsg_error link_stuffed_wire_crc_length_process(uint8_t* data, size_t size, cons
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { link_stuffed_wire_crc_length_mode_deliver_ = 0, link_stuffed_wire_crc_length_mode_capture_ = 1, link_stuffed_wire_crc_length_mode_message_ = 2, link_stuffed_wire_crc_length_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t link_stuffed_wire_crc_length_extra_(const link_stuffed_wire_crc_length_any_view* v) {
+    switch (v->kind) {
+        case LINK_STUFFED_WIRE_CRC_LENGTH_DATA: return link_stuffed_data_view_extra_bytes(&v->as.data);
+        case LINK_STUFFED_WIRE_CRC_LENGTH_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
+        default: return 0;
+    }
+}
+
 static gmsg_error link_stuffed_wire_crc_length_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     link_stuffed_wire_crc_length_stream* s = (link_stuffed_wire_crc_length_stream*)gs;
     link_stuffed_wire_crc_length_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == link_stuffed_wire_crc_length_mode_deliver_) return link_stuffed_wire_crc_length_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_wire_crc_length_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == link_stuffed_wire_crc_length_mode_deliver_) {
+        link_stuffed_wire_crc_length_any_view v;
+        if ((e = link_stuffed_wire_crc_length_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = link_stuffed_wire_crc_length_extra_(&v);
+        link_stuffed_wire_crc_length_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = link_stuffed_wire_crc_length_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = link_stuffed_wire_crc_length_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -2359,6 +2557,15 @@ gmsg_error link_stuffed_wire_crc_over_wire_header_decode(const uint8_t* data, si
     return link_stuffed_wire_crc_over_wire_header_read(&r, out);
 }
 
+gmsg_error link_stuffed_wire_crc_over_wire_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_wire_crc_over_wire_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_stuffed_wire_crc_over_wire_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_stuffed_wire_crc_over_wire_header_encode(const link_stuffed_wire_crc_over_wire_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_stuffed_wire_crc_over_wire_header_write(m, &w);
@@ -2382,15 +2589,16 @@ gmsg_error link_stuffed_wire_crc_over_wire_header_view_from(const uint8_t* data,
     if (size < 2) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 2;
+    out->extra = size - 2;
     return GMSG_OK;
 }
 
 link_stuffed_wire_crc_over_wire_header_view link_stuffed_wire_crc_over_wire_header_view_unchecked(const uint8_t* data, size_t size) {
     link_stuffed_wire_crc_over_wire_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 2;
+    v.extra = size - 2;
     return v;
 }
 
@@ -2574,13 +2782,29 @@ gmsg_error link_stuffed_wire_crc_over_wire_process(uint8_t* data, size_t size, c
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { link_stuffed_wire_crc_over_wire_mode_deliver_ = 0, link_stuffed_wire_crc_over_wire_mode_capture_ = 1, link_stuffed_wire_crc_over_wire_mode_message_ = 2, link_stuffed_wire_crc_over_wire_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t link_stuffed_wire_crc_over_wire_extra_(const link_stuffed_wire_crc_over_wire_any_view* v) {
+    switch (v->kind) {
+        case LINK_STUFFED_WIRE_CRC_OVER_WIRE_DATA: return link_stuffed_data_view_extra_bytes(&v->as.data);
+        case LINK_STUFFED_WIRE_CRC_OVER_WIRE_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
+        default: return 0;
+    }
+}
+
 static gmsg_error link_stuffed_wire_crc_over_wire_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     link_stuffed_wire_crc_over_wire_stream* s = (link_stuffed_wire_crc_over_wire_stream*)gs;
     link_stuffed_wire_crc_over_wire_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == link_stuffed_wire_crc_over_wire_mode_deliver_) return link_stuffed_wire_crc_over_wire_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_wire_crc_over_wire_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == link_stuffed_wire_crc_over_wire_mode_deliver_) {
+        link_stuffed_wire_crc_over_wire_any_view v;
+        if ((e = link_stuffed_wire_crc_over_wire_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = link_stuffed_wire_crc_over_wire_extra_(&v);
+        link_stuffed_wire_crc_over_wire_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = link_stuffed_wire_crc_over_wire_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = link_stuffed_wire_crc_over_wire_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -2945,13 +3169,28 @@ gmsg_error link_stuffed_fixed_link_process(uint8_t* data, size_t size, const lin
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { link_stuffed_fixed_link_mode_deliver_ = 0, link_stuffed_fixed_link_mode_capture_ = 1, link_stuffed_fixed_link_mode_message_ = 2, link_stuffed_fixed_link_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t link_stuffed_fixed_link_extra_(const link_stuffed_fixed_link_any_view* v) {
+    switch (v->kind) {
+        case LINK_STUFFED_FIXED_LINK_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
+        default: return 0;
+    }
+}
+
 static gmsg_error link_stuffed_fixed_link_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     link_stuffed_fixed_link_stream* s = (link_stuffed_fixed_link_stream*)gs;
     link_stuffed_fixed_link_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == link_stuffed_fixed_link_mode_deliver_) return link_stuffed_fixed_link_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_fixed_link_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == link_stuffed_fixed_link_mode_deliver_) {
+        link_stuffed_fixed_link_any_view v;
+        if ((e = link_stuffed_fixed_link_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = link_stuffed_fixed_link_extra_(&v);
+        link_stuffed_fixed_link_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = link_stuffed_fixed_link_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = link_stuffed_fixed_link_extra_(&s->got_.message);
     s->got_.bytes = frame;
     s->got_.size = n;
     if (s->mode_ == link_stuffed_fixed_link_mode_for_ && s->got_.message.kind != s->want_) {
@@ -3111,6 +3350,15 @@ gmsg_error link_stuffed_delimited_header_decode(const uint8_t* data, size_t size
     return link_stuffed_delimited_header_read(&r, out);
 }
 
+gmsg_error link_stuffed_delimited_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_delimited_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_stuffed_delimited_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_stuffed_delimited_header_encode(const link_stuffed_delimited_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_stuffed_delimited_header_write(m, &w);
@@ -3132,15 +3380,16 @@ gmsg_error link_stuffed_delimited_header_view_from(const uint8_t* data, size_t s
     if (size < 1) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 link_stuffed_delimited_header_view link_stuffed_delimited_header_view_unchecked(const uint8_t* data, size_t size) {
     link_stuffed_delimited_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -3314,13 +3563,29 @@ gmsg_error link_stuffed_delimited_process(uint8_t* data, size_t size, const link
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { link_stuffed_delimited_mode_deliver_ = 0, link_stuffed_delimited_mode_capture_ = 1, link_stuffed_delimited_mode_message_ = 2, link_stuffed_delimited_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t link_stuffed_delimited_extra_(const link_stuffed_delimited_any_view* v) {
+    switch (v->kind) {
+        case LINK_STUFFED_DELIMITED_DATA: return link_stuffed_data_view_extra_bytes(&v->as.data);
+        case LINK_STUFFED_DELIMITED_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
+        default: return 0;
+    }
+}
+
 static gmsg_error link_stuffed_delimited_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     link_stuffed_delimited_stream* s = (link_stuffed_delimited_stream*)gs;
     link_stuffed_delimited_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == link_stuffed_delimited_mode_deliver_) return link_stuffed_delimited_process_frame_(frame, n, &s->cb);
     if ((e = link_stuffed_delimited_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == link_stuffed_delimited_mode_deliver_) {
+        link_stuffed_delimited_any_view v;
+        if ((e = link_stuffed_delimited_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = link_stuffed_delimited_extra_(&v);
+        link_stuffed_delimited_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = link_stuffed_delimited_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = link_stuffed_delimited_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;

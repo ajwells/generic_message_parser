@@ -71,7 +71,7 @@ Bits groups are small structs with one member per bit field, `unpack`/`pack`/`ch
 | `template <size_t Cap = max_frame> using Stream` | The stream parser for this protocol; the handler is passed on each call (see [Streaming](#streaming)). |
 | `StreamWith<H, Cap>`, `make_stream(handler)` | Stream parser that stores a handler: `feed(bytes)` / `next()` take no handler ([Storing the handler](#storing-the-handler)). |
 | `Callbacks`, `CallbackStream<Cap>` | Runtime callbacks: `on<&App::fn>(app)` per message, for every frame (`AnyView`) and for `gmp::FrameError`. |
-| `Received` | What `Stream::poll_frame()` returns: `header` (protocols with a header), `message` (`AnyView`) and the frame `bytes` ([Pulling messages](#pulling-messages-poll)). |
+| `Received` | What `Stream::poll_frame()` returns: `header` (protocols with a header), `message` (`AnyView`), the frame `bytes` and `extra` (data after the message) ([Pulling messages](#pulling-messages-poll)). |
 | `scan`, `open`, `visit_frame`, `select_message`, `process` | Building blocks. `scan` finds a frame boundary. `open` validates a frame and splits it into `Frame{header, body}` (binary) or `Frame{type_id, body}` (text, where `type_id` is the first token). `visit_frame`/`select_message` pick the message type. `process` is the hook used by the stream parser. |
 
 ---
@@ -98,8 +98,12 @@ parser.feed(chunk, gmp::overloaded{
   - After a bad frame the parser rescans from the next byte (length-prefixed and fixed framing with sync) or after the
     frame (delimited), so a corrupt frame does not cause the next good frame to be lost.
   - If the buffer fills without a complete frame, one byte is dropped (`BufferFull`) and scanning continues.
-- **`stats()`** returns `frames`, `frame_errors`, `bytes_skipped` and `overflows`. `reset()` clears the buffer and
-  stats; `buffered()` is the number of pending bytes.
+- **`stats()`** returns `frames`, `frame_errors`, `bytes_skipped`, `overflows`, `resyncs`, `flushes` and
+  `frames_with_extra`. `reset()` clears the buffer and stats; `buffered()` is the number of pending bytes.
+- **Length check by message type** (`length_prefixed` framing whose length counts unescaped bytes): as soon as the
+  header has arrived, a length the frame's message type cannot have is rejected with `BadLength` instead of waiting
+  for the body: shorter than the message's minimum size, or (with `exact_size`) longer than its maximum. Unknown type
+  ids are not checked there (they fail with `UnknownType` once the frame is complete).
 - Views passed to the handler point into the parser's buffer and are valid only during the call. Copy what you need,
   or call `to_struct()`.
 - Handlers run synchronously inside `feed()` / `next()`. If `feed()` is called from an interrupt, the handlers run there
@@ -201,6 +205,56 @@ parser.feed(chunk);
   the `Callbacks` object. A `Callbacks` object also works as a plain handler: `stream.feed(bytes, callbacks)`.
 - The context object must outlive the registration. A `CallbackStream` can't be copied.
 
+
+### Recovering on an idle link (`resync`, `flush`, `tick`)
+
+A corrupted length field that claims more bytes than will ever arrive makes the parser wait, and good frames buffered
+behind it wait too. Without `exact_size`, such a length is valid (data after the message is allowed), so only time can
+tell. Three calls recover:
+
+```cpp
+parser.set_idle_timeout(50);                    // in the unit of the times passed to tick(); 0 = off (default)
+// main loop / timer:
+if (parser.tick(millis(), handler)) {}          // after 50 without new bytes: resync()
+while (parser.next(handler)) {}                 // deliver what became complete
+
+parser.resync(handler);                         // give up on an incomplete frame at the head
+parser.flush(handler);                          // drop everything buffered
+```
+
+- **`resync()`** acts only when the frame at the head of the buffer is incomplete. It reports that frame as
+  `FrameError{Truncated, its buffered bytes}`, drops its first byte and lets the next scan resynchronise, so frames
+  buffered behind a bad length are found. A real partial frame at the end of the buffer stays buffered. Returns
+  whether it dropped something.
+- **`flush()`** drops every buffered byte, reported as one `FrameError{Truncated, bytes}`.
+- **`tick(now)`** takes any monotonic unsigned 32-bit time (milliseconds, timer ticks; wraparound is fine). The
+  parser has no clock. Bytes pushed since the previous tick count as activity. Once an incomplete frame has waited
+  `idle_timeout()` without new bytes, `tick` calls `resync()`; another resync needs another idle period.
+- They only drop data. Frames that become complete are delivered by the usual `next()` / `feed()` / `poll()` calls.
+  Errors go to `handler` (`resync(handler)`, `flush(handler)`, `tick(now, handler)`) or to the stored handler
+  (`StreamWith`, `CallbackStream`). Counted in `stats().resyncs` / `stats().flushes`.
+- C: `<p>_stream_resync`, `_flush`, `_set_idle_timeout`, `_tick` (errors go to `cb.on_error`). JavaScript:
+  `stream.resync()`, `flush()`, `setIdleTimeout(t)`, `tick(now)` (errors go to the `'error'` listeners).
+
+### Data after the message
+
+A frame (or buffer) can hold more data than its message uses: a `length_prefixed` length larger than the message, or
+more tokens in a text record. By default this data is ignored, because senders sometimes append fields that older
+receivers do not know. It is reported everywhere:
+
+| where | how |
+|-------|-----|
+| binary view | `extra_bytes()`: bytes after the message in the data given to `from()` (inside a protocol: in the frame body) |
+| text view | `extra_tokens()`: tokens after the message's own |
+| struct | `M::decode(data, extra)` / `decode_text(s, extra)`: like `decode`, also reporting the extra bytes / tokens |
+| protocol | `gmp::extra_of(any_view)`; `Received::extra` (`poll_frame`); `stats().frames_with_extra` |
+| C | `<m>_view_extra_bytes(&v)` / `_view_extra_tokens(&v)`, `<m>_decode_extra(data, size, &out, &extra)`, `received.extra`, `stats.frames_with_extra` |
+| JavaScript | `view.extraBytes` / `extraTokens`, `M.decodeWithExtra(bytes)` → `{ message, extra }`, `frame.extra` (pollFrame / pollEvent), `stats.framesWithExtra` |
+
+With `exact_size: true` on the protocol, such a frame fails with `BadLength` instead. This catches a corrupted length
+that would otherwise swallow the start of the next frame (a protocol without a checksum over the length), and it
+lets the length check by message type reject a too-large length as soon as the header arrives. A message that ends
+with a `remaining` field takes all the data, so it never has any after it.
 
 ## Printing
 

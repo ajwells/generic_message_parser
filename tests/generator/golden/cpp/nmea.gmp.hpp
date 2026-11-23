@@ -177,6 +177,16 @@ struct GGA {
         return m;
     }
     static gmp::Result<GGA> decode(gmp::bytes_view data) noexcept { return decode_text(gmp::as_string_view(data)); }
+    /// Like decode_text(s); `extra` receives the number of tokens after the message's own (which decode ignores).
+    static gmp::Result<GGA> decode_text(std::string_view s, std::size_t& extra) noexcept {
+        std::array<std::string_view, 14> tok{};
+        const std::size_t n = gmp::text::split(s, separator, tok);
+        GGA m{};
+        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmp::fail(e.error());
+        extra = n > token_count ? n - token_count : 0;
+        return m;
+    }
+    static gmp::Result<GGA> decode(gmp::bytes_view data, std::size_t& extra) noexcept { return decode_text(gmp::as_string_view(data), extra); }
     gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
         gmp::text::TextWriter w(out, separator);
         if (auto e = write_text(w); !e) return gmp::fail(e.error());
@@ -218,6 +228,8 @@ public:
     [[nodiscard]] std::string_view raw() const noexcept { return gmp_text_; }
     /// Number of tokens actually present in the record (may differ from token_count).
     [[nodiscard]] std::size_t present_tokens() const noexcept { return gmp_ntok_; }
+    /// Tokens after the message's own (ignored; a protocol with exact_size rejects them).
+    [[nodiscard]] std::size_t extra_tokens() const noexcept { return gmp_ntok_ > token_count ? gmp_ntok_ - token_count : 0; }
     [[nodiscard]] std::string_view token(std::size_t i) const noexcept { return i < token_count ? gmp_tok_[i] : std::string_view{}; }
 
     [[nodiscard]] gmp::Result<double> utc_time() const noexcept { return gmp::text::parse_float<double>(gmp_tok_[0]); }
@@ -339,6 +351,16 @@ struct TXT {
         return m;
     }
     static gmp::Result<TXT> decode(gmp::bytes_view data) noexcept { return decode_text(gmp::as_string_view(data)); }
+    /// Like decode_text(s); `extra` receives the number of tokens after the message's own (which decode ignores).
+    static gmp::Result<TXT> decode_text(std::string_view s, std::size_t& extra) noexcept {
+        std::array<std::string_view, 4> tok{};
+        const std::size_t n = gmp::text::split(s, separator, tok);
+        TXT m{};
+        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmp::fail(e.error());
+        extra = n > token_count ? n - token_count : 0;
+        return m;
+    }
+    static gmp::Result<TXT> decode(gmp::bytes_view data, std::size_t& extra) noexcept { return decode_text(gmp::as_string_view(data), extra); }
     gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
         gmp::text::TextWriter w(out, separator);
         if (auto e = write_text(w); !e) return gmp::fail(e.error());
@@ -374,6 +396,8 @@ public:
     [[nodiscard]] std::string_view raw() const noexcept { return gmp_text_; }
     /// Number of tokens actually present in the record (may differ from token_count).
     [[nodiscard]] std::size_t present_tokens() const noexcept { return gmp_ntok_; }
+    /// Tokens after the message's own (ignored; a protocol with exact_size rejects them).
+    [[nodiscard]] std::size_t extra_tokens() const noexcept { return gmp_ntok_ > token_count ? gmp_ntok_ - token_count : 0; }
     [[nodiscard]] std::string_view token(std::size_t i) const noexcept { return i < token_count ? gmp_tok_[i] : std::string_view{}; }
 
     [[nodiscard]] gmp::Result<std::uint8_t> total() const noexcept { return gmp::text::parse_int<std::uint8_t>(gmp_tok_[0], 10); }
@@ -422,6 +446,7 @@ struct Nmea {
     struct Received {
         AnyView message;
         gmp::bytes_view bytes{};  ///< the whole frame as received
+        std::size_t extra = 0;  ///< tokens in the frame after the message (ignored)
     };
 
     static constexpr gmp::DelimitedConfig framing_config{gmp::Pattern{{0x24}, 1}, gmp::Pattern{{0x0D, 0x0A}, 2}, gmp::EscapeConfig{}, max_frame};
@@ -509,13 +534,15 @@ struct Nmea {
 
     /// StreamParser hook: validate a frame, select its message type and deliver it to `handler`.
     /// The handler is called as handler(header_view, message_view) or handler(message_view),
-    /// whichever it accepts; message types it does not accept are ignored.
+    /// whichever it accepts; message types it does not accept are ignored. `extra` (if given) receives the
+    /// tokens after the message in the frame.
     template <class H>
-    static gmp::Error process(gmp::mut_bytes frame, H& handler) {
+    static gmp::Error process(gmp::mut_bytes frame, H& handler, std::size_t* extra = nullptr) {
         auto f = open(frame);
         if (!f) return f.error();
         return visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
+            if (extra) *extra = gmp::extra_of(v);
             if constexpr (std::invocable<H&, const V&>) handler(v);
         });
     }

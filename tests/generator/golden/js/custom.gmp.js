@@ -50,6 +50,11 @@
       return Pos.readText(gmsg.text.split(s, ',').slice(0, 2));
     }
     static decode(bytes) { return Pos.decodeText(gmsg.latin1String(gmsg.toBytes(bytes))); }
+    /** Like decode(bytes): { message, extra }, `extra` = tokens after the message's own (which decode ignores). */
+    static decodeWithExtra(bytes) {
+      const all = gmsg.text.split(typeof bytes === 'string' ? bytes : gmsg.latin1String(gmsg.toBytes(bytes)), ',');
+      return { message: Pos.readText(all.slice(0, 2)), extra: Math.max(0, all.length - 2) };
+    }
     /** The record as text. */
     static encodeText(m) { const w = new gmsg.text.TextWriter(','); Pos.writeText(w, m); return w.toString(); }
     static encode(m) { return gmsg.latin1Bytes(Pos.encodeText(m)); }
@@ -100,6 +105,8 @@
     get raw() { return this.#text; }
     /** Number of tokens actually present in the record (may differ from tokenCount). */
     get presentTokens() { return this.#n; }
+    /** Tokens after the message's own (ignored; a protocol with exact_size rejects them). */
+    get extraTokens() { return Math.max(0, this.#n - 2); }
     token(i) { return i < this.#tok.length ? this.#tok[i] : ''; }
     get lat() { return $ext0.decodeCoord(this.token(0)); }
     get lon() { const t = this.token(1); return t === '' ? undefined : $ext0.decodeCoord(t); }
@@ -134,7 +141,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Blob';
     static minWireSize = 1;
 
@@ -150,6 +158,7 @@
       pos = data.length;
       v.#o[2] = pos;
       v.#b = data.subarray(0, pos);
+      v.#x = data.length - pos;
       return v;
     }
     /** A view over data already validated by from() (no checks). */
@@ -158,6 +167,8 @@
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get kind() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get data_() { return this.#b.subarray(1, 1 + (this.#o[2] - this.#o[1])); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -273,6 +284,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return CustomHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = CustomHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); CustomHeader.write(w, m); return w.toBytes(); }
     encode() { return CustomHeader.encode(this); }
@@ -292,7 +305,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'CustomHeader';
     static minWireSize = 1;
     static wireSize = 1;
@@ -301,14 +315,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 1) gmsg.fail(Err.Truncated);
-      return new CustomHeaderView(data.subarray(0, 1), null, null);
+      return new CustomHeaderView(data.subarray(0, 1), null, null, data.length - 1);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new CustomHeaderView(data.subarray(0, 1), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new CustomHeaderView(data.subarray(0, 1), null, null, data.length - 1); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get n() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
      *  property (null for padding and constants). */

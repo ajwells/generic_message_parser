@@ -30,6 +30,15 @@ gmsg_error sensirion_sht4x_measure_high_precision_decode(const uint8_t* data, si
     return sensirion_sht4x_measure_high_precision_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_measure_high_precision_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_measure_high_precision* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_measure_high_precision_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_measure_high_precision_encode(const sensirion_sht4x_measure_high_precision* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_measure_high_precision_write(m, &w);
@@ -50,15 +59,16 @@ gmsg_error sensirion_sht4x_measure_high_precision_view_from(const uint8_t* data,
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG) != ((uint8_t)INT64_C(253))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 sensirion_sht4x_measure_high_precision_view sensirion_sht4x_measure_high_precision_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_measure_high_precision_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -100,6 +110,15 @@ gmsg_error sensirion_sht4x_measure_medium_precision_decode(const uint8_t* data, 
     return sensirion_sht4x_measure_medium_precision_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_measure_medium_precision_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_measure_medium_precision* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_measure_medium_precision_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_measure_medium_precision_encode(const sensirion_sht4x_measure_medium_precision* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_measure_medium_precision_write(m, &w);
@@ -120,15 +139,16 @@ gmsg_error sensirion_sht4x_measure_medium_precision_view_from(const uint8_t* dat
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG) != ((uint8_t)INT64_C(246))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 sensirion_sht4x_measure_medium_precision_view sensirion_sht4x_measure_medium_precision_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_measure_medium_precision_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -170,6 +190,15 @@ gmsg_error sensirion_sht4x_measure_low_precision_decode(const uint8_t* data, siz
     return sensirion_sht4x_measure_low_precision_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_measure_low_precision_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_measure_low_precision* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_measure_low_precision_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_measure_low_precision_encode(const sensirion_sht4x_measure_low_precision* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_measure_low_precision_write(m, &w);
@@ -190,15 +219,16 @@ gmsg_error sensirion_sht4x_measure_low_precision_view_from(const uint8_t* data, 
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG) != ((uint8_t)INT64_C(224))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 sensirion_sht4x_measure_low_precision_view sensirion_sht4x_measure_low_precision_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_measure_low_precision_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -240,6 +270,15 @@ gmsg_error sensirion_sht4x_read_serial_number_decode(const uint8_t* data, size_t
     return sensirion_sht4x_read_serial_number_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_read_serial_number_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_read_serial_number* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_read_serial_number_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_read_serial_number_encode(const sensirion_sht4x_read_serial_number* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_read_serial_number_write(m, &w);
@@ -260,15 +299,16 @@ gmsg_error sensirion_sht4x_read_serial_number_view_from(const uint8_t* data, siz
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG) != ((uint8_t)INT64_C(137))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 sensirion_sht4x_read_serial_number_view sensirion_sht4x_read_serial_number_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_read_serial_number_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -310,6 +350,15 @@ gmsg_error sensirion_sht4x_soft_reset_decode(const uint8_t* data, size_t size, s
     return sensirion_sht4x_soft_reset_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_soft_reset_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_soft_reset* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_soft_reset_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_soft_reset_encode(const sensirion_sht4x_soft_reset* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_soft_reset_write(m, &w);
@@ -330,15 +379,16 @@ gmsg_error sensirion_sht4x_soft_reset_view_from(const uint8_t* data, size_t size
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG) != ((uint8_t)INT64_C(148))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 sensirion_sht4x_soft_reset_view sensirion_sht4x_soft_reset_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_soft_reset_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -380,6 +430,15 @@ gmsg_error sensirion_sht4x_heater200m_w1s_decode(const uint8_t* data, size_t siz
     return sensirion_sht4x_heater200m_w1s_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_heater200m_w1s_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_heater200m_w1s* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_heater200m_w1s_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_heater200m_w1s_encode(const sensirion_sht4x_heater200m_w1s* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_heater200m_w1s_write(m, &w);
@@ -400,15 +459,16 @@ gmsg_error sensirion_sht4x_heater200m_w1s_view_from(const uint8_t* data, size_t 
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG) != ((uint8_t)INT64_C(57))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 sensirion_sht4x_heater200m_w1s_view sensirion_sht4x_heater200m_w1s_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_heater200m_w1s_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -450,6 +510,15 @@ gmsg_error sensirion_sht4x_heater200m_w100ms_decode(const uint8_t* data, size_t 
     return sensirion_sht4x_heater200m_w100ms_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_heater200m_w100ms_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_heater200m_w100ms* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_heater200m_w100ms_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_heater200m_w100ms_encode(const sensirion_sht4x_heater200m_w100ms* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_heater200m_w100ms_write(m, &w);
@@ -470,15 +539,16 @@ gmsg_error sensirion_sht4x_heater200m_w100ms_view_from(const uint8_t* data, size
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG) != ((uint8_t)INT64_C(50))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 sensirion_sht4x_heater200m_w100ms_view sensirion_sht4x_heater200m_w100ms_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_heater200m_w100ms_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -520,6 +590,15 @@ gmsg_error sensirion_sht4x_heater110m_w1s_decode(const uint8_t* data, size_t siz
     return sensirion_sht4x_heater110m_w1s_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_heater110m_w1s_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_heater110m_w1s* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_heater110m_w1s_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_heater110m_w1s_encode(const sensirion_sht4x_heater110m_w1s* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_heater110m_w1s_write(m, &w);
@@ -540,15 +619,16 @@ gmsg_error sensirion_sht4x_heater110m_w1s_view_from(const uint8_t* data, size_t 
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG) != ((uint8_t)INT64_C(47))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 sensirion_sht4x_heater110m_w1s_view sensirion_sht4x_heater110m_w1s_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_heater110m_w1s_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -590,6 +670,15 @@ gmsg_error sensirion_sht4x_heater110m_w100ms_decode(const uint8_t* data, size_t 
     return sensirion_sht4x_heater110m_w100ms_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_heater110m_w100ms_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_heater110m_w100ms* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_heater110m_w100ms_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_heater110m_w100ms_encode(const sensirion_sht4x_heater110m_w100ms* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_heater110m_w100ms_write(m, &w);
@@ -610,15 +699,16 @@ gmsg_error sensirion_sht4x_heater110m_w100ms_view_from(const uint8_t* data, size
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG) != ((uint8_t)INT64_C(36))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 sensirion_sht4x_heater110m_w100ms_view sensirion_sht4x_heater110m_w100ms_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_heater110m_w100ms_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -660,6 +750,15 @@ gmsg_error sensirion_sht4x_heater20m_w1s_decode(const uint8_t* data, size_t size
     return sensirion_sht4x_heater20m_w1s_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_heater20m_w1s_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_heater20m_w1s* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_heater20m_w1s_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_heater20m_w1s_encode(const sensirion_sht4x_heater20m_w1s* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_heater20m_w1s_write(m, &w);
@@ -680,15 +779,16 @@ gmsg_error sensirion_sht4x_heater20m_w1s_view_from(const uint8_t* data, size_t s
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG) != ((uint8_t)INT64_C(30))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 sensirion_sht4x_heater20m_w1s_view sensirion_sht4x_heater20m_w1s_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_heater20m_w1s_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -730,6 +830,15 @@ gmsg_error sensirion_sht4x_heater20m_w100ms_decode(const uint8_t* data, size_t s
     return sensirion_sht4x_heater20m_w100ms_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_heater20m_w100ms_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_heater20m_w100ms* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_heater20m_w100ms_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_heater20m_w100ms_encode(const sensirion_sht4x_heater20m_w100ms* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_heater20m_w100ms_write(m, &w);
@@ -750,15 +859,16 @@ gmsg_error sensirion_sht4x_heater20m_w100ms_view_from(const uint8_t* data, size_
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_BIG) != ((uint8_t)INT64_C(21))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 sensirion_sht4x_heater20m_w100ms_view sensirion_sht4x_heater20m_w100ms_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_heater20m_w100ms_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -812,6 +922,15 @@ gmsg_error sensirion_sht4x_measurement_decode(const uint8_t* data, size_t size, 
     return sensirion_sht4x_measurement_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_measurement_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_measurement* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_measurement_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_measurement_encode(const sensirion_sht4x_measurement* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_measurement_write(m, &w);
@@ -840,15 +959,16 @@ gmsg_error sensirion_sht4x_measurement_view_from(const uint8_t* data, size_t siz
     if (gmsg_load_uint(data + 3 + 2, 1, GMSG_ENDIAN_BIG) != (uint64_t)gmsg_crc8_nrsc5_compute(data + 3, 2)) return GMSG_ERR_BAD_CHECKSUM;
     out->data = data;
     out->size = 6;
+    out->extra = size - 6;
     return GMSG_OK;
 }
 
 sensirion_sht4x_measurement_view sensirion_sht4x_measurement_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_measurement_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 6;
+    v.extra = size - 6;
     return v;
 }
 
@@ -915,6 +1035,15 @@ gmsg_error sensirion_sht4x_serial_number_decode(const uint8_t* data, size_t size
     return sensirion_sht4x_serial_number_read(&r, out);
 }
 
+gmsg_error sensirion_sht4x_serial_number_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_serial_number* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = sensirion_sht4x_serial_number_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error sensirion_sht4x_serial_number_encode(const sensirion_sht4x_serial_number* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = sensirion_sht4x_serial_number_write(m, &w);
@@ -943,15 +1072,16 @@ gmsg_error sensirion_sht4x_serial_number_view_from(const uint8_t* data, size_t s
     if (gmsg_load_uint(data + 3 + 2, 1, GMSG_ENDIAN_BIG) != (uint64_t)gmsg_crc8_nrsc5_compute(data + 3, 2)) return GMSG_ERR_BAD_CHECKSUM;
     out->data = data;
     out->size = 6;
+    out->extra = size - 6;
     return GMSG_OK;
 }
 
 sensirion_sht4x_serial_number_view sensirion_sht4x_serial_number_view_unchecked(const uint8_t* data, size_t size) {
     sensirion_sht4x_serial_number_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 6;
+    v.extra = size - 6;
     return v;
 }
 
@@ -1065,13 +1195,28 @@ gmsg_error sensirion_sht4x_measurement_response_process(const uint8_t* data, siz
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { sensirion_sht4x_measurement_response_mode_deliver_ = 0, sensirion_sht4x_measurement_response_mode_capture_ = 1, sensirion_sht4x_measurement_response_mode_message_ = 2, sensirion_sht4x_measurement_response_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t sensirion_sht4x_measurement_response_extra_(const sensirion_sht4x_measurement_response_any_view* v) {
+    switch (v->kind) {
+        case SENSIRION_SHT4X_MEASUREMENT_RESPONSE_MEASUREMENT: return sensirion_sht4x_measurement_view_extra_bytes(&v->as.measurement);
+        default: return 0;
+    }
+}
+
 static gmsg_error sensirion_sht4x_measurement_response_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     sensirion_sht4x_measurement_response_stream* s = (sensirion_sht4x_measurement_response_stream*)gs;
     sensirion_sht4x_measurement_response_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == sensirion_sht4x_measurement_response_mode_deliver_) return sensirion_sht4x_measurement_response_process_frame_(frame, n, &s->cb);
     if ((e = sensirion_sht4x_measurement_response_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == sensirion_sht4x_measurement_response_mode_deliver_) {
+        sensirion_sht4x_measurement_response_any_view v;
+        if ((e = sensirion_sht4x_measurement_response_select_(&f, &v)) != GMSG_OK) return e;
+        gs->last_extra = sensirion_sht4x_measurement_response_extra_(&v);
+        sensirion_sht4x_measurement_response_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = sensirion_sht4x_measurement_response_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = sensirion_sht4x_measurement_response_extra_(&s->got_.message);
     s->got_.bytes = frame;
     s->got_.size = n;
     if (s->mode_ == sensirion_sht4x_measurement_response_mode_for_ && s->got_.message.kind != s->want_) {
@@ -1279,13 +1424,28 @@ gmsg_error sensirion_sht4x_serial_number_response_process(const uint8_t* data, s
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { sensirion_sht4x_serial_number_response_mode_deliver_ = 0, sensirion_sht4x_serial_number_response_mode_capture_ = 1, sensirion_sht4x_serial_number_response_mode_message_ = 2, sensirion_sht4x_serial_number_response_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t sensirion_sht4x_serial_number_response_extra_(const sensirion_sht4x_serial_number_response_any_view* v) {
+    switch (v->kind) {
+        case SENSIRION_SHT4X_SERIAL_NUMBER_RESPONSE_SERIAL_NUMBER: return sensirion_sht4x_serial_number_view_extra_bytes(&v->as.serial_number);
+        default: return 0;
+    }
+}
+
 static gmsg_error sensirion_sht4x_serial_number_response_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     sensirion_sht4x_serial_number_response_stream* s = (sensirion_sht4x_serial_number_response_stream*)gs;
     sensirion_sht4x_serial_number_response_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == sensirion_sht4x_serial_number_response_mode_deliver_) return sensirion_sht4x_serial_number_response_process_frame_(frame, n, &s->cb);
     if ((e = sensirion_sht4x_serial_number_response_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == sensirion_sht4x_serial_number_response_mode_deliver_) {
+        sensirion_sht4x_serial_number_response_any_view v;
+        if ((e = sensirion_sht4x_serial_number_response_select_(&f, &v)) != GMSG_OK) return e;
+        gs->last_extra = sensirion_sht4x_serial_number_response_extra_(&v);
+        sensirion_sht4x_serial_number_response_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = sensirion_sht4x_serial_number_response_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = sensirion_sht4x_serial_number_response_extra_(&s->got_.message);
     s->got_.bytes = frame;
     s->got_.size = n;
     if (s->mode_ == sensirion_sht4x_serial_number_response_mode_for_ && s->got_.message.kind != s->want_) {

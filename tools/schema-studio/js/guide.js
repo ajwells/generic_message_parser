@@ -677,7 +677,26 @@ message_type: { field: kind }
   }
 
   function streaming() {
-    return ln(streamingCpp(), streamingC(), streamingJs());
+    return ln(streamingCpp(), streamingC(), streamingJs()) + `
+      <h3 id="g-recover">Recovering on an idle link</h3>
+      <p>A corrupted length field that claims more bytes than will arrive makes the parser wait, and good frames behind it
+      wait too. ${ln('<code>resync()</code>', '<code>demo_link_stream_resync(&amp;s)</code>', '<code>resync()</code>')} gives up on an
+      incomplete frame at the head (reported as <code>Truncated</code>) so the next scan finds them;
+      ${ln('<code>flush()</code>', '<code>demo_link_stream_flush(&amp;s)</code>', '<code>flush()</code>')} drops everything buffered.
+      With ${ln('<code>set_idle_timeout(t)</code>', '<code>demo_link_stream_set_idle_timeout(&amp;s, t)</code>', '<code>setIdleTimeout(t)</code>')}
+      and a periodic ${ln('<code>tick(now)</code>', '<code>demo_link_stream_tick(&amp;s, now)</code>', '<code>tick(Date.now())</code>')}
+      this happens automatically after <code>t</code> without new bytes (any time unit; the parser has no clock). They only drop
+      data: frames that become complete come from the next ${ln('<code>next()</code> / <code>feed()</code> / <code>poll()</code>', '<code>_next</code> / <code>_feed</code> / poll call', '<code>next()</code> / <code>feed()</code> / <code>poll()</code>')}.</p>
+      <p>For <code>length_prefixed</code> framing the scanner also checks the length against the frame's message type as soon as
+      the header has arrived: a body shorter than the message (or, with <code>exact_size</code>, longer) is rejected with
+      <code>BadLength</code> at once.</p>
+      <h3 id="g-extra">Data after the message</h3>
+      <p>A frame can carry more than its message uses (a longer length, extra text tokens). By default it is ignored, so
+      newer senders that append fields still work, and reported:
+      ${ln('<code>v.extra_bytes()</code> / <code>extra_tokens()</code>, <code>Received::extra</code>, <code>stats().frames_with_extra</code>, <code>Status::decode(bytes, extra)</code>',
+        '<code>_view_extra_bytes(&amp;v)</code>, <code>received.extra</code>, <code>stats.frames_with_extra</code>, <code>demo_status_decode_extra(...)</code>',
+        '<code>v.extraBytes</code> / <code>extraTokens</code>, <code>frame.extra</code>, <code>stats.framesWithExtra</code>, <code>Status.decodeWithExtra(bytes)</code>')}.
+      With <code>exact_size: true</code> on the protocol, such frames fail with <code>BadLength</code>.</p>`;
   }
 
 
@@ -956,6 +975,8 @@ stream.on('frame', (v) => log(String(v)));`))}
       rows: [
         ['demo::Status::decode(bytes)  →  gmp::Result<Status>', 'gmsg_error demo_status_decode(const uint8_t* data, size_t size, demo_status* out)',
           'Decode one message from the start of the buffer (trailing bytes are allowed).'],
+        ['demo::Status::decode(bytes, extra)', 'gmsg_error demo_status_decode_extra(const uint8_t* data, size_t size, demo_status* out, size_t* extra)',
+          'The same, also reporting how many bytes followed the message (tokens for text messages).'],
         ['gmp::VoidResult s.read(gmp::ByteReader& r)', 'gmsg_error demo_status_read(gmsg_reader* r, demo_status* m)',
           'Decode from a reader at its current position, e.g. a message embedded in your own format. The reader advances past it.'],
         ['demo::Link::decode(frame)  →  gmp::Result<AnyMessage>', 'gmsg_error demo_link_decode(const uint8_t* data, size_t size, demo_link_any_message* out)',
@@ -972,6 +993,7 @@ stream.on('frame', (v) => log(String(v)));`))}
           'A view without validation, for bytes you have already checked.'],
         ['v.voltage()', 'uint16_t demo_status_view_voltage(const demo_status_view* v)', 'Read one field (the raw wire value).'],
         ['v.data(), v.wire_size()', 'v.data, v.size', 'The bytes the view covers and its size on the wire.'],
+        ['v.extra_bytes()', 'demo_status_view_extra_bytes(&v)', 'Bytes after the message in the data given to from() (text views: extra_tokens()).'],
         ['v.to_struct()', 'demo_status_view_to_struct(&v, &out)', 'Copy everything out into a struct.'],
       ] },
     { id: 'fields', title: 'Field access (structs and views)',
@@ -1057,7 +1079,13 @@ stream.on('frame', (v) => log(String(v)));`))}
           ['Runtime listeners, one per message; the listener is picked from its parameter type.', 'Callback slots, one per message, with one context pointer; NULL slots are skipped.']],
         ['link.off<StatusView>(), link.has<StatusView>(), link.clear()', null, 'Remove, test and clear listeners.'],
         ['on<&App::on_frame>, on<&App::on_drop>', 's.cb.on_frame, s.cb.on_error', 'Every valid frame (after its message callback), and dropped bytes / rejected frames with the reason.'],
-        ['parser.stats()', 'const gmsg_stream_stats* demo_link_stream_stats(const demo_link_stream* s)', 'Counters: frames, frame_errors, bytes_skipped, overflows.'],
+        ['parser.stats()', 'const gmsg_stream_stats* demo_link_stream_stats(const demo_link_stream* s)',
+          'Counters: frames, frame_errors, bytes_skipped, overflows, resyncs, flushes, frames_with_extra.'],
+        ['parser.resync(handler)', 'bool demo_link_stream_resync(demo_link_stream* s)',
+          'Give up on an incomplete frame at the head (e.g. a corrupted length): reported as Truncated, then the next scan resynchronises.'],
+        ['parser.flush(handler)', 'bool demo_link_stream_flush(demo_link_stream* s)', 'Drop everything buffered (reported as Truncated).'],
+        ['parser.set_idle_timeout(t), parser.tick(now, handler)', 'demo_link_stream_set_idle_timeout(&s, t), demo_link_stream_tick(&s, now)',
+          'Resync automatically once the link has been idle for t (any time unit; the parser has no clock).'],
         ['parser.last_error(), parser.buffered(), parser.reset()', 'demo_link_stream_last_error(&s), demo_link_stream_buffered(&s), demo_link_stream_reset(&s)',
           'Reason of the last drop, bytes waiting, and start over (clears stats).'],
       ] },
@@ -1065,7 +1093,8 @@ stream.on('frame', (v) => log(String(v)));`))}
       intro: 'Push bytes, then poll in your main loop or while waiting for a reply. A polled view stays valid until the parser is used again.',
       rows: [
         ['parser.poll()  →  Polled<AnyView>', 'bool demo_link_stream_poll(demo_link_stream* s, demo_link_any_view* out)', 'The next message, or nothing when more input is needed.'],
-        ['parser.poll_frame()  →  { header, message, bytes }', 'bool demo_link_stream_poll_frame(demo_link_stream* s, demo_link_received* out)', 'The next frame with its header view and raw bytes.'],
+        ['parser.poll_frame()  →  { header, message, bytes, extra }', 'bool demo_link_stream_poll_frame(demo_link_stream* s, demo_link_received* out)',
+          'The next frame with its header view, raw bytes and the data after its message (extra).'],
         ['parser.poll_message()  →  std::optional<AnyMessage>', 'bool demo_link_stream_poll_message(demo_link_stream* s, demo_link_any_message* out)', 'The next message as a decoded copy.'],
         ['parser.poll_event()  →  AnyView or gmp::FrameError', 'gmsg_poll demo_link_stream_poll_event(demo_link_stream* s, demo_link_event* out)',
           ['Messages and errors in stream order.', 'Messages and errors in stream order: GMSG_POLL_MESSAGE, GMSG_POLL_ERROR or GMSG_POLL_NEED_MORE.']],
@@ -1116,6 +1145,8 @@ stream.on('frame', (v) => log(String(v)));`))}
   // no C++ one): [signature or null (no counterpart), optional JavaScript description].
   const API_JS = {
     'demo::Status::decode(bytes)  →  gmp::Result<Status>': ['demo.Status.decode(bytes)  →  Status', 'Decode one message from the start of the buffer (trailing bytes are allowed). Throws gmsg.GmpError.'],
+    'demo::Status::decode(bytes, extra)': ['demo.Status.decodeWithExtra(bytes)  →  { message, extra }'],
+    'v.extra_bytes()': ['v.extraBytes, v.extraTokens'],
     'gmp::VoidResult s.read(gmp::ByteReader& r)': ['demo.Status.read(reader)  →  Status', 'Decode from a gmsg.Reader at its current position, e.g. a message embedded in your own format. The reader advances past it.'],
     'demo::Link::decode(frame)  →  gmp::Result<AnyMessage>': ['demo.Link.decode(frame)  →  Status | …'],
     'v.to_struct()  →  gmp::Result<Status>': ['v.toStruct()  →  Status'],
@@ -1165,10 +1196,13 @@ stream.on('frame', (v) => log(String(v)));`))}
     'demo::Link::CallbackStream<> link;  link.on<&App::on_status>(app)': ["parser.on('Status', (view, header) => …)  →  off()", 'Listeners per message name (or class); the header view is the second argument. on() returns a function that removes the listener.'],
     'link.off<StatusView>(), link.has<StatusView>(), link.clear()': [null],
     'on<&App::on_frame>, on<&App::on_drop>': ["parser.on('frame', fn), parser.on('error', (e) => …)", 'Every valid frame (after its message listeners), and dropped bytes / rejected frames as a GmpError with .bytes and .offset.'],
-    'parser.stats()': ['parser.stats', 'Counters: frames, frameErrors, bytesSkipped, overflows.'],
+    'parser.stats()': ['parser.stats', 'Counters: frames, frameErrors, bytesSkipped, overflows, resyncs, flushes, framesWithExtra.'],
+    'parser.resync(handler)': ['parser.resync()', 'Give up on an incomplete frame at the head: reported to the error listeners as Truncated.'],
+    'parser.flush(handler)': ['parser.flush()'],
+    'parser.set_idle_timeout(t), parser.tick(now, handler)': ['parser.setIdleTimeout(t), parser.tick(Date.now())'],
     'parser.last_error(), parser.buffered(), parser.reset()': ['parser.lastError, parser.buffered, parser.position, parser.reset()', 'Reason of the last drop, bytes waiting, stream offset, and start over (clears stats).'],
     'parser.poll()  →  Polled<AnyView>': ['parser.poll()  →  view | null'],
-    'parser.poll_frame()  →  { header, message, bytes }': ['parser.pollFrame()  →  { header, message, bytes, offset } | null'],
+    'parser.poll_frame()  →  { header, message, bytes, extra }': ['parser.pollFrame()  →  { header, message, bytes, offset, extra } | null'],
     'parser.poll_message()  →  std::optional<AnyMessage>': ['parser.pollMessage()  →  Status | … | null'],
     'parser.poll_event()  →  AnyView or gmp::FrameError': ['parser.pollEvent()  →  { message, header, bytes, offset } | { error, offset } | null'],
     'link.poll_for<StatusView>()': ["parser.pollFor('Status')  →  StatusView | null"],

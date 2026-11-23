@@ -572,6 +572,14 @@ private:
         w_.line("if (auto e = m.read(r); !e) return gmp::fail(e.error());");
         w_.line("return m;");
         w_.close();
+        w_.line("/// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).");
+        w_.open("static gmp::Result<" + m_.name + "> decode(gmp::bytes_view data, std::size_t& extra) noexcept {");
+        w_.line(m_.name + " m{};");
+        w_.line("gmp::ByteReader r(data);");
+        w_.line("if (auto e = m.read(r); !e) return gmp::fail(e.error());");
+        w_.line("extra = data.size() - r.position();");
+        w_.line("return m;");
+        w_.close();
         w_.open("gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {");
         w_.line("gmp::ByteWriter w(out);");
         w_.line("if (auto e = write(w); !e) return gmp::fail(e.error());");
@@ -631,6 +639,8 @@ public:
         emit_unchecked();
         w_.line("[[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }");
         w_.line("[[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }");
+        w_.line("/// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).");
+        w_.line("[[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }");
         w_.line();
         for (const auto& f : m_.fields) emit_accessor(*f);
         emit_computed_accessors();
@@ -651,6 +661,7 @@ public:
         w_.line();
         w_.label("private:");
         w_.line("gmp::bytes_view gmp_data_{};");
+        w_.line("std::size_t gmp_extra_ = 0;");
         if (dynamic_) w_.line("std::array<std::uint32_t, " + sz(m_.fields.size() + 1) + "> gmp_off_{};");
         if (m_.conditional_count) w_.line("std::uint64_t gmp_present_ = 0;");
         w_.close("};");
@@ -746,6 +757,7 @@ private:
             for (const auto& f : m_.fields) validate_static(*f, sz(*f->static_offset));
             w_.line(name_ + " v;");
             w_.line("v.gmp_data_ = data.first(" + sz(*m_.static_size) + ");");
+            w_.line("v.gmp_extra_ = data.size() - " + sz(*m_.static_size) + ";");
             w_.line("return v;");
             w_.close();
             return;
@@ -765,6 +777,7 @@ private:
         }
         w_.line("v.gmp_off_[" + sz(m_.fields.size()) + "] = static_cast<std::uint32_t>(pos);");
         w_.line("v.gmp_data_ = data.first(pos);");
+        w_.line("v.gmp_extra_ = data.size() - pos;");
         w_.line("return v;");
         w_.close();
     }
@@ -896,6 +909,7 @@ private:
         if (!dynamic_) {
             w_.line(name_ + " v;");
             w_.line("v.gmp_data_ = data.first(" + sz(*m_.static_size) + ");");
+            w_.line("v.gmp_extra_ = data.size() - " + sz(*m_.static_size) + ";");
             w_.line("return v;");
         } else {
             w_.line("return *from(data);");

@@ -58,6 +58,8 @@ gmsg_error test_fieldcrc_mixed_read(gmsg_reader* r, test_fieldcrc_mixed* m);
 gmsg_error test_fieldcrc_mixed_write(const test_fieldcrc_mixed* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_fieldcrc_mixed_decode(const uint8_t* data, size_t size, test_fieldcrc_mixed* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_fieldcrc_mixed_decode_extra(const uint8_t* data, size_t size, test_fieldcrc_mixed* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_fieldcrc_mixed_encode(const test_fieldcrc_mixed* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -75,11 +77,12 @@ static inline void test_fieldcrc_mixed_set_level_centi(test_fieldcrc_mixed* m, d
 typedef struct test_fieldcrc_mixed_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[7];  /* field offsets */
     uint64_t present;  /* one bit per conditional field */
 } test_fieldcrc_mixed_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_fieldcrc_mixed_view_from(const uint8_t* data, size_t size, test_fieldcrc_mixed_view* out);
 /* Build a view over data already validated by test_fieldcrc_mixed_view_from() (no checks). */
 test_fieldcrc_mixed_view test_fieldcrc_mixed_view_unchecked(const uint8_t* data, size_t size);
@@ -87,6 +90,8 @@ test_fieldcrc_mixed_view test_fieldcrc_mixed_view_unchecked(const uint8_t* data,
 gmsg_error test_fieldcrc_mixed_view_to_struct(const test_fieldcrc_mixed_view* v, test_fieldcrc_mixed* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_fieldcrc_mixed_view_print(const test_fieldcrc_mixed_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_fieldcrc_mixed_view_extra_bytes(const test_fieldcrc_mixed_view* v) { return v->extra; }
 
 static inline test_fieldcrc_state test_fieldcrc_mixed_view_state(const test_fieldcrc_mixed_view* v) {
     return (test_fieldcrc_state)gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -125,6 +130,8 @@ gmsg_error test_fieldcrc_reading_read_text(const gmsg_str* tok, size_t ntok, tes
 gmsg_error test_fieldcrc_reading_write_text(const test_fieldcrc_reading* m, gmsg_text_writer* w);
 /* Decode text data[0..size) / encode into out[0..capacity) (*written may be NULL). */
 gmsg_error test_fieldcrc_reading_decode(const uint8_t* data, size_t size, test_fieldcrc_reading* out);
+/* Like _decode; *extra receives the number of tokens after the message's own (which _decode ignores). */
+gmsg_error test_fieldcrc_reading_decode_extra(const uint8_t* data, size_t size, test_fieldcrc_reading* out, size_t* extra);
 gmsg_error test_fieldcrc_reading_encode(const test_fieldcrc_reading* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
 void test_fieldcrc_reading_print(const test_fieldcrc_reading* m, gmsg_printer* p);
@@ -144,6 +151,8 @@ gmsg_error test_fieldcrc_reading_view_to_struct(const test_fieldcrc_reading_view
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_fieldcrc_reading_view_print(const test_fieldcrc_reading_view* v, gmsg_printer* p);
 static inline size_t test_fieldcrc_reading_view_present_tokens(const test_fieldcrc_reading_view* v) { return v->ntok; }
+/* Tokens after the message's own (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_fieldcrc_reading_view_extra_tokens(const test_fieldcrc_reading_view* v) { return v->ntok > 1 ? v->ntok - 1 : 0; }
 static inline gmsg_str test_fieldcrc_reading_view_token(const test_fieldcrc_reading_view* v, size_t i) { return i < 1 ? v->tok[i] : gmsg_str_make(NULL, 0); }
 static inline gmsg_error test_fieldcrc_reading_view_raw(const test_fieldcrc_reading_view* v, int32_t* out) {
     gmsg_error e = GMSG_OK;

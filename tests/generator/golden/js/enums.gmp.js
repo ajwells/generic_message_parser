@@ -44,6 +44,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Inner.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Inner.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Inner.write(w, m); return w.toBytes(); }
     encode() { return Inner.encode(this); }
@@ -63,7 +65,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Inner';
     static minWireSize = 1;
     static wireSize = 1;
@@ -73,14 +76,16 @@
       data = gmsg.toBytes(data);
       if (data.length < 1) gmsg.fail(Err.Truncated);
       if (!Color.isKnown(gmsg.load(data, 0, 'u8', 'big'))) gmsg.fail(Err.UnknownEnum);
-      return new InnerView(data.subarray(0, 1), null, null);
+      return new InnerView(data.subarray(0, 1), null, null, data.length - 1);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new InnerView(data.subarray(0, 1), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new InnerView(data.subarray(0, 1), null, null, data.length - 1); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get color() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
      *  property (null for padding and constants). */
@@ -218,6 +223,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Sample.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Sample.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Sample.write(w, m); return w.toBytes(); }
     encode() { return Sample.encode(this); }
@@ -249,7 +256,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Sample';
     static minWireSize = 9;
 
@@ -294,6 +302,7 @@
       }
       v.#o[7] = pos;
       v.#b = data.subarray(0, pos);
+      v.#x = data.length - pos;
       return v;
     }
     /** A view over data already validated by from() (no checks). */
@@ -302,6 +311,8 @@
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get color() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get open() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
     get flags() { return Sample_flags.unpack(this.#b, 2); }
@@ -412,6 +423,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Tail.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Tail.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Tail.write(w, m); return w.toBytes(); }
     encode() { return Tail.encode(this); }
@@ -431,7 +444,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Tail';
     static minWireSize = 0;
 
@@ -450,6 +464,7 @@
       }
       v.#o[1] = pos;
       v.#b = data.subarray(0, pos);
+      v.#x = data.length - pos;
       return v;
     }
     /** A view over data already validated by from() (no checks). */
@@ -458,6 +473,8 @@
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get rest() { return gmsg.fixedArray(this.#b.subarray(0, 0 + (this.#o[1] - this.#o[0])), 1, (b) => gmsg.load(b, 0, 'u8', 'big')); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
      *  property (null for padding and constants). */
@@ -518,6 +535,11 @@
       return Line.readText(gmsg.text.split(s, ',').slice(0, 2));
     }
     static decode(bytes) { return Line.decodeText(gmsg.latin1String(gmsg.toBytes(bytes))); }
+    /** Like decode(bytes): { message, extra }, `extra` = tokens after the message's own (which decode ignores). */
+    static decodeWithExtra(bytes) {
+      const all = gmsg.text.split(typeof bytes === 'string' ? bytes : gmsg.latin1String(gmsg.toBytes(bytes)), ',');
+      return { message: Line.readText(all.slice(0, 2)), extra: Math.max(0, all.length - 2) };
+    }
     /** The record as text. */
     static encodeText(m) { const w = new gmsg.text.TextWriter(','); Line.writeText(w, m); return w.toString(); }
     static encode(m) { return gmsg.latin1Bytes(Line.encodeText(m)); }
@@ -568,6 +590,8 @@
     get raw() { return this.#text; }
     /** Number of tokens actually present in the record (may differ from tokenCount). */
     get presentTokens() { return this.#n; }
+    /** Tokens after the message's own (ignored; a protocol with exact_size rejects them). */
+    get extraTokens() { return Math.max(0, this.#n - 2); }
     token(i) { return i < this.#tok.length ? this.#tok[i] : ''; }
     get color() { return gmsg.knownEnum(Color, gmsg.text.parseInt(this.token(0), 'u8', 10)); }
     get open() { return gmsg.text.parseInt(this.token(1), 'u8', 10); }

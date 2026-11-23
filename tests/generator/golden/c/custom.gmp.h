@@ -32,6 +32,8 @@ gmsg_error ext_pos_read_text(const gmsg_str* tok, size_t ntok, ext_pos* m);
 gmsg_error ext_pos_write_text(const ext_pos* m, gmsg_text_writer* w);
 /* Decode text data[0..size) / encode into out[0..capacity) (*written may be NULL). */
 gmsg_error ext_pos_decode(const uint8_t* data, size_t size, ext_pos* out);
+/* Like _decode; *extra receives the number of tokens after the message's own (which _decode ignores). */
+gmsg_error ext_pos_decode_extra(const uint8_t* data, size_t size, ext_pos* out, size_t* extra);
 gmsg_error ext_pos_encode(const ext_pos* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
 void ext_pos_print(const ext_pos* m, gmsg_printer* p);
@@ -51,6 +53,8 @@ gmsg_error ext_pos_view_to_struct(const ext_pos_view* v, ext_pos* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void ext_pos_view_print(const ext_pos_view* v, gmsg_printer* p);
 static inline size_t ext_pos_view_present_tokens(const ext_pos_view* v) { return v->ntok; }
+/* Tokens after the message's own (ignored; a protocol with exact_size rejects them). */
+static inline size_t ext_pos_view_extra_tokens(const ext_pos_view* v) { return v->ntok > 2 ? v->ntok - 2 : 0; }
 static inline gmsg_str ext_pos_view_token(const ext_pos_view* v, size_t i) { return i < 2 ? v->tok[i] : gmsg_str_make(NULL, 0); }
 static inline gmsg_error ext_pos_view_lat(const ext_pos_view* v, double* out) {
     gmsg_error e = GMSG_OK;
@@ -73,15 +77,18 @@ static inline gmsg_error ext_pos_view_lon(const ext_pos_view* v, double* out) {
 typedef struct ext_blob_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[3];  /* field offsets */
 } ext_blob_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error ext_blob_view_from(const uint8_t* data, size_t size, ext_blob_view* out);
 /* Build a view over data already validated by ext_blob_view_from() (no checks). */
 ext_blob_view ext_blob_view_unchecked(const uint8_t* data, size_t size);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void ext_blob_view_print(const ext_blob_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t ext_blob_view_extra_bytes(const ext_blob_view* v) { return v->extra; }
 
 static inline uint8_t ext_blob_view_kind(const ext_blob_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -130,6 +137,7 @@ typedef struct ext_text_pos_received {
     ext_text_pos_any_view message;
     const uint8_t* bytes;  /* the frame as received */
     size_t size;
+    size_t extra;  /* tokens in the frame after the message (ignored) */
 } ext_text_pos_received;
 
 /* Result of ext_text_pos_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -169,6 +177,13 @@ gmsg_error ext_text_pos_stream_init(ext_text_pos_stream* s, uint8_t* buf, size_t
 static inline size_t ext_text_pos_stream_feed(ext_text_pos_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t ext_text_pos_stream_push(ext_text_pos_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool ext_text_pos_stream_next(ext_text_pos_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool ext_text_pos_stream_resync(ext_text_pos_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool ext_text_pos_stream_flush(ext_text_pos_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void ext_text_pos_stream_set_idle_timeout(ext_text_pos_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool ext_text_pos_stream_tick(ext_text_pos_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void ext_text_pos_stream_reset(ext_text_pos_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* ext_text_pos_stream_stats(const ext_text_pos_stream* s) { return &s->base.stats; }
 static inline gmsg_error ext_text_pos_stream_last_error(const ext_text_pos_stream* s) { return s->base.last_error; }
@@ -202,6 +217,8 @@ gmsg_error ext_custom_header_read(gmsg_reader* r, ext_custom_header* m);
 gmsg_error ext_custom_header_write(const ext_custom_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error ext_custom_header_decode(const uint8_t* data, size_t size, ext_custom_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error ext_custom_header_decode_extra(const uint8_t* data, size_t size, ext_custom_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error ext_custom_header_encode(const ext_custom_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -211,9 +228,10 @@ void ext_custom_header_print(const ext_custom_header* m, gmsg_printer* p);
 typedef struct ext_custom_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } ext_custom_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error ext_custom_header_view_from(const uint8_t* data, size_t size, ext_custom_header_view* out);
 /* Build a view over data already validated by ext_custom_header_view_from() (no checks). */
 ext_custom_header_view ext_custom_header_view_unchecked(const uint8_t* data, size_t size);
@@ -221,6 +239,8 @@ ext_custom_header_view ext_custom_header_view_unchecked(const uint8_t* data, siz
 gmsg_error ext_custom_header_view_to_struct(const ext_custom_header_view* v, ext_custom_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void ext_custom_header_view_print(const ext_custom_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t ext_custom_header_view_extra_bytes(const ext_custom_header_view* v) { return v->extra; }
 
 static inline uint8_t ext_custom_header_view_n(const ext_custom_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -259,6 +279,7 @@ typedef struct ext_custom_received {
     ext_custom_any_view message;
     const uint8_t* bytes;  /* the frame as received */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } ext_custom_received;
 
 /* Result of ext_custom_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -292,6 +313,13 @@ gmsg_error ext_custom_stream_init(ext_custom_stream* s, uint8_t* buf, size_t siz
 static inline size_t ext_custom_stream_feed(ext_custom_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t ext_custom_stream_push(ext_custom_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool ext_custom_stream_next(ext_custom_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool ext_custom_stream_resync(ext_custom_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool ext_custom_stream_flush(ext_custom_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void ext_custom_stream_set_idle_timeout(ext_custom_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool ext_custom_stream_tick(ext_custom_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void ext_custom_stream_reset(ext_custom_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* ext_custom_stream_stats(const ext_custom_stream* s) { return &s->base.stats; }
 static inline gmsg_error ext_custom_stream_last_error(const ext_custom_stream* s) { return s->base.last_error; }

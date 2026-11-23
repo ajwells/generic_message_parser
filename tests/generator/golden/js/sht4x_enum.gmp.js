@@ -45,6 +45,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return CommandFrame.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = CommandFrame.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); CommandFrame.write(w, m); return w.toBytes(); }
     encode() { return CommandFrame.encode(this); }
@@ -64,7 +66,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'CommandFrame';
     static minWireSize = 1;
     static wireSize = 1;
@@ -74,14 +77,16 @@
       data = gmsg.toBytes(data);
       if (data.length < 1) gmsg.fail(Err.Truncated);
       if (!Command.isKnown(gmsg.load(data, 0, 'u8', 'big'))) gmsg.fail(Err.UnknownEnum);
-      return new CommandFrameView(data.subarray(0, 1), null, null);
+      return new CommandFrameView(data.subarray(0, 1), null, null, data.length - 1);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new CommandFrameView(data.subarray(0, 1), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new CommandFrameView(data.subarray(0, 1), null, null, data.length - 1); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get command() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
      *  property (null for padding and constants). */
@@ -151,6 +156,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Measurement.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Measurement.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Measurement.write(w, m); return w.toBytes(); }
     encode() { return Measurement.encode(this); }
@@ -175,7 +182,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Measurement';
     static minWireSize = 6;
     static wireSize = 6;
@@ -186,14 +194,16 @@
       if (data.length < 6) gmsg.fail(Err.Truncated);
       if (gmsg.loadUintBig(data, 0 + 2, 1, 'big') !== BigInt(gmsg.checksum.crc8_nrsc5.compute(data, 0, 0 + 2))) gmsg.fail(Err.BadChecksum);
       if (gmsg.loadUintBig(data, 3 + 2, 1, 'big') !== BigInt(gmsg.checksum.crc8_nrsc5.compute(data, 3, 3 + 2))) gmsg.fail(Err.BadChecksum);
-      return new MeasurementView(data.subarray(0, 6), null, null);
+      return new MeasurementView(data.subarray(0, 6), null, null, data.length - 6);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new MeasurementView(data.subarray(0, 6), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new MeasurementView(data.subarray(0, 6), null, null, data.length - 6); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     // [degC]
     get temperature() { return gmsg.load(this.#b, 0, 'u16', 'big'); }
     get temperature_scaled() { const x = this.temperature; return Number(x) * 0.0026703288319218739 + -45; }
@@ -278,6 +288,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return SerialNumber.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = SerialNumber.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); SerialNumber.write(w, m); return w.toBytes(); }
     encode() { return SerialNumber.encode(this); }
@@ -302,7 +314,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'SerialNumber';
     static minWireSize = 6;
     static wireSize = 6;
@@ -313,14 +326,16 @@
       if (data.length < 6) gmsg.fail(Err.Truncated);
       if (gmsg.loadUintBig(data, 0 + 2, 1, 'big') !== BigInt(gmsg.checksum.crc8_nrsc5.compute(data, 0, 0 + 2))) gmsg.fail(Err.BadChecksum);
       if (gmsg.loadUintBig(data, 3 + 2, 1, 'big') !== BigInt(gmsg.checksum.crc8_nrsc5.compute(data, 3, 3 + 2))) gmsg.fail(Err.BadChecksum);
-      return new SerialNumberView(data.subarray(0, 6), null, null);
+      return new SerialNumberView(data.subarray(0, 6), null, null, data.length - 6);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new SerialNumberView(data.subarray(0, 6), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new SerialNumberView(data.subarray(0, 6), null, null, data.length - 6); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get serial_high() { return gmsg.load(this.#b, 0, 'u16', 'big'); }
     get serial_low() { return gmsg.load(this.#b, 3, 'u16', 'big'); }
     get serial() { return Number(BigInt.asUintN(32, (BigInt.asIntN(64, gmsg.toInt(this.serial_high) << 16n) | gmsg.toInt(this.serial_low)))); }

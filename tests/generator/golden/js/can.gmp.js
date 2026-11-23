@@ -103,6 +103,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return EngineData.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = EngineData.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); EngineData.write(w, m); return w.toBytes(); }
     encode() { return EngineData.encode(this); }
@@ -122,7 +124,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'EngineData';
     static minWireSize = 8;
     static wireSize = 8;
@@ -132,14 +135,16 @@
       data = gmsg.toBytes(data);
       if (data.length < 8) gmsg.fail(Err.Truncated);
       EngineData_signals.check(data, 0);
-      return new EngineDataView(data.subarray(0, 8), null, null);
+      return new EngineDataView(data.subarray(0, 8), null, null, data.length - 8);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new EngineDataView(data.subarray(0, 8), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new EngineDataView(data.subarray(0, 8), null, null, data.length - 8); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get signals() { return EngineData_signals.unpack(this.#b, 0); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
      *  property (null for padding and constants). */
@@ -196,6 +201,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Sensor.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Sensor.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Sensor.write(w, m); return w.toBytes(); }
     encode() { return Sensor.encode(this); }
@@ -218,7 +225,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Sensor';
     static minWireSize = 3;
     static wireSize = 3;
@@ -227,14 +235,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 3) gmsg.fail(Err.Truncated);
-      return new SensorView(data.subarray(0, 3), null, null);
+      return new SensorView(data.subarray(0, 3), null, null, data.length - 3);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new SensorView(data.subarray(0, 3), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new SensorView(data.subarray(0, 3), null, null, data.length - 3); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get temp() { return gmsg.load(this.#b, 0, 'i16', 'little'); }
     get temp_scaled() { const x = this.temp; return Number(x) * 0.01 + 0; }
     get humidity() { return gmsg.load(this.#b, 2, 'u8', 'little'); }
@@ -353,6 +363,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return FixedLinkHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = FixedLinkHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); FixedLinkHeader.write(w, m); return w.toBytes(); }
     encode() { return FixedLinkHeader.encode(this); }
@@ -372,7 +384,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'FixedLinkHeader';
     static minWireSize = 1;
     static wireSize = 1;
@@ -381,14 +394,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 1) gmsg.fail(Err.Truncated);
-      return new FixedLinkHeaderView(data.subarray(0, 1), null, null);
+      return new FixedLinkHeaderView(data.subarray(0, 1), null, null, data.length - 1);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new FixedLinkHeaderView(data.subarray(0, 1), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new FixedLinkHeaderView(data.subarray(0, 1), null, null, data.length - 1); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get id() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
      *  property (null for padding and constants). */

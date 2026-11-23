@@ -65,6 +65,15 @@ gmsg_error link_hdlc_reading_decode(const uint8_t* data, size_t size, link_hdlc_
     return link_hdlc_reading_read(&r, out);
 }
 
+gmsg_error link_hdlc_reading_decode_extra(const uint8_t* data, size_t size, link_hdlc_reading* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_hdlc_reading_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_hdlc_reading_encode(const link_hdlc_reading* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_hdlc_reading_write(m, &w);
@@ -111,6 +120,7 @@ gmsg_error link_hdlc_reading_view_from(const uint8_t* data, size_t size, link_hd
     pos += 4;
     v.off[4] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -210,6 +220,15 @@ gmsg_error link_hdlc_batch_decode(const uint8_t* data, size_t size, link_hdlc_ba
     return link_hdlc_batch_read(&r, out);
 }
 
+gmsg_error link_hdlc_batch_decode_extra(const uint8_t* data, size_t size, link_hdlc_batch* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_hdlc_batch_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_hdlc_batch_encode(const link_hdlc_batch* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_hdlc_batch_write(m, &w);
@@ -274,6 +293,7 @@ gmsg_error link_hdlc_batch_view_from(const uint8_t* data, size_t size, link_hdlc
     }
     v.off[4] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -360,6 +380,15 @@ gmsg_error link_hdlc_ping_decode(const uint8_t* data, size_t size, link_hdlc_pin
     return link_hdlc_ping_read(&r, out);
 }
 
+gmsg_error link_hdlc_ping_decode_extra(const uint8_t* data, size_t size, link_hdlc_ping* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_hdlc_ping_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_hdlc_ping_encode(const link_hdlc_ping* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_hdlc_ping_write(m, &w);
@@ -383,15 +412,16 @@ gmsg_error link_hdlc_ping_view_from(const uint8_t* data, size_t size, link_hdlc_
     if (size < 8) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 8;
+    out->extra = size - 8;
     return GMSG_OK;
 }
 
 link_hdlc_ping_view link_hdlc_ping_view_unchecked(const uint8_t* data, size_t size) {
     link_hdlc_ping_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 8;
+    v.extra = size - 8;
     return v;
 }
 
@@ -446,6 +476,15 @@ gmsg_error link_hdlc_hdlc_header_decode(const uint8_t* data, size_t size, link_h
     return link_hdlc_hdlc_header_read(&r, out);
 }
 
+gmsg_error link_hdlc_hdlc_header_decode_extra(const uint8_t* data, size_t size, link_hdlc_hdlc_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_hdlc_hdlc_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_hdlc_hdlc_header_encode(const link_hdlc_hdlc_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_hdlc_hdlc_header_write(m, &w);
@@ -468,15 +507,16 @@ gmsg_error link_hdlc_hdlc_header_view_from(const uint8_t* data, size_t size, lin
     if (gmsg_load_u8(data + 0, GMSG_ENDIAN_LITTLE) != ((uint8_t)INT64_C(255))) return GMSG_ERR_BAD_CONST;
     out->data = data;
     out->size = 2;
+    out->extra = size - 2;
     return GMSG_OK;
 }
 
 link_hdlc_hdlc_header_view link_hdlc_hdlc_header_view_unchecked(const uint8_t* data, size_t size) {
     link_hdlc_hdlc_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 2;
+    v.extra = size - 2;
     return v;
 }
 
@@ -650,13 +690,29 @@ gmsg_error link_hdlc_hdlc_process(uint8_t* data, size_t size, const link_hdlc_hd
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { link_hdlc_hdlc_mode_deliver_ = 0, link_hdlc_hdlc_mode_capture_ = 1, link_hdlc_hdlc_mode_message_ = 2, link_hdlc_hdlc_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t link_hdlc_hdlc_extra_(const link_hdlc_hdlc_any_view* v) {
+    switch (v->kind) {
+        case LINK_HDLC_HDLC_BATCH: return link_hdlc_batch_view_extra_bytes(&v->as.batch);
+        case LINK_HDLC_HDLC_PING: return link_hdlc_ping_view_extra_bytes(&v->as.ping);
+        default: return 0;
+    }
+}
+
 static gmsg_error link_hdlc_hdlc_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     link_hdlc_hdlc_stream* s = (link_hdlc_hdlc_stream*)gs;
     link_hdlc_hdlc_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == link_hdlc_hdlc_mode_deliver_) return link_hdlc_hdlc_process_frame_(frame, n, &s->cb);
     if ((e = link_hdlc_hdlc_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == link_hdlc_hdlc_mode_deliver_) {
+        link_hdlc_hdlc_any_view v;
+        if ((e = link_hdlc_hdlc_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = link_hdlc_hdlc_extra_(&v);
+        link_hdlc_hdlc_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = link_hdlc_hdlc_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = link_hdlc_hdlc_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -857,6 +913,15 @@ gmsg_error link_hdlc_summed_header_decode(const uint8_t* data, size_t size, link
     return link_hdlc_summed_header_read(&r, out);
 }
 
+gmsg_error link_hdlc_summed_header_decode_extra(const uint8_t* data, size_t size, link_hdlc_summed_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = link_hdlc_summed_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error link_hdlc_summed_header_encode(const link_hdlc_summed_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = link_hdlc_summed_header_write(m, &w);
@@ -878,15 +943,16 @@ gmsg_error link_hdlc_summed_header_view_from(const uint8_t* data, size_t size, l
     if (size < 1) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 link_hdlc_summed_header_view link_hdlc_summed_header_view_unchecked(const uint8_t* data, size_t size) {
     link_hdlc_summed_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -1038,13 +1104,28 @@ gmsg_error link_hdlc_summed_process(uint8_t* data, size_t size, const link_hdlc_
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { link_hdlc_summed_mode_deliver_ = 0, link_hdlc_summed_mode_capture_ = 1, link_hdlc_summed_mode_message_ = 2, link_hdlc_summed_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t link_hdlc_summed_extra_(const link_hdlc_summed_any_view* v) {
+    switch (v->kind) {
+        case LINK_HDLC_SUMMED_PING: return link_hdlc_ping_view_extra_bytes(&v->as.ping);
+        default: return 0;
+    }
+}
+
 static gmsg_error link_hdlc_summed_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     link_hdlc_summed_stream* s = (link_hdlc_summed_stream*)gs;
     link_hdlc_summed_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == link_hdlc_summed_mode_deliver_) return link_hdlc_summed_process_frame_(frame, n, &s->cb);
     if ((e = link_hdlc_summed_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == link_hdlc_summed_mode_deliver_) {
+        link_hdlc_summed_any_view v;
+        if ((e = link_hdlc_summed_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = link_hdlc_summed_extra_(&v);
+        link_hdlc_summed_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = link_hdlc_summed_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = link_hdlc_summed_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;

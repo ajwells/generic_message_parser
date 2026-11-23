@@ -25,7 +25,7 @@ std::string ident(const std::string& name) {
         // names used by generated members
         "read", "write", "decode", "encode", "from", "unchecked", "data", "wire_size", "min_wire_size",
         "max_wire_size", "to_struct", "token", "pack", "unpack", "check", "read_text", "write_text",
-        "decode_text", "encode_text", "raw", "present_tokens", "print_to",
+        "decode_text", "encode_text", "raw", "present_tokens", "print_to", "extra_bytes", "extra_tokens",
     };
     return reserved.contains(name) ? name + "_" : name;
 }

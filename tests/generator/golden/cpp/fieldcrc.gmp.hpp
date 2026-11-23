@@ -143,6 +143,14 @@ struct Mixed {
         if (auto e = m.read(r); !e) return gmp::fail(e.error());
         return m;
     }
+    /// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).
+    static gmp::Result<Mixed> decode(gmp::bytes_view data, std::size_t& extra) noexcept {
+        Mixed m{};
+        gmp::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        extra = data.size() - r.position();
+        return m;
+    }
     gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
         gmp::ByteWriter w(out);
         if (auto e = write(w); !e) return gmp::fail(e.error());
@@ -210,6 +218,7 @@ public:
         pos += 2;
         v.gmp_off_[6] = static_cast<std::uint32_t>(pos);
         v.gmp_data_ = data.first(pos);
+        v.gmp_extra_ = data.size() - pos;
         return v;
     }
     /// Build a view over data already validated by from() (no checks).
@@ -219,6 +228,8 @@ public:
 
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
+    /// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).
+    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }
 
     [[nodiscard]] State state() const noexcept { return gmp::load<State>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::uint8_t count() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 2, gmp::Endian::big); }
@@ -253,6 +264,7 @@ public:
 
 private:
     gmp::bytes_view gmp_data_{};
+    std::size_t gmp_extra_ = 0;
     std::array<std::uint32_t, 7> gmp_off_{};
     std::uint64_t gmp_present_ = 0;
 };
@@ -284,6 +296,16 @@ struct Reading {
         return m;
     }
     static gmp::Result<Reading> decode(gmp::bytes_view data) noexcept { return decode_text(gmp::as_string_view(data)); }
+    /// Like decode_text(s); `extra` receives the number of tokens after the message's own (which decode ignores).
+    static gmp::Result<Reading> decode_text(std::string_view s, std::size_t& extra) noexcept {
+        std::array<std::string_view, 1> tok{};
+        const std::size_t n = gmp::text::split(s, separator, tok);
+        Reading m{};
+        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmp::fail(e.error());
+        extra = n > token_count ? n - token_count : 0;
+        return m;
+    }
+    static gmp::Result<Reading> decode(gmp::bytes_view data, std::size_t& extra) noexcept { return decode_text(gmp::as_string_view(data), extra); }
     gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
         gmp::text::TextWriter w(out, separator);
         if (auto e = write_text(w); !e) return gmp::fail(e.error());
@@ -318,6 +340,8 @@ public:
     [[nodiscard]] std::string_view raw() const noexcept { return gmp_text_; }
     /// Number of tokens actually present in the record (may differ from token_count).
     [[nodiscard]] std::size_t present_tokens() const noexcept { return gmp_ntok_; }
+    /// Tokens after the message's own (ignored; a protocol with exact_size rejects them).
+    [[nodiscard]] std::size_t extra_tokens() const noexcept { return gmp_ntok_ > token_count ? gmp_ntok_ - token_count : 0; }
     [[nodiscard]] std::string_view token(std::size_t i) const noexcept { return i < token_count ? gmp_tok_[i] : std::string_view{}; }
 
     [[nodiscard]] gmp::Result<std::int32_t> raw_() const noexcept { return gmp::text::parse_int<std::int32_t>(gmp_tok_[0], 10); }

@@ -28,6 +28,8 @@ gmsg_error link_stuffed_data_read(gmsg_reader* r, link_stuffed_data* m);
 gmsg_error link_stuffed_data_write(const link_stuffed_data* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_stuffed_data_decode(const uint8_t* data, size_t size, link_stuffed_data* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_stuffed_data_decode_extra(const uint8_t* data, size_t size, link_stuffed_data* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_stuffed_data_encode(const link_stuffed_data* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -37,10 +39,11 @@ void link_stuffed_data_print(const link_stuffed_data* m, gmsg_printer* p);
 typedef struct link_stuffed_data_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[3];  /* field offsets */
 } link_stuffed_data_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_stuffed_data_view_from(const uint8_t* data, size_t size, link_stuffed_data_view* out);
 /* Build a view over data already validated by link_stuffed_data_view_from() (no checks). */
 link_stuffed_data_view link_stuffed_data_view_unchecked(const uint8_t* data, size_t size);
@@ -48,6 +51,8 @@ link_stuffed_data_view link_stuffed_data_view_unchecked(const uint8_t* data, siz
 gmsg_error link_stuffed_data_view_to_struct(const link_stuffed_data_view* v, link_stuffed_data* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_stuffed_data_view_print(const link_stuffed_data_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_stuffed_data_view_extra_bytes(const link_stuffed_data_view* v) { return v->extra; }
 
 static inline uint8_t link_stuffed_data_view_n(const link_stuffed_data_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -71,6 +76,8 @@ gmsg_error link_stuffed_ping_read(gmsg_reader* r, link_stuffed_ping* m);
 gmsg_error link_stuffed_ping_write(const link_stuffed_ping* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_stuffed_ping_decode(const uint8_t* data, size_t size, link_stuffed_ping* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_stuffed_ping_decode_extra(const uint8_t* data, size_t size, link_stuffed_ping* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_stuffed_ping_encode(const link_stuffed_ping* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -80,9 +87,10 @@ void link_stuffed_ping_print(const link_stuffed_ping* m, gmsg_printer* p);
 typedef struct link_stuffed_ping_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } link_stuffed_ping_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_stuffed_ping_view_from(const uint8_t* data, size_t size, link_stuffed_ping_view* out);
 /* Build a view over data already validated by link_stuffed_ping_view_from() (no checks). */
 link_stuffed_ping_view link_stuffed_ping_view_unchecked(const uint8_t* data, size_t size);
@@ -90,6 +98,8 @@ link_stuffed_ping_view link_stuffed_ping_view_unchecked(const uint8_t* data, siz
 gmsg_error link_stuffed_ping_view_to_struct(const link_stuffed_ping_view* v, link_stuffed_ping* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_stuffed_ping_view_print(const link_stuffed_ping_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_stuffed_ping_view_extra_bytes(const link_stuffed_ping_view* v) { return v->extra; }
 
 static inline uint32_t link_stuffed_ping_view_seq(const link_stuffed_ping_view* v) {
     return gmsg_load_u32(v->data + 0, GMSG_ENDIAN_BIG);
@@ -111,6 +121,8 @@ gmsg_error link_stuffed_sync_link_header_read(gmsg_reader* r, link_stuffed_sync_
 gmsg_error link_stuffed_sync_link_header_write(const link_stuffed_sync_link_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_stuffed_sync_link_header_decode(const uint8_t* data, size_t size, link_stuffed_sync_link_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_stuffed_sync_link_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_sync_link_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_stuffed_sync_link_header_encode(const link_stuffed_sync_link_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -120,9 +132,10 @@ void link_stuffed_sync_link_header_print(const link_stuffed_sync_link_header* m,
 typedef struct link_stuffed_sync_link_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } link_stuffed_sync_link_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_stuffed_sync_link_header_view_from(const uint8_t* data, size_t size, link_stuffed_sync_link_header_view* out);
 /* Build a view over data already validated by link_stuffed_sync_link_header_view_from() (no checks). */
 link_stuffed_sync_link_header_view link_stuffed_sync_link_header_view_unchecked(const uint8_t* data, size_t size);
@@ -130,6 +143,8 @@ link_stuffed_sync_link_header_view link_stuffed_sync_link_header_view_unchecked(
 gmsg_error link_stuffed_sync_link_header_view_to_struct(const link_stuffed_sync_link_header_view* v, link_stuffed_sync_link_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_stuffed_sync_link_header_view_print(const link_stuffed_sync_link_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_stuffed_sync_link_header_view_extra_bytes(const link_stuffed_sync_link_header_view* v) { return v->extra; }
 
 static inline uint8_t link_stuffed_sync_link_header_view_kind(const link_stuffed_sync_link_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -183,6 +198,7 @@ typedef struct link_stuffed_sync_link_received {
     link_stuffed_sync_link_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } link_stuffed_sync_link_received;
 
 /* Result of link_stuffed_sync_link_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -225,6 +241,13 @@ gmsg_error link_stuffed_sync_link_stream_init(link_stuffed_sync_link_stream* s, 
 static inline size_t link_stuffed_sync_link_stream_feed(link_stuffed_sync_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_sync_link_stream_push(link_stuffed_sync_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_sync_link_stream_next(link_stuffed_sync_link_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool link_stuffed_sync_link_stream_resync(link_stuffed_sync_link_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool link_stuffed_sync_link_stream_flush(link_stuffed_sync_link_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void link_stuffed_sync_link_stream_set_idle_timeout(link_stuffed_sync_link_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool link_stuffed_sync_link_stream_tick(link_stuffed_sync_link_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void link_stuffed_sync_link_stream_reset(link_stuffed_sync_link_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* link_stuffed_sync_link_stream_stats(const link_stuffed_sync_link_stream* s) { return &s->base.stats; }
 static inline gmsg_error link_stuffed_sync_link_stream_last_error(const link_stuffed_sync_link_stream* s) { return s->base.last_error; }
@@ -259,6 +282,8 @@ gmsg_error link_stuffed_wire_checksum_header_read(gmsg_reader* r, link_stuffed_w
 gmsg_error link_stuffed_wire_checksum_header_write(const link_stuffed_wire_checksum_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_stuffed_wire_checksum_header_decode(const uint8_t* data, size_t size, link_stuffed_wire_checksum_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_stuffed_wire_checksum_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_wire_checksum_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_stuffed_wire_checksum_header_encode(const link_stuffed_wire_checksum_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -268,9 +293,10 @@ void link_stuffed_wire_checksum_header_print(const link_stuffed_wire_checksum_he
 typedef struct link_stuffed_wire_checksum_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } link_stuffed_wire_checksum_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_stuffed_wire_checksum_header_view_from(const uint8_t* data, size_t size, link_stuffed_wire_checksum_header_view* out);
 /* Build a view over data already validated by link_stuffed_wire_checksum_header_view_from() (no checks). */
 link_stuffed_wire_checksum_header_view link_stuffed_wire_checksum_header_view_unchecked(const uint8_t* data, size_t size);
@@ -278,6 +304,8 @@ link_stuffed_wire_checksum_header_view link_stuffed_wire_checksum_header_view_un
 gmsg_error link_stuffed_wire_checksum_header_view_to_struct(const link_stuffed_wire_checksum_header_view* v, link_stuffed_wire_checksum_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_stuffed_wire_checksum_header_view_print(const link_stuffed_wire_checksum_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_stuffed_wire_checksum_header_view_extra_bytes(const link_stuffed_wire_checksum_header_view* v) { return v->extra; }
 
 static inline uint8_t link_stuffed_wire_checksum_header_view_kind(const link_stuffed_wire_checksum_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -331,6 +359,7 @@ typedef struct link_stuffed_wire_checksum_received {
     link_stuffed_wire_checksum_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } link_stuffed_wire_checksum_received;
 
 /* Result of link_stuffed_wire_checksum_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -373,6 +402,13 @@ gmsg_error link_stuffed_wire_checksum_stream_init(link_stuffed_wire_checksum_str
 static inline size_t link_stuffed_wire_checksum_stream_feed(link_stuffed_wire_checksum_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_wire_checksum_stream_push(link_stuffed_wire_checksum_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_wire_checksum_stream_next(link_stuffed_wire_checksum_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool link_stuffed_wire_checksum_stream_resync(link_stuffed_wire_checksum_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool link_stuffed_wire_checksum_stream_flush(link_stuffed_wire_checksum_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void link_stuffed_wire_checksum_stream_set_idle_timeout(link_stuffed_wire_checksum_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool link_stuffed_wire_checksum_stream_tick(link_stuffed_wire_checksum_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void link_stuffed_wire_checksum_stream_reset(link_stuffed_wire_checksum_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* link_stuffed_wire_checksum_stream_stats(const link_stuffed_wire_checksum_stream* s) { return &s->base.stats; }
 static inline gmsg_error link_stuffed_wire_checksum_stream_last_error(const link_stuffed_wire_checksum_stream* s) { return s->base.last_error; }
@@ -407,6 +443,8 @@ gmsg_error link_stuffed_wire_length_header_read(gmsg_reader* r, link_stuffed_wir
 gmsg_error link_stuffed_wire_length_header_write(const link_stuffed_wire_length_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_stuffed_wire_length_header_decode(const uint8_t* data, size_t size, link_stuffed_wire_length_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_stuffed_wire_length_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_wire_length_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_stuffed_wire_length_header_encode(const link_stuffed_wire_length_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -416,9 +454,10 @@ void link_stuffed_wire_length_header_print(const link_stuffed_wire_length_header
 typedef struct link_stuffed_wire_length_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } link_stuffed_wire_length_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_stuffed_wire_length_header_view_from(const uint8_t* data, size_t size, link_stuffed_wire_length_header_view* out);
 /* Build a view over data already validated by link_stuffed_wire_length_header_view_from() (no checks). */
 link_stuffed_wire_length_header_view link_stuffed_wire_length_header_view_unchecked(const uint8_t* data, size_t size);
@@ -426,6 +465,8 @@ link_stuffed_wire_length_header_view link_stuffed_wire_length_header_view_unchec
 gmsg_error link_stuffed_wire_length_header_view_to_struct(const link_stuffed_wire_length_header_view* v, link_stuffed_wire_length_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_stuffed_wire_length_header_view_print(const link_stuffed_wire_length_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_stuffed_wire_length_header_view_extra_bytes(const link_stuffed_wire_length_header_view* v) { return v->extra; }
 
 static inline uint8_t link_stuffed_wire_length_header_view_kind(const link_stuffed_wire_length_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -479,6 +520,7 @@ typedef struct link_stuffed_wire_length_received {
     link_stuffed_wire_length_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } link_stuffed_wire_length_received;
 
 /* Result of link_stuffed_wire_length_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -521,6 +563,13 @@ gmsg_error link_stuffed_wire_length_stream_init(link_stuffed_wire_length_stream*
 static inline size_t link_stuffed_wire_length_stream_feed(link_stuffed_wire_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_wire_length_stream_push(link_stuffed_wire_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_wire_length_stream_next(link_stuffed_wire_length_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool link_stuffed_wire_length_stream_resync(link_stuffed_wire_length_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool link_stuffed_wire_length_stream_flush(link_stuffed_wire_length_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void link_stuffed_wire_length_stream_set_idle_timeout(link_stuffed_wire_length_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool link_stuffed_wire_length_stream_tick(link_stuffed_wire_length_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void link_stuffed_wire_length_stream_reset(link_stuffed_wire_length_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* link_stuffed_wire_length_stream_stats(const link_stuffed_wire_length_stream* s) { return &s->base.stats; }
 static inline gmsg_error link_stuffed_wire_length_stream_last_error(const link_stuffed_wire_length_stream* s) { return s->base.last_error; }
@@ -555,6 +604,8 @@ gmsg_error link_stuffed_crc_length_header_read(gmsg_reader* r, link_stuffed_crc_
 gmsg_error link_stuffed_crc_length_header_write(const link_stuffed_crc_length_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_stuffed_crc_length_header_decode(const uint8_t* data, size_t size, link_stuffed_crc_length_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_stuffed_crc_length_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_crc_length_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_stuffed_crc_length_header_encode(const link_stuffed_crc_length_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -564,9 +615,10 @@ void link_stuffed_crc_length_header_print(const link_stuffed_crc_length_header* 
 typedef struct link_stuffed_crc_length_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } link_stuffed_crc_length_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_stuffed_crc_length_header_view_from(const uint8_t* data, size_t size, link_stuffed_crc_length_header_view* out);
 /* Build a view over data already validated by link_stuffed_crc_length_header_view_from() (no checks). */
 link_stuffed_crc_length_header_view link_stuffed_crc_length_header_view_unchecked(const uint8_t* data, size_t size);
@@ -574,6 +626,8 @@ link_stuffed_crc_length_header_view link_stuffed_crc_length_header_view_unchecke
 gmsg_error link_stuffed_crc_length_header_view_to_struct(const link_stuffed_crc_length_header_view* v, link_stuffed_crc_length_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_stuffed_crc_length_header_view_print(const link_stuffed_crc_length_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_stuffed_crc_length_header_view_extra_bytes(const link_stuffed_crc_length_header_view* v) { return v->extra; }
 
 static inline uint8_t link_stuffed_crc_length_header_view_kind(const link_stuffed_crc_length_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -627,6 +681,7 @@ typedef struct link_stuffed_crc_length_received {
     link_stuffed_crc_length_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } link_stuffed_crc_length_received;
 
 /* Result of link_stuffed_crc_length_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -669,6 +724,13 @@ gmsg_error link_stuffed_crc_length_stream_init(link_stuffed_crc_length_stream* s
 static inline size_t link_stuffed_crc_length_stream_feed(link_stuffed_crc_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_crc_length_stream_push(link_stuffed_crc_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_crc_length_stream_next(link_stuffed_crc_length_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool link_stuffed_crc_length_stream_resync(link_stuffed_crc_length_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool link_stuffed_crc_length_stream_flush(link_stuffed_crc_length_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void link_stuffed_crc_length_stream_set_idle_timeout(link_stuffed_crc_length_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool link_stuffed_crc_length_stream_tick(link_stuffed_crc_length_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void link_stuffed_crc_length_stream_reset(link_stuffed_crc_length_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* link_stuffed_crc_length_stream_stats(const link_stuffed_crc_length_stream* s) { return &s->base.stats; }
 static inline gmsg_error link_stuffed_crc_length_stream_last_error(const link_stuffed_crc_length_stream* s) { return s->base.last_error; }
@@ -703,6 +765,8 @@ gmsg_error link_stuffed_wire_crc_length_header_read(gmsg_reader* r, link_stuffed
 gmsg_error link_stuffed_wire_crc_length_header_write(const link_stuffed_wire_crc_length_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_stuffed_wire_crc_length_header_decode(const uint8_t* data, size_t size, link_stuffed_wire_crc_length_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_stuffed_wire_crc_length_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_wire_crc_length_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_stuffed_wire_crc_length_header_encode(const link_stuffed_wire_crc_length_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -712,9 +776,10 @@ void link_stuffed_wire_crc_length_header_print(const link_stuffed_wire_crc_lengt
 typedef struct link_stuffed_wire_crc_length_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } link_stuffed_wire_crc_length_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_stuffed_wire_crc_length_header_view_from(const uint8_t* data, size_t size, link_stuffed_wire_crc_length_header_view* out);
 /* Build a view over data already validated by link_stuffed_wire_crc_length_header_view_from() (no checks). */
 link_stuffed_wire_crc_length_header_view link_stuffed_wire_crc_length_header_view_unchecked(const uint8_t* data, size_t size);
@@ -722,6 +787,8 @@ link_stuffed_wire_crc_length_header_view link_stuffed_wire_crc_length_header_vie
 gmsg_error link_stuffed_wire_crc_length_header_view_to_struct(const link_stuffed_wire_crc_length_header_view* v, link_stuffed_wire_crc_length_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_stuffed_wire_crc_length_header_view_print(const link_stuffed_wire_crc_length_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_stuffed_wire_crc_length_header_view_extra_bytes(const link_stuffed_wire_crc_length_header_view* v) { return v->extra; }
 
 static inline uint8_t link_stuffed_wire_crc_length_header_view_kind(const link_stuffed_wire_crc_length_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -775,6 +842,7 @@ typedef struct link_stuffed_wire_crc_length_received {
     link_stuffed_wire_crc_length_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } link_stuffed_wire_crc_length_received;
 
 /* Result of link_stuffed_wire_crc_length_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -817,6 +885,13 @@ gmsg_error link_stuffed_wire_crc_length_stream_init(link_stuffed_wire_crc_length
 static inline size_t link_stuffed_wire_crc_length_stream_feed(link_stuffed_wire_crc_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_wire_crc_length_stream_push(link_stuffed_wire_crc_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_wire_crc_length_stream_next(link_stuffed_wire_crc_length_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool link_stuffed_wire_crc_length_stream_resync(link_stuffed_wire_crc_length_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool link_stuffed_wire_crc_length_stream_flush(link_stuffed_wire_crc_length_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void link_stuffed_wire_crc_length_stream_set_idle_timeout(link_stuffed_wire_crc_length_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool link_stuffed_wire_crc_length_stream_tick(link_stuffed_wire_crc_length_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void link_stuffed_wire_crc_length_stream_reset(link_stuffed_wire_crc_length_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* link_stuffed_wire_crc_length_stream_stats(const link_stuffed_wire_crc_length_stream* s) { return &s->base.stats; }
 static inline gmsg_error link_stuffed_wire_crc_length_stream_last_error(const link_stuffed_wire_crc_length_stream* s) { return s->base.last_error; }
@@ -851,6 +926,8 @@ gmsg_error link_stuffed_wire_crc_over_wire_header_read(gmsg_reader* r, link_stuf
 gmsg_error link_stuffed_wire_crc_over_wire_header_write(const link_stuffed_wire_crc_over_wire_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_stuffed_wire_crc_over_wire_header_decode(const uint8_t* data, size_t size, link_stuffed_wire_crc_over_wire_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_stuffed_wire_crc_over_wire_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_wire_crc_over_wire_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_stuffed_wire_crc_over_wire_header_encode(const link_stuffed_wire_crc_over_wire_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -860,9 +937,10 @@ void link_stuffed_wire_crc_over_wire_header_print(const link_stuffed_wire_crc_ov
 typedef struct link_stuffed_wire_crc_over_wire_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } link_stuffed_wire_crc_over_wire_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_stuffed_wire_crc_over_wire_header_view_from(const uint8_t* data, size_t size, link_stuffed_wire_crc_over_wire_header_view* out);
 /* Build a view over data already validated by link_stuffed_wire_crc_over_wire_header_view_from() (no checks). */
 link_stuffed_wire_crc_over_wire_header_view link_stuffed_wire_crc_over_wire_header_view_unchecked(const uint8_t* data, size_t size);
@@ -870,6 +948,8 @@ link_stuffed_wire_crc_over_wire_header_view link_stuffed_wire_crc_over_wire_head
 gmsg_error link_stuffed_wire_crc_over_wire_header_view_to_struct(const link_stuffed_wire_crc_over_wire_header_view* v, link_stuffed_wire_crc_over_wire_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_stuffed_wire_crc_over_wire_header_view_print(const link_stuffed_wire_crc_over_wire_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_stuffed_wire_crc_over_wire_header_view_extra_bytes(const link_stuffed_wire_crc_over_wire_header_view* v) { return v->extra; }
 
 static inline uint8_t link_stuffed_wire_crc_over_wire_header_view_kind(const link_stuffed_wire_crc_over_wire_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -923,6 +1003,7 @@ typedef struct link_stuffed_wire_crc_over_wire_received {
     link_stuffed_wire_crc_over_wire_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } link_stuffed_wire_crc_over_wire_received;
 
 /* Result of link_stuffed_wire_crc_over_wire_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -965,6 +1046,13 @@ gmsg_error link_stuffed_wire_crc_over_wire_stream_init(link_stuffed_wire_crc_ove
 static inline size_t link_stuffed_wire_crc_over_wire_stream_feed(link_stuffed_wire_crc_over_wire_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_wire_crc_over_wire_stream_push(link_stuffed_wire_crc_over_wire_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_wire_crc_over_wire_stream_next(link_stuffed_wire_crc_over_wire_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool link_stuffed_wire_crc_over_wire_stream_resync(link_stuffed_wire_crc_over_wire_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool link_stuffed_wire_crc_over_wire_stream_flush(link_stuffed_wire_crc_over_wire_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void link_stuffed_wire_crc_over_wire_stream_set_idle_timeout(link_stuffed_wire_crc_over_wire_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool link_stuffed_wire_crc_over_wire_stream_tick(link_stuffed_wire_crc_over_wire_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void link_stuffed_wire_crc_over_wire_stream_reset(link_stuffed_wire_crc_over_wire_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* link_stuffed_wire_crc_over_wire_stream_stats(const link_stuffed_wire_crc_over_wire_stream* s) { return &s->base.stats; }
 static inline gmsg_error link_stuffed_wire_crc_over_wire_stream_last_error(const link_stuffed_wire_crc_over_wire_stream* s) { return s->base.last_error; }
@@ -1023,6 +1111,7 @@ typedef struct link_stuffed_fixed_link_received {
     link_stuffed_fixed_link_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } link_stuffed_fixed_link_received;
 
 /* Result of link_stuffed_fixed_link_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -1062,6 +1151,13 @@ gmsg_error link_stuffed_fixed_link_stream_init(link_stuffed_fixed_link_stream* s
 static inline size_t link_stuffed_fixed_link_stream_feed(link_stuffed_fixed_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_fixed_link_stream_push(link_stuffed_fixed_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_fixed_link_stream_next(link_stuffed_fixed_link_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool link_stuffed_fixed_link_stream_resync(link_stuffed_fixed_link_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool link_stuffed_fixed_link_stream_flush(link_stuffed_fixed_link_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void link_stuffed_fixed_link_stream_set_idle_timeout(link_stuffed_fixed_link_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool link_stuffed_fixed_link_stream_tick(link_stuffed_fixed_link_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void link_stuffed_fixed_link_stream_reset(link_stuffed_fixed_link_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* link_stuffed_fixed_link_stream_stats(const link_stuffed_fixed_link_stream* s) { return &s->base.stats; }
 static inline gmsg_error link_stuffed_fixed_link_stream_last_error(const link_stuffed_fixed_link_stream* s) { return s->base.last_error; }
@@ -1095,6 +1191,8 @@ gmsg_error link_stuffed_delimited_header_read(gmsg_reader* r, link_stuffed_delim
 gmsg_error link_stuffed_delimited_header_write(const link_stuffed_delimited_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_stuffed_delimited_header_decode(const uint8_t* data, size_t size, link_stuffed_delimited_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_stuffed_delimited_header_decode_extra(const uint8_t* data, size_t size, link_stuffed_delimited_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_stuffed_delimited_header_encode(const link_stuffed_delimited_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -1104,9 +1202,10 @@ void link_stuffed_delimited_header_print(const link_stuffed_delimited_header* m,
 typedef struct link_stuffed_delimited_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } link_stuffed_delimited_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_stuffed_delimited_header_view_from(const uint8_t* data, size_t size, link_stuffed_delimited_header_view* out);
 /* Build a view over data already validated by link_stuffed_delimited_header_view_from() (no checks). */
 link_stuffed_delimited_header_view link_stuffed_delimited_header_view_unchecked(const uint8_t* data, size_t size);
@@ -1114,6 +1213,8 @@ link_stuffed_delimited_header_view link_stuffed_delimited_header_view_unchecked(
 gmsg_error link_stuffed_delimited_header_view_to_struct(const link_stuffed_delimited_header_view* v, link_stuffed_delimited_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_stuffed_delimited_header_view_print(const link_stuffed_delimited_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_stuffed_delimited_header_view_extra_bytes(const link_stuffed_delimited_header_view* v) { return v->extra; }
 
 static inline uint8_t link_stuffed_delimited_header_view_kind(const link_stuffed_delimited_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -1164,6 +1265,7 @@ typedef struct link_stuffed_delimited_received {
     link_stuffed_delimited_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } link_stuffed_delimited_received;
 
 /* Result of link_stuffed_delimited_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -1206,6 +1308,13 @@ gmsg_error link_stuffed_delimited_stream_init(link_stuffed_delimited_stream* s, 
 static inline size_t link_stuffed_delimited_stream_feed(link_stuffed_delimited_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_delimited_stream_push(link_stuffed_delimited_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_delimited_stream_next(link_stuffed_delimited_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool link_stuffed_delimited_stream_resync(link_stuffed_delimited_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool link_stuffed_delimited_stream_flush(link_stuffed_delimited_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void link_stuffed_delimited_stream_set_idle_timeout(link_stuffed_delimited_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool link_stuffed_delimited_stream_tick(link_stuffed_delimited_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void link_stuffed_delimited_stream_reset(link_stuffed_delimited_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* link_stuffed_delimited_stream_stats(const link_stuffed_delimited_stream* s) { return &s->base.stats; }
 static inline gmsg_error link_stuffed_delimited_stream_last_error(const link_stuffed_delimited_stream* s) { return s->base.last_error; }

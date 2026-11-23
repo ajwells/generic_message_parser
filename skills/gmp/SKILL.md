@@ -211,6 +211,14 @@ Errors are values (`gmp::Result<T>` = `std::expected<T, gmp::Error>`): `Truncate
   - The main loop or a task drains the ring into `parser.feed(...)` (or `push()` + `poll()`).
 
   Size the ring for bytes per second × the longest gap between drains.
+- **Idle links and corrupted lengths:** a corrupted length can make the parser wait for bytes that never come, holding
+  back good frames. Call `parser.set_idle_timeout(t)` once and `parser.tick(now)` from the main loop (any monotonic
+  time unit), then `while (parser.next()) {}`; or call `resync()` / `flush()` yourself. With `length_prefixed`
+  framing the scanner also rejects lengths the message type cannot have (`BadLength`) as soon as the header arrives.
+- **Data after the message is ignored, not rejected** (a longer length, extra text tokens): it shows up as
+  `view.extra_bytes()` / `extra_tokens()`, `Received::extra`, `stats().frames_with_extra`, `decode(bytes, extra)`. Set
+  `exact_size: true` on the protocol to reject it with `BadLength` (recommended when the checksum doesn't cover the
+  length).
 - **Stored handlers:** `make_stream(h)` / `StreamWith<H>` keep a compile-time handler; `CallbackStream` keeps runtime
   listeners (one per message, plus `AnyView` for every frame and `gmp::FrameError`; registering again replaces).
   Contexts passed to `on<Fn>(ctx)` must outlive the registration. Messages and enums can't be named `Header`,

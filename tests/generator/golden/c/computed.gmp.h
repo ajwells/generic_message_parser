@@ -81,6 +81,8 @@ gmsg_error test_computed_packed_read(gmsg_reader* r, test_computed_packed* m);
 gmsg_error test_computed_packed_write(const test_computed_packed* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_computed_packed_decode(const uint8_t* data, size_t size, test_computed_packed* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_computed_packed_decode_extra(const uint8_t* data, size_t size, test_computed_packed* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_computed_packed_encode(const test_computed_packed* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -137,10 +139,11 @@ static inline uint16_t test_computed_packed_overlapping(const test_computed_pack
 typedef struct test_computed_packed_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[10];  /* field offsets */
 } test_computed_packed_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_computed_packed_view_from(const uint8_t* data, size_t size, test_computed_packed_view* out);
 /* Build a view over data already validated by test_computed_packed_view_from() (no checks). */
 test_computed_packed_view test_computed_packed_view_unchecked(const uint8_t* data, size_t size);
@@ -148,6 +151,8 @@ test_computed_packed_view test_computed_packed_view_unchecked(const uint8_t* dat
 gmsg_error test_computed_packed_view_to_struct(const test_computed_packed_view* v, test_computed_packed* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_computed_packed_view_print(const test_computed_packed_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_computed_packed_view_extra_bytes(const test_computed_packed_view* v) { return v->extra; }
 
 static inline uint8_t test_computed_packed_view_b0(const test_computed_packed_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);

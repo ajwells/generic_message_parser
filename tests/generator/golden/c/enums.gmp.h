@@ -119,6 +119,8 @@ gmsg_error test_enums_inner_read(gmsg_reader* r, test_enums_inner* m);
 gmsg_error test_enums_inner_write(const test_enums_inner* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_enums_inner_decode(const uint8_t* data, size_t size, test_enums_inner* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_enums_inner_decode_extra(const uint8_t* data, size_t size, test_enums_inner* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_enums_inner_encode(const test_enums_inner* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -128,9 +130,10 @@ void test_enums_inner_print(const test_enums_inner* m, gmsg_printer* p);
 typedef struct test_enums_inner_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } test_enums_inner_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_enums_inner_view_from(const uint8_t* data, size_t size, test_enums_inner_view* out);
 /* Build a view over data already validated by test_enums_inner_view_from() (no checks). */
 test_enums_inner_view test_enums_inner_view_unchecked(const uint8_t* data, size_t size);
@@ -138,6 +141,8 @@ test_enums_inner_view test_enums_inner_view_unchecked(const uint8_t* data, size_
 gmsg_error test_enums_inner_view_to_struct(const test_enums_inner_view* v, test_enums_inner* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_enums_inner_view_print(const test_enums_inner_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_enums_inner_view_extra_bytes(const test_enums_inner_view* v) { return v->extra; }
 
 static inline test_enums_color test_enums_inner_view_color(const test_enums_inner_view* v) {
     return (test_enums_color)gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -186,6 +191,8 @@ gmsg_error test_enums_sample_read(gmsg_reader* r, test_enums_sample* m);
 gmsg_error test_enums_sample_write(const test_enums_sample* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_enums_sample_decode(const uint8_t* data, size_t size, test_enums_sample* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_enums_sample_decode_extra(const uint8_t* data, size_t size, test_enums_sample* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_enums_sample_encode(const test_enums_sample* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -195,10 +202,11 @@ void test_enums_sample_print(const test_enums_sample* m, gmsg_printer* p);
 typedef struct test_enums_sample_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[8];  /* field offsets */
 } test_enums_sample_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_enums_sample_view_from(const uint8_t* data, size_t size, test_enums_sample_view* out);
 /* Build a view over data already validated by test_enums_sample_view_from() (no checks). */
 test_enums_sample_view test_enums_sample_view_unchecked(const uint8_t* data, size_t size);
@@ -206,6 +214,8 @@ test_enums_sample_view test_enums_sample_view_unchecked(const uint8_t* data, siz
 gmsg_error test_enums_sample_view_to_struct(const test_enums_sample_view* v, test_enums_sample* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_enums_sample_view_print(const test_enums_sample_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_enums_sample_view_extra_bytes(const test_enums_sample_view* v) { return v->extra; }
 
 static inline test_enums_color test_enums_sample_view_color(const test_enums_sample_view* v) {
     return (test_enums_color)gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -244,6 +254,8 @@ gmsg_error test_enums_tail_read(gmsg_reader* r, test_enums_tail* m);
 gmsg_error test_enums_tail_write(const test_enums_tail* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_enums_tail_decode(const uint8_t* data, size_t size, test_enums_tail* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_enums_tail_decode_extra(const uint8_t* data, size_t size, test_enums_tail* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_enums_tail_encode(const test_enums_tail* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -253,10 +265,11 @@ void test_enums_tail_print(const test_enums_tail* m, gmsg_printer* p);
 typedef struct test_enums_tail_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[2];  /* field offsets */
 } test_enums_tail_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_enums_tail_view_from(const uint8_t* data, size_t size, test_enums_tail_view* out);
 /* Build a view over data already validated by test_enums_tail_view_from() (no checks). */
 test_enums_tail_view test_enums_tail_view_unchecked(const uint8_t* data, size_t size);
@@ -264,6 +277,8 @@ test_enums_tail_view test_enums_tail_view_unchecked(const uint8_t* data, size_t 
 gmsg_error test_enums_tail_view_to_struct(const test_enums_tail_view* v, test_enums_tail* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_enums_tail_view_print(const test_enums_tail_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_enums_tail_view_extra_bytes(const test_enums_tail_view* v) { return v->extra; }
 
 static inline size_t test_enums_tail_view_rest_count(const test_enums_tail_view* v) { return (size_t)(v->off[1] - v->off[0]) / 1; }
 static inline test_enums_color test_enums_tail_view_rest_at(const test_enums_tail_view* v, size_t i) { return (test_enums_color)gmsg_load_u8(v->data + 0 + i * 1, GMSG_ENDIAN_BIG); }
@@ -283,6 +298,8 @@ gmsg_error test_enums_line_read_text(const gmsg_str* tok, size_t ntok, test_enum
 gmsg_error test_enums_line_write_text(const test_enums_line* m, gmsg_text_writer* w);
 /* Decode text data[0..size) / encode into out[0..capacity) (*written may be NULL). */
 gmsg_error test_enums_line_decode(const uint8_t* data, size_t size, test_enums_line* out);
+/* Like _decode; *extra receives the number of tokens after the message's own (which _decode ignores). */
+gmsg_error test_enums_line_decode_extra(const uint8_t* data, size_t size, test_enums_line* out, size_t* extra);
 gmsg_error test_enums_line_encode(const test_enums_line* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
 void test_enums_line_print(const test_enums_line* m, gmsg_printer* p);
@@ -302,6 +319,8 @@ gmsg_error test_enums_line_view_to_struct(const test_enums_line_view* v, test_en
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_enums_line_view_print(const test_enums_line_view* v, gmsg_printer* p);
 static inline size_t test_enums_line_view_present_tokens(const test_enums_line_view* v) { return v->ntok; }
+/* Tokens after the message's own (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_enums_line_view_extra_tokens(const test_enums_line_view* v) { return v->ntok > 2 ? v->ntok - 2 : 0; }
 static inline gmsg_str test_enums_line_view_token(const test_enums_line_view* v, size_t i) { return i < 2 ? v->tok[i] : gmsg_str_make(NULL, 0); }
 static inline gmsg_error test_enums_line_view_color(const test_enums_line_view* v, test_enums_color* out) {
     gmsg_error e = GMSG_OK;

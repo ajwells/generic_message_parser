@@ -134,6 +134,11 @@
       return GGA.readText(gmsg.text.split(s, ',').slice(0, 14));
     }
     static decode(bytes) { return GGA.decodeText(gmsg.latin1String(gmsg.toBytes(bytes))); }
+    /** Like decode(bytes): { message, extra }, `extra` = tokens after the message's own (which decode ignores). */
+    static decodeWithExtra(bytes) {
+      const all = gmsg.text.split(typeof bytes === 'string' ? bytes : gmsg.latin1String(gmsg.toBytes(bytes)), ',');
+      return { message: GGA.readText(all.slice(0, 14)), extra: Math.max(0, all.length - 14) };
+    }
     /** The record as text. */
     static encodeText(m) { const w = new gmsg.text.TextWriter(','); GGA.writeText(w, m); return w.toString(); }
     static encode(m) { return gmsg.latin1Bytes(GGA.encodeText(m)); }
@@ -248,6 +253,8 @@
     get raw() { return this.#text; }
     /** Number of tokens actually present in the record (may differ from tokenCount). */
     get presentTokens() { return this.#n; }
+    /** Tokens after the message's own (ignored; a protocol with exact_size rejects them). */
+    get extraTokens() { return Math.max(0, this.#n - 14); }
     token(i) { return i < this.#tok.length ? this.#tok[i] : ''; }
     get utc_time() { return gmsg.text.parseFloat(this.token(0)); }
     get latitude() { const t = this.token(1); return t === '' ? undefined : gmsg.text.parseFloat(t); }
@@ -407,6 +414,11 @@
       return TXT.readText(gmsg.text.split(s, ',').slice(0, 4));
     }
     static decode(bytes) { return TXT.decodeText(gmsg.latin1String(gmsg.toBytes(bytes))); }
+    /** Like decode(bytes): { message, extra }, `extra` = tokens after the message's own (which decode ignores). */
+    static decodeWithExtra(bytes) {
+      const all = gmsg.text.split(typeof bytes === 'string' ? bytes : gmsg.latin1String(gmsg.toBytes(bytes)), ',');
+      return { message: TXT.readText(all.slice(0, 4)), extra: Math.max(0, all.length - 4) };
+    }
     /** The record as text. */
     static encodeText(m) { const w = new gmsg.text.TextWriter(','); TXT.writeText(w, m); return w.toString(); }
     static encode(m) { return gmsg.latin1Bytes(TXT.encodeText(m)); }
@@ -473,6 +485,8 @@
     get raw() { return this.#text; }
     /** Number of tokens actually present in the record (may differ from tokenCount). */
     get presentTokens() { return this.#n; }
+    /** Tokens after the message's own (ignored; a protocol with exact_size rejects them). */
+    get extraTokens() { return Math.max(0, this.#n - 4); }
     token(i) { return i < this.#tok.length ? this.#tok[i] : ''; }
     get total() { return gmsg.text.parseInt(this.token(0), 'u8', 10); }
     get number() { return gmsg.text.parseInt(this.token(1), 'u8', 10); }

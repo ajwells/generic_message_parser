@@ -33,6 +33,18 @@ struct LengthPrefixedConfig {
     bool wire_includes_trailer = false;  // counts_wire: the value also counts the escaped trailer
 };
 
+/// Copy the `out.size()` header bytes that follow the sync pattern at the start of `buf` (unescaped when the frame is
+/// escaped) into `out`. False while they have not all arrived, or when the escaping is invalid (the scanner reports
+/// that). Used by generated scanners to check the length against the message type before the body arrives.
+constexpr bool read_frame_header(bytes_view buf, std::size_t prefix, const EscapeConfig& escape, mut_bytes out) noexcept {
+    if (!escape.enabled) {
+        if (buf.size() < prefix + out.size()) return false;
+        for (std::size_t i = 0; i < out.size(); ++i) out[i] = buf[prefix + i];
+        return true;
+    }
+    return walk_escaped(buf, prefix, out.size(), escape, 0, out).kind == EscapeWalk::Kind::done;
+}
+
 namespace detail {
 
 /// counts_wire: the body is a fixed number of wire bytes between the escaped header and trailer.

@@ -175,6 +175,7 @@
     if (has(p.format)) o.format = p.format;
     if (has(p.endian)) o.endian = p.endian;
     if (has(p.separator) && fmt === 'text') o.separator = p.separator;
+    if (p.exact_size) o.exact_size = true;
     if (has(p.doc)) o.doc = p.doc;
     if (p.header.length && fmt === 'binary') {
       const hm = G.headerMessage(s, p);
@@ -526,7 +527,7 @@
       }));
     }
     for (const [name, p] of Object.entries(y.protocols || {})) {
-      const proto = G.newProtocol({ name, format: str(p.format), endian: str(p.endian), separator: str(p.separator), doc: str(p.doc) });
+      const proto = G.newProtocol({ name, format: str(p.format), endian: str(p.endian), separator: str(p.separator), doc: str(p.doc), exact_size: !!p.exact_size });
       proto.header = (p.header || []).map(fieldFromYaml);
       const fr = p.framing || {};
       const sync = patternFromYaml(fr.sync ?? fr.start);

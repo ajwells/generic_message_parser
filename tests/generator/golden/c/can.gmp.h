@@ -99,6 +99,8 @@ gmsg_error vehicle_can_engine_data_read(gmsg_reader* r, vehicle_can_engine_data*
 gmsg_error vehicle_can_engine_data_write(const vehicle_can_engine_data* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error vehicle_can_engine_data_decode(const uint8_t* data, size_t size, vehicle_can_engine_data* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error vehicle_can_engine_data_decode_extra(const uint8_t* data, size_t size, vehicle_can_engine_data* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error vehicle_can_engine_data_encode(const vehicle_can_engine_data* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -108,9 +110,10 @@ void vehicle_can_engine_data_print(const vehicle_can_engine_data* m, gmsg_printe
 typedef struct vehicle_can_engine_data_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } vehicle_can_engine_data_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error vehicle_can_engine_data_view_from(const uint8_t* data, size_t size, vehicle_can_engine_data_view* out);
 /* Build a view over data already validated by vehicle_can_engine_data_view_from() (no checks). */
 vehicle_can_engine_data_view vehicle_can_engine_data_view_unchecked(const uint8_t* data, size_t size);
@@ -118,6 +121,8 @@ vehicle_can_engine_data_view vehicle_can_engine_data_view_unchecked(const uint8_
 gmsg_error vehicle_can_engine_data_view_to_struct(const vehicle_can_engine_data_view* v, vehicle_can_engine_data* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void vehicle_can_engine_data_view_print(const vehicle_can_engine_data_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t vehicle_can_engine_data_view_extra_bytes(const vehicle_can_engine_data_view* v) { return v->extra; }
 
 static inline vehicle_can_engine_data_signals vehicle_can_engine_data_view_signals(const vehicle_can_engine_data_view* v) {
     vehicle_can_engine_data_signals g;
@@ -141,6 +146,8 @@ gmsg_error vehicle_can_sensor_read(gmsg_reader* r, vehicle_can_sensor* m);
 gmsg_error vehicle_can_sensor_write(const vehicle_can_sensor* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error vehicle_can_sensor_decode(const uint8_t* data, size_t size, vehicle_can_sensor* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error vehicle_can_sensor_decode_extra(const uint8_t* data, size_t size, vehicle_can_sensor* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error vehicle_can_sensor_encode(const vehicle_can_sensor* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -153,9 +160,10 @@ static inline void vehicle_can_sensor_set_temp_scaled(vehicle_can_sensor* m, dou
 typedef struct vehicle_can_sensor_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } vehicle_can_sensor_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error vehicle_can_sensor_view_from(const uint8_t* data, size_t size, vehicle_can_sensor_view* out);
 /* Build a view over data already validated by vehicle_can_sensor_view_from() (no checks). */
 vehicle_can_sensor_view vehicle_can_sensor_view_unchecked(const uint8_t* data, size_t size);
@@ -163,6 +171,8 @@ vehicle_can_sensor_view vehicle_can_sensor_view_unchecked(const uint8_t* data, s
 gmsg_error vehicle_can_sensor_view_to_struct(const vehicle_can_sensor_view* v, vehicle_can_sensor* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void vehicle_can_sensor_view_print(const vehicle_can_sensor_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t vehicle_can_sensor_view_extra_bytes(const vehicle_can_sensor_view* v) { return v->extra; }
 
 static inline int16_t vehicle_can_sensor_view_temp(const vehicle_can_sensor_view* v) {
     return gmsg_load_i16(v->data + 0, GMSG_ENDIAN_LITTLE);
@@ -233,6 +243,8 @@ gmsg_error vehicle_can_fixed_link_header_read(gmsg_reader* r, vehicle_can_fixed_
 gmsg_error vehicle_can_fixed_link_header_write(const vehicle_can_fixed_link_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error vehicle_can_fixed_link_header_decode(const uint8_t* data, size_t size, vehicle_can_fixed_link_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error vehicle_can_fixed_link_header_decode_extra(const uint8_t* data, size_t size, vehicle_can_fixed_link_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error vehicle_can_fixed_link_header_encode(const vehicle_can_fixed_link_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -242,9 +254,10 @@ void vehicle_can_fixed_link_header_print(const vehicle_can_fixed_link_header* m,
 typedef struct vehicle_can_fixed_link_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } vehicle_can_fixed_link_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error vehicle_can_fixed_link_header_view_from(const uint8_t* data, size_t size, vehicle_can_fixed_link_header_view* out);
 /* Build a view over data already validated by vehicle_can_fixed_link_header_view_from() (no checks). */
 vehicle_can_fixed_link_header_view vehicle_can_fixed_link_header_view_unchecked(const uint8_t* data, size_t size);
@@ -252,6 +265,8 @@ vehicle_can_fixed_link_header_view vehicle_can_fixed_link_header_view_unchecked(
 gmsg_error vehicle_can_fixed_link_header_view_to_struct(const vehicle_can_fixed_link_header_view* v, vehicle_can_fixed_link_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void vehicle_can_fixed_link_header_view_print(const vehicle_can_fixed_link_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t vehicle_can_fixed_link_header_view_extra_bytes(const vehicle_can_fixed_link_header_view* v) { return v->extra; }
 
 static inline uint8_t vehicle_can_fixed_link_header_view_id(const vehicle_can_fixed_link_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -298,6 +313,7 @@ typedef struct vehicle_can_fixed_link_received {
     vehicle_can_fixed_link_any_view message;
     const uint8_t* bytes;  /* the frame as received */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } vehicle_can_fixed_link_received;
 
 /* Result of vehicle_can_fixed_link_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -338,6 +354,13 @@ gmsg_error vehicle_can_fixed_link_stream_init(vehicle_can_fixed_link_stream* s, 
 static inline size_t vehicle_can_fixed_link_stream_feed(vehicle_can_fixed_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t vehicle_can_fixed_link_stream_push(vehicle_can_fixed_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool vehicle_can_fixed_link_stream_next(vehicle_can_fixed_link_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool vehicle_can_fixed_link_stream_resync(vehicle_can_fixed_link_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool vehicle_can_fixed_link_stream_flush(vehicle_can_fixed_link_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void vehicle_can_fixed_link_stream_set_idle_timeout(vehicle_can_fixed_link_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool vehicle_can_fixed_link_stream_tick(vehicle_can_fixed_link_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void vehicle_can_fixed_link_stream_reset(vehicle_can_fixed_link_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* vehicle_can_fixed_link_stream_stats(const vehicle_can_fixed_link_stream* s) { return &s->base.stats; }
 static inline gmsg_error vehicle_can_fixed_link_stream_last_error(const vehicle_can_fixed_link_stream* s) { return s->base.last_error; }

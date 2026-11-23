@@ -33,6 +33,8 @@ gmsg_error link_hdlc_reading_read(gmsg_reader* r, link_hdlc_reading* m);
 gmsg_error link_hdlc_reading_write(const link_hdlc_reading* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_hdlc_reading_decode(const uint8_t* data, size_t size, link_hdlc_reading* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_hdlc_reading_decode_extra(const uint8_t* data, size_t size, link_hdlc_reading* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_hdlc_reading_encode(const link_hdlc_reading* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -42,10 +44,11 @@ void link_hdlc_reading_print(const link_hdlc_reading* m, gmsg_printer* p);
 typedef struct link_hdlc_reading_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[5];  /* field offsets */
 } link_hdlc_reading_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_hdlc_reading_view_from(const uint8_t* data, size_t size, link_hdlc_reading_view* out);
 /* Build a view over data already validated by link_hdlc_reading_view_from() (no checks). */
 link_hdlc_reading_view link_hdlc_reading_view_unchecked(const uint8_t* data, size_t size);
@@ -53,6 +56,8 @@ link_hdlc_reading_view link_hdlc_reading_view_unchecked(const uint8_t* data, siz
 gmsg_error link_hdlc_reading_view_to_struct(const link_hdlc_reading_view* v, link_hdlc_reading* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_hdlc_reading_view_print(const link_hdlc_reading_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_hdlc_reading_view_extra_bytes(const link_hdlc_reading_view* v) { return v->extra; }
 
 static inline uint8_t link_hdlc_reading_view_channel(const link_hdlc_reading_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_LITTLE);
@@ -85,6 +90,8 @@ gmsg_error link_hdlc_batch_read(gmsg_reader* r, link_hdlc_batch* m);
 gmsg_error link_hdlc_batch_write(const link_hdlc_batch* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_hdlc_batch_decode(const uint8_t* data, size_t size, link_hdlc_batch* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_hdlc_batch_decode_extra(const uint8_t* data, size_t size, link_hdlc_batch* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_hdlc_batch_encode(const link_hdlc_batch* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -94,11 +101,12 @@ void link_hdlc_batch_print(const link_hdlc_batch* m, gmsg_printer* p);
 typedef struct link_hdlc_batch_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[5];  /* field offsets */
     uint64_t present;  /* one bit per conditional field */
 } link_hdlc_batch_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_hdlc_batch_view_from(const uint8_t* data, size_t size, link_hdlc_batch_view* out);
 /* Build a view over data already validated by link_hdlc_batch_view_from() (no checks). */
 link_hdlc_batch_view link_hdlc_batch_view_unchecked(const uint8_t* data, size_t size);
@@ -106,6 +114,8 @@ link_hdlc_batch_view link_hdlc_batch_view_unchecked(const uint8_t* data, size_t 
 gmsg_error link_hdlc_batch_view_to_struct(const link_hdlc_batch_view* v, link_hdlc_batch* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_hdlc_batch_view_print(const link_hdlc_batch_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_hdlc_batch_view_extra_bytes(const link_hdlc_batch_view* v) { return v->extra; }
 
 /* Decode when (custom type bcd_time); GMSG_ERR_MISSING_FIELD when absent. */
 static inline gmsg_error link_hdlc_batch_view_when(const link_hdlc_batch_view* v, test_time* out) {
@@ -164,6 +174,8 @@ gmsg_error link_hdlc_ping_read(gmsg_reader* r, link_hdlc_ping* m);
 gmsg_error link_hdlc_ping_write(const link_hdlc_ping* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_hdlc_ping_decode(const uint8_t* data, size_t size, link_hdlc_ping* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_hdlc_ping_decode_extra(const uint8_t* data, size_t size, link_hdlc_ping* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_hdlc_ping_encode(const link_hdlc_ping* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -173,9 +185,10 @@ void link_hdlc_ping_print(const link_hdlc_ping* m, gmsg_printer* p);
 typedef struct link_hdlc_ping_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } link_hdlc_ping_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_hdlc_ping_view_from(const uint8_t* data, size_t size, link_hdlc_ping_view* out);
 /* Build a view over data already validated by link_hdlc_ping_view_from() (no checks). */
 link_hdlc_ping_view link_hdlc_ping_view_unchecked(const uint8_t* data, size_t size);
@@ -183,6 +196,8 @@ link_hdlc_ping_view link_hdlc_ping_view_unchecked(const uint8_t* data, size_t si
 gmsg_error link_hdlc_ping_view_to_struct(const link_hdlc_ping_view* v, link_hdlc_ping* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_hdlc_ping_view_print(const link_hdlc_ping_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_hdlc_ping_view_extra_bytes(const link_hdlc_ping_view* v) { return v->extra; }
 
 static inline uint32_t link_hdlc_ping_view_seq(const link_hdlc_ping_view* v) {
     return gmsg_load_u32(v->data + 0, GMSG_ENDIAN_LITTLE);
@@ -207,6 +222,8 @@ gmsg_error link_hdlc_hdlc_header_read(gmsg_reader* r, link_hdlc_hdlc_header* m);
 gmsg_error link_hdlc_hdlc_header_write(const link_hdlc_hdlc_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_hdlc_hdlc_header_decode(const uint8_t* data, size_t size, link_hdlc_hdlc_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_hdlc_hdlc_header_decode_extra(const uint8_t* data, size_t size, link_hdlc_hdlc_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_hdlc_hdlc_header_encode(const link_hdlc_hdlc_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -216,9 +233,10 @@ void link_hdlc_hdlc_header_print(const link_hdlc_hdlc_header* m, gmsg_printer* p
 typedef struct link_hdlc_hdlc_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } link_hdlc_hdlc_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_hdlc_hdlc_header_view_from(const uint8_t* data, size_t size, link_hdlc_hdlc_header_view* out);
 /* Build a view over data already validated by link_hdlc_hdlc_header_view_from() (no checks). */
 link_hdlc_hdlc_header_view link_hdlc_hdlc_header_view_unchecked(const uint8_t* data, size_t size);
@@ -226,6 +244,8 @@ link_hdlc_hdlc_header_view link_hdlc_hdlc_header_view_unchecked(const uint8_t* d
 gmsg_error link_hdlc_hdlc_header_view_to_struct(const link_hdlc_hdlc_header_view* v, link_hdlc_hdlc_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_hdlc_hdlc_header_view_print(const link_hdlc_hdlc_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_hdlc_hdlc_header_view_extra_bytes(const link_hdlc_hdlc_header_view* v) { return v->extra; }
 
 static inline uint8_t link_hdlc_hdlc_header_view_kind(const link_hdlc_hdlc_header_view* v) {
     return gmsg_load_u8(v->data + 1, GMSG_ENDIAN_LITTLE);
@@ -276,6 +296,7 @@ typedef struct link_hdlc_hdlc_received {
     link_hdlc_hdlc_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } link_hdlc_hdlc_received;
 
 /* Result of link_hdlc_hdlc_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -318,6 +339,13 @@ gmsg_error link_hdlc_hdlc_stream_init(link_hdlc_hdlc_stream* s, uint8_t* buf, si
 static inline size_t link_hdlc_hdlc_stream_feed(link_hdlc_hdlc_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_hdlc_hdlc_stream_push(link_hdlc_hdlc_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_hdlc_hdlc_stream_next(link_hdlc_hdlc_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool link_hdlc_hdlc_stream_resync(link_hdlc_hdlc_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool link_hdlc_hdlc_stream_flush(link_hdlc_hdlc_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void link_hdlc_hdlc_stream_set_idle_timeout(link_hdlc_hdlc_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool link_hdlc_hdlc_stream_tick(link_hdlc_hdlc_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void link_hdlc_hdlc_stream_reset(link_hdlc_hdlc_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* link_hdlc_hdlc_stream_stats(const link_hdlc_hdlc_stream* s) { return &s->base.stats; }
 static inline gmsg_error link_hdlc_hdlc_stream_last_error(const link_hdlc_hdlc_stream* s) { return s->base.last_error; }
@@ -351,6 +379,8 @@ gmsg_error link_hdlc_summed_header_read(gmsg_reader* r, link_hdlc_summed_header*
 gmsg_error link_hdlc_summed_header_write(const link_hdlc_summed_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error link_hdlc_summed_header_decode(const uint8_t* data, size_t size, link_hdlc_summed_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error link_hdlc_summed_header_decode_extra(const uint8_t* data, size_t size, link_hdlc_summed_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error link_hdlc_summed_header_encode(const link_hdlc_summed_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -360,9 +390,10 @@ void link_hdlc_summed_header_print(const link_hdlc_summed_header* m, gmsg_printe
 typedef struct link_hdlc_summed_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } link_hdlc_summed_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error link_hdlc_summed_header_view_from(const uint8_t* data, size_t size, link_hdlc_summed_header_view* out);
 /* Build a view over data already validated by link_hdlc_summed_header_view_from() (no checks). */
 link_hdlc_summed_header_view link_hdlc_summed_header_view_unchecked(const uint8_t* data, size_t size);
@@ -370,6 +401,8 @@ link_hdlc_summed_header_view link_hdlc_summed_header_view_unchecked(const uint8_
 gmsg_error link_hdlc_summed_header_view_to_struct(const link_hdlc_summed_header_view* v, link_hdlc_summed_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void link_hdlc_summed_header_view_print(const link_hdlc_summed_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t link_hdlc_summed_header_view_extra_bytes(const link_hdlc_summed_header_view* v) { return v->extra; }
 
 static inline uint8_t link_hdlc_summed_header_view_kind(const link_hdlc_summed_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_LITTLE);
@@ -416,6 +449,7 @@ typedef struct link_hdlc_summed_received {
     link_hdlc_summed_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } link_hdlc_summed_received;
 
 /* Result of link_hdlc_summed_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -456,6 +490,13 @@ gmsg_error link_hdlc_summed_stream_init(link_hdlc_summed_stream* s, uint8_t* buf
 static inline size_t link_hdlc_summed_stream_feed(link_hdlc_summed_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_hdlc_summed_stream_push(link_hdlc_summed_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_hdlc_summed_stream_next(link_hdlc_summed_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool link_hdlc_summed_stream_resync(link_hdlc_summed_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool link_hdlc_summed_stream_flush(link_hdlc_summed_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void link_hdlc_summed_stream_set_idle_timeout(link_hdlc_summed_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool link_hdlc_summed_stream_tick(link_hdlc_summed_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void link_hdlc_summed_stream_reset(link_hdlc_summed_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* link_hdlc_summed_stream_stats(const link_hdlc_summed_stream* s) { return &s->base.stats; }
 static inline gmsg_error link_hdlc_summed_stream_last_error(const link_hdlc_summed_stream* s) { return s->base.last_error; }

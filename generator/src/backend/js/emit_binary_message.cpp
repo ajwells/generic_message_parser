@@ -241,6 +241,9 @@ public:
         emit_write();
         w_.line("/** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */");
         w_.line("static decode(bytes) { return " + m_.name + ".read(new gmsg.Reader(bytes)); }");
+        w_.line("/** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */");
+        w_.line("static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = " + m_.name +
+                ".read(r); return { message, extra: r.remaining }; }");
         w_.line("/** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */");
         w_.line("static encode(m) { const w = new gmsg.Writer(); " + m_.name + ".write(w, m); return w.toBytes(); }");
         w_.line("encode() { return " + m_.name + ".encode(this); }");
@@ -601,7 +604,8 @@ public:
         w_.line("#b;");
         w_.line("#o;");
         w_.line("#p;");
-        w_.line("constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }");
+        w_.line("#x;");
+        w_.line("constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }");
         w_.line("static messageName = " + string_literal(m_.name) + ";");
         w_.line("static minWireSize = " + sz(m_.min_size) + ";");
         if (m_.static_size) w_.line("static wireSize = " + sz(*m_.static_size) + ";");
@@ -611,6 +615,8 @@ public:
         w_.line("/** The message bytes. */");
         w_.line("get data() { return this.#b; }");
         w_.line("get wireSize() { return this.#b.length; }");
+        w_.line("/** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */");
+        w_.line("get extraBytes() { return this.#x; }");
         for (const auto& f : m_.fields) emit_accessor(*f);
         emit_computed_accessors();
         emit_ranges();
@@ -713,7 +719,7 @@ private:
         if (!dynamic_) {
             w_.line("if (data.length < " + sz(*m_.static_size) + ") " + fail("Truncated"));
             for (const auto& f : m_.fields) validate_static(*f, sz(*f->static_offset));
-            w_.line("return new " + name_ + "(data.subarray(0, " + sz(*m_.static_size) + "), null, null);");
+            w_.line("return new " + name_ + "(data.subarray(0, " + sz(*m_.static_size) + "), null, null, data.length - " + sz(*m_.static_size) + ");");
             w_.close();
             return;
         }
@@ -732,6 +738,7 @@ private:
         }
         w_.line("v.#o[" + sz(m_.fields.size()) + "] = pos;");
         w_.line("v.#b = data.subarray(0, pos);");
+        w_.line("v.#x = data.length - pos;");
         w_.line("return v;");
         w_.close();
     }
@@ -838,7 +845,8 @@ private:
     void emit_unchecked() {
         w_.line("/** A view over data already validated by from() (no checks). */");
         if (!dynamic_)
-            w_.line("static unchecked(data) { return new " + name_ + "(data.subarray(0, " + sz(*m_.static_size) + "), null, null); }");
+            w_.line("static unchecked(data) { data = gmsg.toBytes(data); return new " + name_ + "(data.subarray(0, " + sz(*m_.static_size) +
+                    "), null, null, data.length - " + sz(*m_.static_size) + "); }");
         else
             w_.line("static unchecked(data) { return " + name_ + ".from(data); }");
         w_.line();

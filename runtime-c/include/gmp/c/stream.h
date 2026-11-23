@@ -11,6 +11,13 @@
  *   gmsg_stream_step(s)            one step without reporting errors (pull API: the caller handles the result)
  *   gmsg_stream_pull(s)            step until a frame was accepted (true) or more input is needed; errors go to
  *                                  on_error. The accepted frame stays buffered until the next call.
+ *   gmsg_stream_resync(s)          give up on an incomplete frame at the head (reported to on_error as TRUNCATED)
+ *   gmsg_stream_flush(s)           drop everything buffered (reported to on_error as TRUNCATED)
+ *   gmsg_stream_set_idle_timeout(s, t) / gmsg_stream_tick(s, now)
+ *                                  resync automatically after `t` without new bytes (`now`: any monotonic
+ *                                  unsigned time the application passes; wraparound is fine)
+ *   resync / flush / tick only drop data; frames that become complete are delivered by the next
+ *   gmsg_stream_next / gmsg_stream_feed / poll call.
  *
  * Views handed to callbacks point into the buffer and are valid only during the callback. Views returned by the
  * pull API stay valid until the next call that changes the stream (push / feed / next / step / pull / reset);
@@ -31,6 +38,9 @@ typedef struct gmsg_stream_stats {
     uint32_t frame_errors;   /* frames rejected (checksum, unknown message type, decode error) */
     uint32_t bytes_skipped;  /* bytes discarded while resynchronising */
     uint32_t overflows;      /* times the buffer filled without a complete frame */
+    uint32_t resyncs;        /* incomplete frames given up by gmsg_stream_resync (also from gmsg_stream_tick) */
+    uint32_t flushes;        /* gmsg_stream_flush calls that dropped buffered bytes */
+    uint32_t frames_with_extra; /* delivered frames with data after their message (ignored) */
 } gmsg_stream_stats;
 
 struct gmsg_stream;
@@ -53,6 +63,12 @@ typedef struct gmsg_stream {
     gmsg_stream_scan_fn scan;
     gmsg_stream_process_fn process;
     gmsg_stream_error_fn on_error;
+    uint32_t received;       /* bytes pushed (wraps; only compared for change) */
+    uint32_t seen;           /* `received` at the last tick */
+    uint32_t last_activity;  /* time of the last tick that saw new bytes (or of the last idle resync) */
+    uint32_t idle_timeout;   /* 0 = off */
+    bool ticked;
+    size_t last_extra;       /* set by `process`: data after the message of the frame being accepted */
 } gmsg_stream;
 
 /* GMSG_ERR_BUFFER_FULL when capacity < min_capacity (the protocol's max frame). */
@@ -92,6 +108,23 @@ GMSG_API bool gmsg_stream_pull(gmsg_stream* s);
 /* Deliver the next frame (or report dropped data). Returns false when more input is required. */
 GMSG_API bool gmsg_stream_next(gmsg_stream* s);
 
+/* Give up on the frame at the head of the buffer when it is incomplete (e.g. a corrupted length claims more bytes
+ * than will arrive): report it to on_error as GMSG_ERR_TRUNCATED with its buffered bytes, drop its first byte and
+ * let the next scan resynchronise. Returns false (and does nothing) when the buffer is empty or its head frame is
+ * complete. */
+GMSG_API bool gmsg_stream_resync(gmsg_stream* s);
+
+/* Drop every buffered byte, reported to on_error as one GMSG_ERR_TRUNCATED. Returns false when nothing was buffered. */
+GMSG_API bool gmsg_stream_flush(gmsg_stream* s);
+
+/* Resync from gmsg_stream_tick once the link has been idle for `t` (unit of the tick times); 0 turns it off. */
+GMSG_API void gmsg_stream_set_idle_timeout(gmsg_stream* s, uint32_t t);
+
+/* Call periodically with the current time. Bytes pushed since the previous tick count as activity. After
+ * idle_timeout without new bytes an incomplete head frame is given up as by gmsg_stream_resync (returns true);
+ * the next resync needs another idle period. */
+GMSG_API bool gmsg_stream_tick(gmsg_stream* s, uint32_t now);
+
 /* Push data[0..n) and process every complete frame. Returns the number of frames delivered. */
 GMSG_API size_t gmsg_stream_feed(gmsg_stream* s, const uint8_t* data, size_t n);
 
@@ -117,6 +150,7 @@ GMSG_API void gmsg_stream_reset(gmsg_stream* s) {
     s->held = 0;
     s->holding = false;
     s->last_error = GMSG_OK;
+    s->ticked = false;
     gmsg_memset(&s->stats, 0, sizeof s->stats);
 }
 
@@ -155,8 +189,9 @@ GMSG_API size_t gmsg_stream_push(gmsg_stream* s, const uint8_t* data, size_t n) 
     gmsg_stream_release_(s);
     if (s->head > 0 && (s->capacity - s->tail) < n) gmsg_stream_compact_(s);
     k = n < s->capacity - s->tail ? n : s->capacity - s->tail;
-    gmsg_memcpy(s->buf + s->tail, data, k);
+    if (k > 0) gmsg_memcpy(s->buf + s->tail, data, k);
     s->tail += k;
+    s->received += (uint32_t)k;
     return k;
 }
 
@@ -184,9 +219,12 @@ GMSG_API gmsg_step gmsg_stream_step(gmsg_stream* s) {
         sc = s->scan(pending, avail);
         if (sc.kind == GMSG_SCAN_FRAME) {
             uint8_t* frame = s->buf + s->head;
-            const gmsg_error e = s->process(s, frame, sc.size);
+            gmsg_error e;
+            s->last_extra = 0;
+            e = s->process(s, frame, sc.size);
             if (e == GMSG_OK) {
                 ++s->stats.frames;
+                if (s->last_extra != 0) ++s->stats.frames_with_extra;
                 gmsg_stream_hold_(s, sc.consume);
                 return gmsg_step_make_(GMSG_STEP_FRAME, GMSG_OK, frame, sc.size);
             }
@@ -235,6 +273,51 @@ GMSG_API bool gmsg_stream_next(gmsg_stream* s) {
     if (st.kind == GMSG_STEP_ERROR && s->on_error) s->on_error(s, st.error, st.data, st.size);
     gmsg_stream_release_(s);
     return st.kind != GMSG_STEP_NEED_MORE;
+}
+
+GMSG_API bool gmsg_stream_resync(gmsg_stream* s) {
+    const uint8_t* pending;
+    size_t avail;
+    gmsg_stream_release_(s);
+    if (s->head == s->tail) return false;
+    pending = s->buf + s->head;
+    avail = s->tail - s->head;
+    if (s->scan(pending, avail).kind != GMSG_SCAN_NEED_MORE) return false; /* nothing stuck at the head */
+    ++s->stats.resyncs;
+    ++s->stats.bytes_skipped;
+    s->last_error = GMSG_ERR_TRUNCATED;
+    if (s->on_error) s->on_error(s, GMSG_ERR_TRUNCATED, pending, avail);
+    gmsg_stream_consume_(s, 1);
+    ++s->generation;
+    return true;
+}
+
+GMSG_API bool gmsg_stream_flush(gmsg_stream* s) {
+    size_t avail;
+    gmsg_stream_release_(s);
+    if (s->head == s->tail) return false;
+    avail = s->tail - s->head;
+    ++s->stats.flushes;
+    s->stats.bytes_skipped += (uint32_t)avail;
+    s->last_error = GMSG_ERR_TRUNCATED;
+    if (s->on_error) s->on_error(s, GMSG_ERR_TRUNCATED, s->buf + s->head, avail);
+    s->head = s->tail = 0;
+    ++s->generation;
+    return true;
+}
+
+GMSG_API void gmsg_stream_set_idle_timeout(gmsg_stream* s, uint32_t t) { s->idle_timeout = t; }
+
+GMSG_API bool gmsg_stream_tick(gmsg_stream* s, uint32_t now) {
+    if (!s->ticked || s->received != s->seen) { /* first tick, or bytes arrived since the last one */
+        s->ticked = true;
+        s->seen = s->received;
+        s->last_activity = now;
+        return false;
+    }
+    if (s->idle_timeout == 0 || (uint32_t)(now - s->last_activity) < s->idle_timeout) return false;
+    s->last_activity = now; /* a further resync needs another idle period */
+    return gmsg_stream_resync(s);
 }
 
 GMSG_API size_t gmsg_stream_feed(gmsg_stream* s, const uint8_t* data, size_t n) {

@@ -115,6 +115,12 @@ typedef struct gmsg_escape_walk {
 GMSG_API gmsg_escape_walk gmsg_walk_escaped(const uint8_t* buf, size_t size, size_t at, size_t n,
                                             const gmsg_escape_config* c, size_t pick_at, uint8_t* pick, size_t pick_n);
 
+/* Copy the n header bytes that follow the sync pattern (`prefix` bytes) at the start of buf[0..size) into out,
+ * unescaped when `escape` is enabled (NULL: no escaping). False while they have not all arrived, or when the escaping
+ * is invalid (the scanner reports that). Used by generated scanners to check the length against the message type. */
+GMSG_API bool gmsg_read_frame_header(const uint8_t* buf, size_t size, size_t prefix, const gmsg_escape_config* escape,
+                                     uint8_t* out, size_t n);
+
 /* ---- fixed-size frames -------------------------------------------------------------------------- */
 
 typedef struct gmsg_fixed_config {
@@ -327,6 +333,17 @@ GMSG_API bool gmsg_unescape_next(gmsg_unescape_iter* it, const uint8_t** p, size
     *p = it->wire + start;
     *len = it->i - start;
     return true;
+}
+
+GMSG_API bool gmsg_read_frame_header(const uint8_t* buf, size_t size, size_t prefix, const gmsg_escape_config* escape,
+                                     uint8_t* out, size_t n) {
+    if (escape == NULL || !escape->enabled) {
+        size_t i;
+        if (size < prefix + n) return false;
+        for (i = 0; i < n; ++i) out[i] = buf[prefix + i];
+        return true;
+    }
+    return gmsg_walk_escaped(buf, size, prefix, n, escape, 0, out, n).kind == GMSG_WALK_DONE;
 }
 
 GMSG_API size_t gmsg_escape_overhead(const uint8_t* raw, size_t n, const gmsg_escape_config* c) {

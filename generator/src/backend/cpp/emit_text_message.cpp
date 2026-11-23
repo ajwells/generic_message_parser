@@ -180,6 +180,16 @@ void emit_struct(Ctx& c, const Message& m) {
     w.line("return m;");
     w.close();
     w.line("static gmp::Result<" + m.name + "> decode(gmp::bytes_view data) noexcept { return decode_text(gmp::as_string_view(data)); }");
+    w.line("/// Like decode_text(s); `extra` receives the number of tokens after the message's own (which decode ignores).");
+    w.open("static gmp::Result<" + m.name + "> decode_text(std::string_view s, std::size_t& extra) noexcept {");
+    w.line("std::array<std::string_view, " + sz(m.token_count) + "> tok{};");
+    w.line("const std::size_t n = gmp::text::split(s, separator, tok);");
+    w.line(m.name + " m{};");
+    w.line("if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmp::fail(e.error());");
+    w.line("extra = n > token_count ? n - token_count : 0;");
+    w.line("return m;");
+    w.close();
+    w.line("static gmp::Result<" + m.name + "> decode(gmp::bytes_view data, std::size_t& extra) noexcept { return decode_text(gmp::as_string_view(data), extra); }");
     w.open("gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {");
     w.line("gmp::text::TextWriter w(out, separator);");
     w.line("if (auto e = write_text(w); !e) return gmp::fail(e.error());");
@@ -213,6 +223,8 @@ void emit_view(Ctx& c, const Message& m) {
     w.line("[[nodiscard]] std::string_view raw() const noexcept { return gmp_text_; }");
     w.line("/// Number of tokens actually present in the record (may differ from token_count).");
     w.line("[[nodiscard]] std::size_t present_tokens() const noexcept { return gmp_ntok_; }");
+    w.line("/// Tokens after the message's own (ignored; a protocol with exact_size rejects them).");
+    w.line("[[nodiscard]] std::size_t extra_tokens() const noexcept { return gmp_ntok_ > token_count ? gmp_ntok_ - token_count : 0; }");
     w.line("[[nodiscard]] std::string_view token(std::size_t i) const noexcept { return i < token_count ? gmp_tok_[i] : std::string_view{}; }");
     w.line();
     for (const auto& fp : m.fields) {

@@ -122,7 +122,11 @@ private:
                            ", wireIncludesTrailer: " +
                            (fr.length_covers == FramingSpec::LengthCovers::BodyChecksum ? "true" : "false");
                 w_.line("static framing = " + cfg + " };");
-                w_.line("static scan(b) { return gmsg.scanLengthPrefixed(b, " + n_ + ".framing); }");
+                if (p_.size_checks.empty()) {
+                    w_.line("static scan(b) { return gmsg.scanLengthPrefixed(b, " + n_ + ".framing); }");
+                    break;
+                }
+                emit_checked_scan();
                 break;
             }
             case FT::Delimited:
@@ -220,6 +224,39 @@ private:
         w_.line("return { typeId: p < 0 ? text : text.slice(0, p), body: p < 0 ? '' : text.slice(p + 1) };");
     }
 
+    static std::string size_fail(const SizeCheck& c) {
+        std::string s;
+        if (c.min > 0) s = "body < " + std::to_string(c.min);
+        if (c.max) s += (s.empty() ? "" : " || ") + std::string("body > ") + std::to_string(*c.max);
+        return s;
+    }
+
+    /// length_prefixed scan that also rejects a length the frame's message type cannot have, as soon as the header has
+    /// arrived (C++: the generated scan()).
+    void emit_checked_scan() {
+        w_.line(std::string("/** Scan for a frame; a length the message type cannot have (") +
+                (p_.exact_size ? "shorter or longer than the message" : "shorter than the message") +
+                ") is rejected with BadLength as soon as the header has arrived. */");
+        w_.open("static scan(b) {");
+        w_.line("const s = gmsg.scanLengthPrefixed(b, " + n_ + ".framing);");
+        w_.line("if (s.kind === 'skip') return s;");
+        w_.line("const h = gmsg.readFrameHeader(b, " + n_ + ".framing.sync.length, " + n_ + ".framing.escape, " + sz(p_.header_size) + ");");
+        w_.line("if (!h) return s;");
+        w_.line("const hv = " + n_ + ".HeaderView.unchecked(h);");
+        w_.line("const body = Number(hv." + ident(p_.framing.length->name) + ") + " + std::to_string(p_.length_to_body) + ";");
+        w_.line("const bad = { kind: 'skip', size: 1, consume: 0, consumeOnError: 0, error: Err.BadLength };");
+        if (p_.message_type.kind == MessageTypeSpec::Kind::None) {
+            w_.line("if (" + size_fail(p_.size_checks.front()) + ") return bad;");
+        } else {
+            w_.line("const id = gmsg.toInt(hv." + ident(p_.message_type.field->name) + ");");
+            for (const auto& c : p_.size_checks)
+                w_.line("if (id === " + type_id_literal(c.message) + " && (" + size_fail(c) + ")) return bad;  // " +
+                        p_.messages[c.message]->name);
+        }
+        w_.line("return s;");
+        w_.close();
+    }
+
     std::string type_id_literal(std::size_t i) const {
         const auto& id = p_.type_ids[i];
         if (auto* s = std::get_if<std::string>(&id)) return string_literal(*s);
@@ -230,6 +267,13 @@ private:
     void emit_select() {
         w_.line("/** The message view selected by the frame's type id (message_type). Throws GmpError (UnknownType, ...). */");
         w_.open("static select(f) {");
+        if (p_.exact_size) {
+            w_.line("const v = " + n_ + ".selectView(f);");
+            w_.line("if (gmsg.extraOf(v) !== 0) " + fail("BadLength") + "  // exact_size");
+            w_.line("return v;");
+            w_.close();
+            w_.open("static selectView(f) {");
+        }
         switch (p_.message_type.kind) {
             case MessageTypeSpec::Kind::None:
                 w_.line("return " + view_name(*p_.messages[0]) + ".from(f.body);");

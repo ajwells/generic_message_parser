@@ -107,6 +107,14 @@ struct Extended {
         if (auto e = m.read(r); !e) return gmp::fail(e.error());
         return m;
     }
+    /// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).
+    static gmp::Result<Extended> decode(gmp::bytes_view data, std::size_t& extra) noexcept {
+        Extended m{};
+        gmp::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        extra = data.size() - r.position();
+        return m;
+    }
     gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
         gmp::ByteWriter w(out);
         if (auto e = write(w); !e) return gmp::fail(e.error());
@@ -134,17 +142,21 @@ public:
         if (data.size() < 6) return gmp::fail(gmp::Error::Truncated);
         ExtendedView v;
         v.gmp_data_ = data.first(6);
+        v.gmp_extra_ = data.size() - 6;
         return v;
     }
     /// Build a view over data already validated by from() (no checks).
     [[nodiscard]] static ExtendedView unchecked(gmp::bytes_view data) noexcept {
         ExtendedView v;
         v.gmp_data_ = data.first(6);
+        v.gmp_extra_ = data.size() - 6;
         return v;
     }
 
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
+    /// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).
+    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }
 
     /// [degC]
     [[nodiscard]] std::int16_t temperature() const noexcept { return gmp::load<std::int16_t>(gmp_data_.data() + 0, gmp::Endian::big); }
@@ -165,6 +177,7 @@ public:
 
 private:
     gmp::bytes_view gmp_data_{};
+    std::size_t gmp_extra_ = 0;
 };
 
 /// Bit fields of Status.flags
@@ -298,6 +311,14 @@ struct Status {
         if (auto e = m.read(r); !e) return gmp::fail(e.error());
         return m;
     }
+    /// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).
+    static gmp::Result<Status> decode(gmp::bytes_view data, std::size_t& extra) noexcept {
+        Status m{};
+        gmp::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        extra = data.size() - r.position();
+        return m;
+    }
     gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
         gmp::ByteWriter w(out);
         if (auto e = write(w); !e) return gmp::fail(e.error());
@@ -366,6 +387,7 @@ public:
         pos += 8;
         v.gmp_off_[8] = static_cast<std::uint32_t>(pos);
         v.gmp_data_ = data.first(pos);
+        v.gmp_extra_ = data.size() - pos;
         return v;
     }
     /// Build a view over data already validated by from() (no checks).
@@ -375,6 +397,8 @@ public:
 
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
+    /// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).
+    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }
 
     /// [V]
     [[nodiscard]] std::uint16_t voltage() const noexcept { return gmp::load<std::uint16_t>(gmp_data_.data() + 1, gmp::Endian::big); }
@@ -407,6 +431,7 @@ public:
 
 private:
     gmp::bytes_view gmp_data_{};
+    std::size_t gmp_extra_ = 0;
     std::array<std::uint32_t, 9> gmp_off_{};
     std::uint64_t gmp_present_ = 0;
 };
@@ -455,6 +480,14 @@ struct Command {
         if (auto e = m.read(r); !e) return gmp::fail(e.error());
         return m;
     }
+    /// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).
+    static gmp::Result<Command> decode(gmp::bytes_view data, std::size_t& extra) noexcept {
+        Command m{};
+        gmp::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        extra = data.size() - r.position();
+        return m;
+    }
     gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
         gmp::ByteWriter w(out);
         if (auto e = write(w); !e) return gmp::fail(e.error());
@@ -495,6 +528,7 @@ public:
         }
         v.gmp_off_[3] = static_cast<std::uint32_t>(pos);
         v.gmp_data_ = data.first(pos);
+        v.gmp_extra_ = data.size() - pos;
         return v;
     }
     /// Build a view over data already validated by from() (no checks).
@@ -504,6 +538,8 @@ public:
 
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
+    /// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).
+    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }
 
     [[nodiscard]] std::uint16_t opcode() const noexcept { return gmp::load<std::uint16_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::uint8_t arg_len() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 2, gmp::Endian::big); }
@@ -523,6 +559,7 @@ public:
 
 private:
     gmp::bytes_view gmp_data_{};
+    std::size_t gmp_extra_ = 0;
     std::array<std::uint32_t, 4> gmp_off_{};
 };
 
@@ -574,6 +611,14 @@ struct Log {
         if (auto e = m.read(r); !e) return gmp::fail(e.error());
         return m;
     }
+    /// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).
+    static gmp::Result<Log> decode(gmp::bytes_view data, std::size_t& extra) noexcept {
+        Log m{};
+        gmp::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        extra = data.size() - r.position();
+        return m;
+    }
     gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
         gmp::ByteWriter w(out);
         if (auto e = write(w); !e) return gmp::fail(e.error());
@@ -614,6 +659,7 @@ public:
         pos = data.size();
         v.gmp_off_[3] = static_cast<std::uint32_t>(pos);
         v.gmp_data_ = data.first(pos);
+        v.gmp_extra_ = data.size() - pos;
         return v;
     }
     /// Build a view over data already validated by from() (no checks).
@@ -623,6 +669,8 @@ public:
 
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
+    /// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).
+    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }
 
     [[nodiscard]] std::uint8_t level() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::string_view text() const noexcept { return gmp::as_string_view(gmp_data_.subspan(1, (gmp_off_[2] - gmp_off_[1]) - 1)); }
@@ -642,6 +690,7 @@ public:
 
 private:
     gmp::bytes_view gmp_data_{};
+    std::size_t gmp_extra_ = 0;
     std::array<std::uint32_t, 4> gmp_off_{};
 };
 
@@ -677,6 +726,14 @@ struct BinaryLinkHeader {
         if (auto e = m.read(r); !e) return gmp::fail(e.error());
         return m;
     }
+    /// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).
+    static gmp::Result<BinaryLinkHeader> decode(gmp::bytes_view data, std::size_t& extra) noexcept {
+        BinaryLinkHeader m{};
+        gmp::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        extra = data.size() - r.position();
+        return m;
+    }
     gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
         gmp::ByteWriter w(out);
         if (auto e = write(w); !e) return gmp::fail(e.error());
@@ -703,17 +760,21 @@ public:
         if (data.size() < 3) return gmp::fail(gmp::Error::Truncated);
         BinaryLinkHeaderView v;
         v.gmp_data_ = data.first(3);
+        v.gmp_extra_ = data.size() - 3;
         return v;
     }
     /// Build a view over data already validated by from() (no checks).
     [[nodiscard]] static BinaryLinkHeaderView unchecked(gmp::bytes_view data) noexcept {
         BinaryLinkHeaderView v;
         v.gmp_data_ = data.first(3);
+        v.gmp_extra_ = data.size() - 3;
         return v;
     }
 
     [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
     [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
+    /// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).
+    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }
 
     [[nodiscard]] MsgId msg_id() const noexcept { return gmp::load<MsgId>(gmp_data_.data() + 0, gmp::Endian::big); }
     [[nodiscard]] std::uint16_t len() const noexcept { return gmp::load<std::uint16_t>(gmp_data_.data() + 1, gmp::Endian::big); }
@@ -731,6 +792,7 @@ public:
 
 private:
     gmp::bytes_view gmp_data_{};
+    std::size_t gmp_extra_ = 0;
 };
 
 struct BinaryLink {
@@ -758,10 +820,26 @@ struct BinaryLink {
         HeaderView header{};
         AnyView message;
         gmp::bytes_view bytes{};  ///< the whole frame as received
+        std::size_t extra = 0;  ///< bytes in the frame after the message (ignored)
     };
 
     static constexpr gmp::LengthPrefixedConfig framing_config{gmp::Pattern{{0xAA, 0x55}, 2}, 3, 2, gmp::Endian::big, 7, 7, max_frame};
-    static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_length_prefixed(b, framing_config); }
+    /// Scan for a frame. A length the frame's message type cannot have (shorter than the message) is rejected with BadLength as soon as the header has arrived.
+    static gmp::FrameScan scan(gmp::bytes_view b) noexcept {
+        const gmp::FrameScan s = gmp::scan_length_prefixed(b, framing_config);
+        if (s.kind == gmp::FrameScan::Kind::skip) return s;
+        std::array<std::uint8_t, header_size> h{};
+        if (!gmp::read_frame_header(b, framing_config.sync.len, framing_config.escape, gmp::mut_bytes(h))) return s;
+        const auto hv = HeaderView::unchecked(gmp::bytes_view(h));
+        const std::int64_t body = static_cast<std::int64_t>(hv.len()) + 0;
+        switch (gmp::to_int(hv.msg_id())) {
+            case 1: if (body < 14) return gmp::FrameScan::skip(1, gmp::Error::BadLength); break;  // Status
+            case 2: if (body < 3) return gmp::FrameScan::skip(1, gmp::Error::BadLength); break;  // Command
+            case 3: if (body < 2) return gmp::FrameScan::skip(1, gmp::Error::BadLength); break;  // Log
+            default: break;
+        }
+        return s;
+    }
 
     /// A validated frame split into its parts (views into the input buffer).
     struct Frame {
@@ -842,13 +920,15 @@ struct BinaryLink {
 
     /// StreamParser hook: validate a frame, select its message type and deliver it to `handler`.
     /// The handler is called as handler(header_view, message_view) or handler(message_view),
-    /// whichever it accepts; message types it does not accept are ignored.
+    /// whichever it accepts; message types it does not accept are ignored. `extra` (if given) receives the
+    /// bytes after the message in the frame.
     template <class H>
-    static gmp::Error process(gmp::mut_bytes frame, H& handler) {
+    static gmp::Error process(gmp::mut_bytes frame, H& handler, std::size_t* extra = nullptr) {
         auto f = open(frame);
         if (!f) return f.error();
         return visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
+            if (extra) *extra = gmp::extra_of(v);
             if constexpr (std::invocable<H&, const HeaderView&, const V&>) handler(f->header, v);
             else if constexpr (std::invocable<H&, const V&>) handler(v);
         });

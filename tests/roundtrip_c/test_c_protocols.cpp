@@ -110,6 +110,11 @@ struct Event {
     using Stream = CP##_stream; \
     static gmsg_error stream_init(Stream* s, std::uint8_t* b, std::size_t n) { return CP##_stream_init(s, b, n); } \
     static std::size_t feed(Stream* s, const std::uint8_t* d, std::size_t n) { return CP##_stream_feed(s, d, n); } \
+    static bool next(Stream* s) { return CP##_stream_next(s); } \
+    static bool resync(Stream* s) { return CP##_stream_resync(s); } \
+    static bool flush(Stream* s) { return CP##_stream_flush(s); } \
+    static void set_idle_timeout(Stream* s, std::uint32_t t) { CP##_stream_set_idle_timeout(s, t); } \
+    static bool tick(Stream* s, std::uint32_t now) { return CP##_stream_tick(s, now); } \
     static const gmsg_stream_stats* stats(const Stream* s) { return CP##_stream_stats(s); } \
     using Received = CP##_received; \
     using PollEvent = CP##_event; \
@@ -165,6 +170,8 @@ C_PROTOCOL(AdjustedC, test::framing::Adjusted, test_framing_adjusted);
 C_PROTOCOL(WholeFrameC, test::framing::WholeFrame, test_framing_whole_frame);
 C_PROTOCOL(EscapedWithEndC, test::framing::EscapedWithEnd, test_framing_escaped_with_end);
 C_PROTOCOL(FixedWithEndC, test::framing::FixedWithEnd, test_framing_fixed_with_end);
+C_PROTOCOL(LooseC, test::framing::Loose, test_framing_loose);
+C_PROTOCOL(ExactC, test::framing::Exact, test_framing_exact);
 C_PROTOCOL(HdlcC, link::hdlc::Hdlc, link_hdlc_hdlc);
 C_PROTOCOL(SummedC, link::hdlc::Summed, link_hdlc_summed);
 C_PROTOCOL_VIEW_ONLY(CustomFramerC, ext::Custom, ext_custom);
@@ -402,6 +409,9 @@ Bytes noisy_stream(const std::vector<Bytes>& valid, std::mt19937& rng) {
     return s;
 }
 
+/// Frames delivered with data after their message, summed over check_stream runs.
+std::size_t g_extra_frames = 0;
+
 template <class T>
 void check_stream(const std::vector<Bytes>& valid, unsigned seed) {
     using P = typename T::Cpp;
@@ -436,6 +446,8 @@ void check_stream(const std::vector<Bytes>& valid, unsigned seed) {
             CHECK(st->frame_errors == cpp.stats().frame_errors);
             CHECK(st->bytes_skipped == cpp.stats().bytes_skipped);
             CHECK(st->overflows == cpp.stats().overflows);
+            CHECK(st->frames_with_extra == cpp.stats().frames_with_extra);
+            g_extra_frames += cpp.stats().frames_with_extra;
         }
     }
     // the streams must exercise both delivered frames and resync after errors
@@ -490,6 +502,7 @@ void check_poll(const Bytes& data, std::size_t chunk, PollMode mode) {
                 Event ev = cpp_polled<P>(r->message);
                 if constexpr (has_header<P>) ev.header = bytes_of(r->header.data().data(), r->header.data().size());
                 ev.header.push_back(static_cast<std::uint8_t>(r->bytes.size()));  // frame size
+                ev.header.push_back(static_cast<std::uint8_t>(r->extra));         // data after the message
                 expected.push_back(std::move(ev));
             } else if (mode == PollMode::message) {
                 if constexpr (T::structs) {
@@ -541,6 +554,7 @@ void check_poll(const Bytes& data, std::size_t chunk, PollMode mode) {
                     ev.header = bytes_of(h.data, h.size);
                 }
                 ev.header.push_back(static_cast<std::uint8_t>(r.size));
+                ev.header.push_back(static_cast<std::uint8_t>(r.extra));
                 actual.push_back(std::move(ev));
             } else if (mode == PollMode::message) {
                 if constexpr (T::structs) {
@@ -595,6 +609,65 @@ void check_polls(const std::vector<Bytes>& valid, unsigned seed) {
 }
 
 /// Protocols without encoders: frames are given.
+/// Noisy streams fed in chunks, with resync / flush / idle ticks between the chunks (the same sequence for both
+/// languages; the clock wraps around): events, return values and statistics must match.
+template <class T>
+void check_recovery(const std::vector<Bytes>& valid, unsigned seed) {
+    using P = typename T::Cpp;
+    std::mt19937 rng(seed);
+    std::size_t resyncs = 0, flushes = 0;
+    for (int round = 0; round < 20; ++round) {
+        const Bytes data = noisy_stream(valid, rng);
+        const std::size_t chunk = 1 + rng() % 9;
+        const unsigned op_seed = rng();
+        INFO("round " << round << ", chunk " << chunk);
+        std::vector<Event> expected, actual;
+        typename P::template Stream<> cpp;
+        auto handler = cpp_recorder<P>(expected);
+        static std::array<std::uint8_t, 4096> buf;
+        typename T::Stream s;
+        REQUIRE(T::stream_init(&s, buf.data(), P::max_frame) == GMSG_OK);
+        s.cb = recording_callbacks<T>(actual);
+        cpp.set_idle_timeout(3);
+        T::set_idle_timeout(&s, 3);
+        std::mt19937 ops(op_seed);
+        std::uint32_t now = 0xFFFFFFF0u;  // wraps during the round
+        auto step = [&] {
+            const auto op = ops() % 10;
+            now += 1 + ops() % 2;
+            bool a = false, b = false;
+            if (op == 0) { a = cpp.resync(handler); b = T::resync(&s); }
+            else if (op == 1 && ops() % 4 == 0) { a = cpp.flush(handler); b = T::flush(&s); }
+            else { a = cpp.tick(now, handler); b = T::tick(&s, now); }
+            CHECK(a == b);
+            while (cpp.next(handler)) {}
+            while (T::next(&s)) {}
+        };
+        for (std::size_t pos = 0; pos < data.size(); pos += chunk) {
+            const std::size_t n = std::min(chunk, data.size() - pos);
+            (void)cpp.feed(gmp::bytes_view(data.data() + pos, n), handler);
+            (void)T::feed(&s, data.data() + pos, n);
+            step();
+        }
+        for (int k = 0; k < 12; ++k) step();  // the link goes quiet: idle ticks give up the frames left over
+        REQUIRE(actual.size() == expected.size());
+        for (std::size_t i = 0; i < actual.size(); ++i) {
+            INFO("event " << i);
+            CHECK(actual[i] == expected[i]);
+        }
+        const auto* st = T::stats(&s);
+        CHECK(st->frames == cpp.stats().frames);
+        CHECK(st->frame_errors == cpp.stats().frame_errors);
+        CHECK(st->bytes_skipped == cpp.stats().bytes_skipped);
+        CHECK(st->resyncs == cpp.stats().resyncs);
+        CHECK(st->flushes == cpp.stats().flushes);
+        resyncs += cpp.stats().resyncs;
+        flushes += cpp.stats().flushes;
+    }
+    CHECK(resyncs > 0);
+    CHECK(flushes > 0);
+}
+
 template <class T>
 void check_frames(const std::vector<Bytes>& valid, unsigned seed) {
     for (const auto& f : valid) {
@@ -607,6 +680,7 @@ void check_frames(const std::vector<Bytes>& valid, unsigned seed) {
     if constexpr (T::stream) {
         check_stream<T>(valid, seed + 2);
         check_polls<T>(valid, seed + 3);
+        check_recovery<T>(valid, seed + 4);
     }
 }
 
@@ -626,6 +700,7 @@ void check_protocol(unsigned seed) {
     if constexpr (T::stream) {
         check_stream<T>(valid, seed + 2);
         check_polls<T>(valid, seed + 3);
+        check_recovery<T>(valid, seed + 4);
     }
 }
 
@@ -663,6 +738,15 @@ TEST_CASE("generated C protocols match C++: length adjust, coverage modes, littl
     check_protocol<WholeFrameC>(51);
     check_protocol<EscapedWithEndC>(52);
     check_protocol<FixedWithEndC>(53);
+}
+
+TEST_CASE("generated C protocols match C++: data after the message (extra, exact_size)") {
+    g_extra_frames = 0;
+    check_protocol<LooseC>(54);
+    CHECK(g_extra_frames > 0);  // corrupted lengths produced frames with extra data
+    g_extra_frames = 0;
+    check_protocol<ExactC>(55);
+    CHECK(g_extra_frames == 0);  // exact_size rejects them
 }
 
 TEST_CASE("generated C protocols match C++: custom checksum, custom type in a message (hdlc)") {

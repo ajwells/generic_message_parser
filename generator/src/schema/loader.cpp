@@ -685,12 +685,13 @@ private:
             p->separator = s.default_separator;
             const auto& b = kv.second;
             check_keys(b, {"format", "endian", "separator", "doc", "header", "framing", "checksum", "message_type",
-                           "messages"},
+                           "messages", "exact_size"},
                        "protocol '" + p->name + "'");
             if (auto v = b["format"]) p->format = to_format(v);
             if (auto v = b["endian"]) p->endian = to_endian(v);
             if (auto v = b["separator"]) p->separator = to_char(v);
             if (auto v = b["doc"]) p->doc = to_str(v);
+            if (auto v = b["exact_size"]) p->exact_size = to_bool(v);
 
             p->header = std::make_shared<ir::Message>();
             p->header->name = p->name + "Header";

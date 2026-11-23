@@ -23,7 +23,7 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 - Toolchain PATH (Git Bash):
   `export PATH="/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/mingw/bin:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/ninja/win/x64:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin:$PATH"`
   (MinGW GCC 15, Ninja, CMake; yaml-cpp and Catch2 via FetchContent).
-- Debug build + tests: `cmake --build build && ctest --test-dir build` (254 tests, all passing, including `gmp_studio_tests`, the C runtime tests in C11 / C99 / library builds, the generated-C cross-checks, the JS runtime and generated-JS cross-checks and `gmp_studio_gmpc_fresh`). Keep the MinGW `bin` on PATH when running ctest: without it the test executables fail with 0xc0000139.
+- Debug build + tests: `cmake --build build && ctest --test-dir build` (268 tests, all passing, including `gmp_studio_tests`, the C runtime tests in C11 / C99 / library builds, the generated-C cross-checks, the JS runtime and generated-JS cross-checks and `gmp_studio_gmpc_fresh`). Keep the MinGW `bin` on PATH when running ctest: without it the test executables fail with 0xc0000139.
 - Node.js: none on PATH; CMake finds the copy inside emsdk (`~/emsdk/node/24.19.0_64bit/node.exe`, variable `GMP_NODE`). JS tests: `node tests/runtime_js/test_runtime.js build/tests/runtime_js/gmp_js_vectors.exe` and `node tests/roundtrip_js/test_generated.js build/tests/roundtrip_js/gmp_js_crossref.exe build/tests/roundtrip_js/gen`.
 - emsdk is installed in `~/emsdk` (latest). It needs Python 3.10+: a portable Python 3.12 is in `~/tools/python312`, and emsdk brings Python 3.13 and Node. `py tools/schema-studio/gmpc/build.py` (with the CLion CMake + Ninja on PATH) builds `gmpc.wasm` in `build-wasm/` (about 20 s) and writes `tools/schema-studio/gmpc/gmpc.js`, `gmpc.stamp`, `gmpc-info.js`. Rebuild after any change under `generator/` (the freshness test fails otherwise).
 - Release build: `cmake --build build-release` (Release, bench ON, tests and examples OFF; it is a compile check only).
@@ -121,6 +121,18 @@ Runtime:
 - `gmp/callbacks.hpp`: `CallbackSlot<Args...>` (function pointer + context + trampoline, no heap) and
   `callback_traits` / `callback_message_t`. A bound function may take all the slot's arguments or only the last one,
   so the header is passed only when asked for.
+- Recovery: `resync()` (give up an incomplete head frame: `Truncated`, drop 1 byte), `flush()` (drop all),
+  `set_idle_timeout(t)` + `tick(now)` (resync after `t` without new bytes; any monotonic `uint32_t` time,
+  wraparound-safe). They only drop data; errors go to the passed / stored handler. Stats `resyncs`, `flushes`. C:
+  `gmsg_stream_resync/flush/set_idle_timeout/tick` + generated `<p>_stream_*` wrappers; JS: same methods.
+- Data after the message: views `extra_bytes()` / text `extra_tokens()`, `decode(data, extra)` /
+  `decode_text(s, extra)` (C `_decode_extra`, JS `decodeWithExtra`), `gmp::extra_of(view or AnyView)`,
+  `Received::extra`, `stats().frames_with_extra` (C++ `process(frame, handler, &extra)`; C `gmsg_stream.last_extra`).
+  Protocol key `exact_size: true` rejects it with `BadLength` (not for fixed framing).
+- Length check by message type: lowering `derive_size_checks()` (`Protocol::size_checks`, `length_to_body`) for
+  `length_prefixed` binary protocols whose length counts unescaped bytes; the generated scanner reads the header
+  (`gmp::read_frame_header`, unescaping) and rejects a body below the message's min size (above its max only with
+  `exact_size`) with `BadLength` (skip 1) before the body arrives.
 - Table-driven `EscapeConfig`
   (`make_xor_escape` / `make_index_escape` / `make_map_escape`, `walk_escaped`, `escape_overhead`).
 - CRC presets incl. `crc8_nrsc5`; inline CRC parameters.
@@ -277,10 +289,12 @@ C runtime (`runtime-c/`, for the C backend):
 - The Studio suite does not cover every interactive edit, e.g. the drag splitter, renaming a type and its references,
   or adding and removing fields through the UI. Older scratchpad tests for those (position, rename, escape UI) were
   not recreated.
-- **Corrupted length below max_frame** delays good frames on an idle link (no timeout / per-type size check). See
-  future task "bad length handling".
+- **Corrupted lengths:** the per-type length check does not cover `length: { counts: wire }` (the escaped size cannot
+  be compared exactly) or text protocols. Without `exact_size`, a too-large length is valid (data after the message
+  is allowed), so only the idle `resync()` recovers; each false frame start inside the stuck bytes needs another idle
+  period. Studio's Quick decoder mirrors the length check, but only its accepted frames are cross-checked, not its
+  error texts.
 - Studio import and the Guide's live demos need internet for js-yaml (cdnjs); the rest works offline.
-- The Studio cross-check (`crossref.cpp`) does not include `tests/schemas/framing.yaml` yet, so the Studio decoder is not compared with C++ for length `adjust`, little-endian checksums or `end` after escaped fixed / length-prefixed frames (the YAML round trip is).
 - `build-release` does not build tests or examples; run tests in `build`.
 - C runtime library build: a different `GMSG_` option value in `gmp::runtime_c_lib` and in the code using it
   (e.g. `GMSG_USE_LIBC`, `GMSG_FLOAT_TEXT`) is not detected; set options on the library target as PUBLIC definitions.
@@ -302,7 +316,8 @@ C runtime (`runtime-c/`, for the C backend):
 | GMP skill evals, iteration 2 | Run all 7 cases in `skills/gmp/evals/` (4 new, harder ones), with the skill and with a baseline; runs must not read `skills/gmp/evals`. See memory note `skill-eval-todo`. |
 | ASCII numeric fields in binary messages | `{ type: u16, encoding: ascii, size: 4 }`, usable as length/count sources |
 | Value limits: clamping (not requested) | Value limits reject; an opt-in clamp (e.g. SHT4x humidity, where slightly out-of-range values are normal) was offered and deferred. Memory note `field-value-range-todo`. |
-| Bad length handling | per-message size check from the type id; `flush_partial()` for idle links; optional header checksum. Also: a frame whose length field is *longer* than its message is accepted and the extra bytes are ignored (found by a skill-eval run). Decide whether to offer an exact-size check. |
+| Header checksum (deferred) | Optional checksum over the header alone, for protocols that have one; add only when a real protocol needs it. Memory note `bad-length-handling-todo`. |
+| Per-message `exact_size` (future) | `exact_size` is per protocol for now; a per-message option was noted for later. |
 | Stream I/O + callbacks | decided: do all four, one at a time. **A** stored handler / callbacks: **done**. **C** ISR-safe ring buffer: design presented, **tabled** (open questions C1–C6 in the memory note). **B** pull API: **done**. Remaining: **C** (when resumed) and **D**, an endpoint with source/sink adapters, `send(msg)` and a blocking `wait_for<V>(timeout)` / `transact`. |
 | `gmp::to_text<N>(msg)` (small, optional) | printing helper returning a fresh `gmp::static_string<N>` instead of appending to a sink |
 | Rename C++ runtime macros/namespace? | The C runtime uses `gmsg_` / `GMSG_` to avoid GNU MP (`gmp_`, `GMP_`). Consider whether the C++ runtime should match: `namespace gmp` and `GMP_ASSERT` don't clash with GNU MP today (its C++ wrapper `gmpxx.h` has no `gmp` namespace), but the names are confusable and a future `GMP_*` macro could clash. Would touch the runtime, generated code, goldens, docs, Studio text and the skill. Ask the user. |
@@ -312,6 +327,26 @@ Each planned task has a detailed note (with open questions to ask the user) in t
 project.
 
 ## 8. Session history
+
+### 2026-11-22 (bad length handling: idle recovery, data after the message, length check by type)
+- Decisions (user): do the per-type size check, the idle flush (app-given idle time) and an exact-size check; header
+  checksum deferred. Recovery API: `set_idle_timeout(t)` + `tick(now)` (app supplies time); `resync()` gives up the
+  head frame, `flush()` drops everything; both report. Exact size: opt-in per protocol (`exact_size`; per message
+  later); when not opted in, data after the message is reported (views, decode overloads, `Received::extra`, stats),
+  extra text tokens count the same way; standalone decode keeps ignoring it.
+- Design choice: resync / flush / tick only drop data (in all three languages), because C streams always carry
+  callbacks and pull users would otherwise lose the recovered frames; delivery continues with next/feed/poll.
+- Note for the user: without `exact_size`, the length check can only reject too-short lengths (a longer body is
+  legal); too-large lengths are recovered by the idle resync, or rejected at once with `exact_size`.
+- Tests: `tests/roundtrip/test_stream_recovery.cpp`, `test_extra.cpp`; C-vs-C++ `check_recovery` (random
+  resync / flush / tick between chunks, wrapping clock) and new framing protocols `Loose` / `Exact` (no checksum) in
+  framing.yaml (C, JS and Studio cross-checks); JS cross-check recovery runs (recorded op strings) and view extra;
+  C view extra vs C++; Studio Quick decoder mirrors exact_size and the length check (an explicit extra-data frame
+  in the Studio crossref). Planted bugs: see this session's mutant list (all caught).
+- Docs: README (exact_size key, length check, "Recovering on an idle link", "Data after the message", stats,
+  Received), docs/schema.md, Guide (recovery / extra sections, API reference rows in C++ / C / JS), SKILL.md +
+  references.
+- End state: 268 ctest pass, Studio 735 checks pass, Release build compiles; 12 planted bugs all caught. Not committed.
 
 ### 2026-11-22 (value limits; `max` misuse is an error)
 - Decisions (user): `max` where it has no effect is an error (also on fixed-size containers when it does not match

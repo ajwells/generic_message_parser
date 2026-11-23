@@ -84,6 +84,8 @@ gmsg_error sensirion_sht4x_enum_command_frame_read(gmsg_reader* r, sensirion_sht
 gmsg_error sensirion_sht4x_enum_command_frame_write(const sensirion_sht4x_enum_command_frame* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error sensirion_sht4x_enum_command_frame_decode(const uint8_t* data, size_t size, sensirion_sht4x_enum_command_frame* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error sensirion_sht4x_enum_command_frame_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_enum_command_frame* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error sensirion_sht4x_enum_command_frame_encode(const sensirion_sht4x_enum_command_frame* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -93,9 +95,10 @@ void sensirion_sht4x_enum_command_frame_print(const sensirion_sht4x_enum_command
 typedef struct sensirion_sht4x_enum_command_frame_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } sensirion_sht4x_enum_command_frame_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error sensirion_sht4x_enum_command_frame_view_from(const uint8_t* data, size_t size, sensirion_sht4x_enum_command_frame_view* out);
 /* Build a view over data already validated by sensirion_sht4x_enum_command_frame_view_from() (no checks). */
 sensirion_sht4x_enum_command_frame_view sensirion_sht4x_enum_command_frame_view_unchecked(const uint8_t* data, size_t size);
@@ -103,6 +106,8 @@ sensirion_sht4x_enum_command_frame_view sensirion_sht4x_enum_command_frame_view_
 gmsg_error sensirion_sht4x_enum_command_frame_view_to_struct(const sensirion_sht4x_enum_command_frame_view* v, sensirion_sht4x_enum_command_frame* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void sensirion_sht4x_enum_command_frame_view_print(const sensirion_sht4x_enum_command_frame_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t sensirion_sht4x_enum_command_frame_view_extra_bytes(const sensirion_sht4x_enum_command_frame_view* v) { return v->extra; }
 
 static inline sensirion_sht4x_enum_command sensirion_sht4x_enum_command_frame_view_command(const sensirion_sht4x_enum_command_frame_view* v) {
     return (sensirion_sht4x_enum_command)gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -126,6 +131,8 @@ gmsg_error sensirion_sht4x_enum_measurement_read(gmsg_reader* r, sensirion_sht4x
 gmsg_error sensirion_sht4x_enum_measurement_write(const sensirion_sht4x_enum_measurement* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error sensirion_sht4x_enum_measurement_decode(const uint8_t* data, size_t size, sensirion_sht4x_enum_measurement* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error sensirion_sht4x_enum_measurement_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_enum_measurement* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error sensirion_sht4x_enum_measurement_encode(const sensirion_sht4x_enum_measurement* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -143,9 +150,10 @@ static inline void sensirion_sht4x_enum_measurement_set_humidity_scaled(sensirio
 typedef struct sensirion_sht4x_enum_measurement_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } sensirion_sht4x_enum_measurement_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error sensirion_sht4x_enum_measurement_view_from(const uint8_t* data, size_t size, sensirion_sht4x_enum_measurement_view* out);
 /* Build a view over data already validated by sensirion_sht4x_enum_measurement_view_from() (no checks). */
 sensirion_sht4x_enum_measurement_view sensirion_sht4x_enum_measurement_view_unchecked(const uint8_t* data, size_t size);
@@ -153,6 +161,8 @@ sensirion_sht4x_enum_measurement_view sensirion_sht4x_enum_measurement_view_unch
 gmsg_error sensirion_sht4x_enum_measurement_view_to_struct(const sensirion_sht4x_enum_measurement_view* v, sensirion_sht4x_enum_measurement* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void sensirion_sht4x_enum_measurement_view_print(const sensirion_sht4x_enum_measurement_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t sensirion_sht4x_enum_measurement_view_extra_bytes(const sensirion_sht4x_enum_measurement_view* v) { return v->extra; }
 
 /* [degC] */
 static inline uint16_t sensirion_sht4x_enum_measurement_view_temperature(const sensirion_sht4x_enum_measurement_view* v) {
@@ -184,6 +194,8 @@ gmsg_error sensirion_sht4x_enum_serial_number_read(gmsg_reader* r, sensirion_sht
 gmsg_error sensirion_sht4x_enum_serial_number_write(const sensirion_sht4x_enum_serial_number* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error sensirion_sht4x_enum_serial_number_decode(const uint8_t* data, size_t size, sensirion_sht4x_enum_serial_number* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error sensirion_sht4x_enum_serial_number_decode_extra(const uint8_t* data, size_t size, sensirion_sht4x_enum_serial_number* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error sensirion_sht4x_enum_serial_number_encode(const sensirion_sht4x_enum_serial_number* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -203,9 +215,10 @@ static inline void sensirion_sht4x_enum_serial_number_set_serial(sensirion_sht4x
 typedef struct sensirion_sht4x_enum_serial_number_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } sensirion_sht4x_enum_serial_number_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error sensirion_sht4x_enum_serial_number_view_from(const uint8_t* data, size_t size, sensirion_sht4x_enum_serial_number_view* out);
 /* Build a view over data already validated by sensirion_sht4x_enum_serial_number_view_from() (no checks). */
 sensirion_sht4x_enum_serial_number_view sensirion_sht4x_enum_serial_number_view_unchecked(const uint8_t* data, size_t size);
@@ -213,6 +226,8 @@ sensirion_sht4x_enum_serial_number_view sensirion_sht4x_enum_serial_number_view_
 gmsg_error sensirion_sht4x_enum_serial_number_view_to_struct(const sensirion_sht4x_enum_serial_number_view* v, sensirion_sht4x_enum_serial_number* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void sensirion_sht4x_enum_serial_number_view_print(const sensirion_sht4x_enum_serial_number_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t sensirion_sht4x_enum_serial_number_view_extra_bytes(const sensirion_sht4x_enum_serial_number_view* v) { return v->extra; }
 
 static inline uint16_t sensirion_sht4x_enum_serial_number_view_serial_high(const sensirion_sht4x_enum_serial_number_view* v) {
     return gmsg_load_u16(v->data + 0, GMSG_ENDIAN_BIG);
@@ -264,6 +279,7 @@ typedef struct sensirion_sht4x_enum_measurement_response_received {
     sensirion_sht4x_enum_measurement_response_any_view message;
     const uint8_t* bytes;  /* the frame as received */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } sensirion_sht4x_enum_measurement_response_received;
 
 /* Result of sensirion_sht4x_enum_measurement_response_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -303,6 +319,13 @@ gmsg_error sensirion_sht4x_enum_measurement_response_stream_init(sensirion_sht4x
 static inline size_t sensirion_sht4x_enum_measurement_response_stream_feed(sensirion_sht4x_enum_measurement_response_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t sensirion_sht4x_enum_measurement_response_stream_push(sensirion_sht4x_enum_measurement_response_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool sensirion_sht4x_enum_measurement_response_stream_next(sensirion_sht4x_enum_measurement_response_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool sensirion_sht4x_enum_measurement_response_stream_resync(sensirion_sht4x_enum_measurement_response_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool sensirion_sht4x_enum_measurement_response_stream_flush(sensirion_sht4x_enum_measurement_response_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void sensirion_sht4x_enum_measurement_response_stream_set_idle_timeout(sensirion_sht4x_enum_measurement_response_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool sensirion_sht4x_enum_measurement_response_stream_tick(sensirion_sht4x_enum_measurement_response_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void sensirion_sht4x_enum_measurement_response_stream_reset(sensirion_sht4x_enum_measurement_response_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* sensirion_sht4x_enum_measurement_response_stream_stats(const sensirion_sht4x_enum_measurement_response_stream* s) { return &s->base.stats; }
 static inline gmsg_error sensirion_sht4x_enum_measurement_response_stream_last_error(const sensirion_sht4x_enum_measurement_response_stream* s) { return s->base.last_error; }
@@ -362,6 +385,7 @@ typedef struct sensirion_sht4x_enum_serial_number_response_received {
     sensirion_sht4x_enum_serial_number_response_any_view message;
     const uint8_t* bytes;  /* the frame as received */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } sensirion_sht4x_enum_serial_number_response_received;
 
 /* Result of sensirion_sht4x_enum_serial_number_response_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -401,6 +425,13 @@ gmsg_error sensirion_sht4x_enum_serial_number_response_stream_init(sensirion_sht
 static inline size_t sensirion_sht4x_enum_serial_number_response_stream_feed(sensirion_sht4x_enum_serial_number_response_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t sensirion_sht4x_enum_serial_number_response_stream_push(sensirion_sht4x_enum_serial_number_response_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool sensirion_sht4x_enum_serial_number_response_stream_next(sensirion_sht4x_enum_serial_number_response_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool sensirion_sht4x_enum_serial_number_response_stream_resync(sensirion_sht4x_enum_serial_number_response_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool sensirion_sht4x_enum_serial_number_response_stream_flush(sensirion_sht4x_enum_serial_number_response_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void sensirion_sht4x_enum_serial_number_response_stream_set_idle_timeout(sensirion_sht4x_enum_serial_number_response_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool sensirion_sht4x_enum_serial_number_response_stream_tick(sensirion_sht4x_enum_serial_number_response_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void sensirion_sht4x_enum_serial_number_response_stream_reset(sensirion_sht4x_enum_serial_number_response_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* sensirion_sht4x_enum_serial_number_response_stream_stats(const sensirion_sht4x_enum_serial_number_response_stream* s) { return &s->base.stats; }
 static inline gmsg_error sensirion_sht4x_enum_serial_number_response_stream_last_error(const sensirion_sht4x_enum_serial_number_response_stream* s) { return s->base.last_error; }

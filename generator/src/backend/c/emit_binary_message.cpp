@@ -305,12 +305,14 @@ private:
     }
 
     void emit_prototypes() {
-        for (const char* fn : {"read", "write", "decode", "encode", "print"}) names_.add(fn, "function");
+        for (const char* fn : {"read", "write", "decode", "decode_extra", "encode", "print"}) names_.add(fn, "function");
         h_.line("/* Read / write one " + m_.name + " at a cursor. */");
         h_.line("gmsg_error " + t_ + "_read(gmsg_reader* r, " + t_ + "* m);");
         h_.line("gmsg_error " + t_ + "_write(const " + t_ + "* m, gmsg_writer* w);");
         h_.line("/* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */");
         h_.line("gmsg_error " + t_ + "_decode(const uint8_t* data, size_t size, " + t_ + "* out);");
+        h_.line("/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */");
+        h_.line("gmsg_error " + t_ + "_decode_extra(const uint8_t* data, size_t size, " + t_ + "* out, size_t* extra);");
         h_.line("/* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */");
         h_.line("gmsg_error " + t_ + "_encode(const " + t_ + "* m, uint8_t* out, size_t capacity, size_t* written);");
         h_.line("/* Human readable dump (gmp/c/print.h). */");
@@ -662,6 +664,15 @@ private:
         s_.line("return " + t_ + "_read(&r, out);");
         s_.close();
         s_.line();
+        s_.open("gmsg_error " + t_ + "_decode_extra(const uint8_t* data, size_t size, " + t_ + "* out, size_t* extra) {");
+        s_.line("gmsg_reader r = gmsg_reader_init(data, size);");
+        s_.line("gmsg_error e;");
+        s_.line("gmsg_memset(out, 0, sizeof *out);");
+        s_.line("e = " + t_ + "_read(&r, out);");
+        s_.line("*extra = e == GMSG_OK ? size - r.pos : 0;");
+        s_.line("return e;");
+        s_.close();
+        s_.line();
         s_.open("gmsg_error " + t_ + "_encode(const " + t_ + "* m, uint8_t* out, size_t capacity, size_t* written) {");
         s_.line("gmsg_writer w = gmsg_writer_init(out, capacity);");
         s_.line("const gmsg_error e = " + t_ + "_write(m, &w);");
@@ -777,12 +788,13 @@ public:
         h_.open("typedef struct " + v_ + " {");
         h_.line("const uint8_t* data;");
         h_.line("size_t size;  /* bytes of this message */");
+        h_.line("size_t extra;  /* bytes after the message in the data given to _from (ignored) */");
         if (dynamic_) h_.line("uint32_t off[" + sz(m_.fields.size() + 1) + "];  /* field offsets */");
         if (m_.conditional_count) h_.line("uint64_t present;  /* one bit per conditional field */");
         h_.close("} " + v_ + ";");
         h_.line();
-        for (const char* fn : {"from", "unchecked", "to_struct", "print"}) names_.add(fn, "function");
-        h_.line("/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */");
+        for (const char* fn : {"from", "unchecked", "to_struct", "print", "extra_bytes"}) names_.add(fn, "function");
+        h_.line("/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */");
         h_.line("gmsg_error " + v_ + "_from(const uint8_t* data, size_t size, " + v_ + "* out);");
         h_.line("/* Build a view over data already validated by " + v_ + "_from() (no checks). */");
         h_.line(v_ + " " + v_ + "_unchecked(const uint8_t* data, size_t size);");
@@ -792,6 +804,8 @@ public:
         }
         h_.line("/* Human readable dump (gmp/c/print.h); same text as the struct. */");
         h_.line("void " + v_ + "_print(const " + v_ + "* v, gmsg_printer* p);");
+        h_.line("/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */");
+        h_.line("static inline size_t " + v_ + "_extra_bytes(const " + v_ + "* v) { return v->extra; }");
         h_.line();
         for (const auto& f : m_.fields) emit_accessor(*f);
         emit_computed_accessors();
@@ -986,6 +1000,7 @@ private:
             for (const auto& f : m_.fields) validate_static(*f, sz(*f->static_offset));
             s_.line("out->data = data;");
             s_.line("out->size = " + sz(*m_.static_size) + ";");
+            s_.line("out->extra = size - " + sz(*m_.static_size) + ";");
             s_.line("return GMSG_OK;");
             s_.close();
             s_.line();
@@ -1008,6 +1023,7 @@ private:
         }
         s_.line("v.off[" + sz(m_.fields.size()) + "] = (uint32_t)pos;");
         s_.line("v.size = pos;");
+        s_.line("v.extra = size - pos;");
         s_.line("*out = v;");
         s_.line("return GMSG_OK;");
         s_.close();
@@ -1132,9 +1148,9 @@ private:
         s_.line(v_ + " v;");
         s_.line("gmsg_memset(&v, 0, sizeof v);");
         if (!dynamic_) {
-            s_.line("(void)size;");
             s_.line("v.data = data;");
             s_.line("v.size = " + sz(*m_.static_size) + ";");
+            s_.line("v.extra = size - " + sz(*m_.static_size) + ";");
         } else {
             s_.line("(void)" + v_ + "_from(data, size, &v);");
         }

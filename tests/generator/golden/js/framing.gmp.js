@@ -40,6 +40,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Reading.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Reading.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Reading.write(w, m); return w.toBytes(); }
     encode() { return Reading.encode(this); }
@@ -61,7 +63,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Reading';
     static minWireSize = 5;
     static wireSize = 5;
@@ -70,14 +73,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 5) gmsg.fail(Err.Truncated);
-      return new ReadingView(data.subarray(0, 5), null, null);
+      return new ReadingView(data.subarray(0, 5), null, null, data.length - 5);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new ReadingView(data.subarray(0, 5), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new ReadingView(data.subarray(0, 5), null, null, data.length - 5); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get channel() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get value() { return gmsg.load(this.#b, 1, 'i32', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -147,6 +152,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Note.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Note.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Note.write(w, m); return w.toBytes(); }
     encode() { return Note.encode(this); }
@@ -168,7 +175,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Note';
     static minWireSize = 1;
 
@@ -188,6 +196,7 @@
       }
       v.#o[2] = pos;
       v.#b = data.subarray(0, pos);
+      v.#x = data.length - pos;
       return v;
     }
     /** A view over data already validated by from() (no checks). */
@@ -196,6 +205,8 @@
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get n() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get text() { return gmsg.latin1String(this.#b, 1, 1 + (this.#o[2] - this.#o[1])); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -258,6 +269,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return AdjustedHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = AdjustedHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); AdjustedHeader.write(w, m); return w.toBytes(); }
     encode() { return AdjustedHeader.encode(this); }
@@ -279,7 +292,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'AdjustedHeader';
     static minWireSize = 3;
     static wireSize = 3;
@@ -288,14 +302,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 3) gmsg.fail(Err.Truncated);
-      return new AdjustedHeaderView(data.subarray(0, 3), null, null);
+      return new AdjustedHeaderView(data.subarray(0, 3), null, null, data.length - 3);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new AdjustedHeaderView(data.subarray(0, 3), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new AdjustedHeaderView(data.subarray(0, 3), null, null, data.length - 3); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get id() { return gmsg.load(this.#b, 0, 'u8', 'little'); }
     get len() { return gmsg.load(this.#b, 1, 'u16', 'little'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -344,7 +360,20 @@
     static messages = [Reading, Note];
     static escape = gmsg.NO_ESCAPE;
     static framing = { sync: this.prefix, lengthOffset: 2, lengthSize: 2, lengthEndian: 'little', add: 4, minFrame: 8, maxFrame: this.maxFrame, escape: this.escape, suffixLen: 0 };
-    static scan(b) { return gmsg.scanLengthPrefixed(b, Adjusted.framing); }
+    /** Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BadLength as soon as the header has arrived. */
+    static scan(b) {
+      const s = gmsg.scanLengthPrefixed(b, Adjusted.framing);
+      if (s.kind === 'skip') return s;
+      const h = gmsg.readFrameHeader(b, Adjusted.framing.sync.length, Adjusted.framing.escape, 3);
+      if (!h) return s;
+      const hv = Adjusted.HeaderView.unchecked(h);
+      const body = Number(hv.len) + -4;
+      const bad = { kind: 'skip', size: 1, consume: 0, consumeOnError: 0, error: Err.BadLength };
+      const id = gmsg.toInt(hv.id);
+      if (id === 1n && (body < 5)) return bad;  // Reading
+      if (id === 2n && (body < 1)) return bad;  // Note
+      return s;
+    }
     /** Validate one complete frame (as found by scan()) and split it: { header, body } (text: { typeId, body }). */
     static open(frame) {
       frame = gmsg.toBytes(frame);
@@ -461,6 +490,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return WholeFrameHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = WholeFrameHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); WholeFrameHeader.write(w, m); return w.toBytes(); }
     encode() { return WholeFrameHeader.encode(this); }
@@ -482,7 +513,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'WholeFrameHeader';
     static minWireSize = 2;
     static wireSize = 2;
@@ -491,14 +523,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 2) gmsg.fail(Err.Truncated);
-      return new WholeFrameHeaderView(data.subarray(0, 2), null, null);
+      return new WholeFrameHeaderView(data.subarray(0, 2), null, null, data.length - 2);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new WholeFrameHeaderView(data.subarray(0, 2), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new WholeFrameHeaderView(data.subarray(0, 2), null, null, data.length - 2); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get len() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get id() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -547,7 +581,20 @@
     static messages = [Reading, Note];
     static escape = gmsg.NO_ESCAPE;
     static framing = { sync: this.prefix, lengthOffset: 2, lengthSize: 1, lengthEndian: 'big', add: 2, minFrame: 5, maxFrame: this.maxFrame, escape: this.escape, suffixLen: 0 };
-    static scan(b) { return gmsg.scanLengthPrefixed(b, WholeFrame.framing); }
+    /** Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BadLength as soon as the header has arrived. */
+    static scan(b) {
+      const s = gmsg.scanLengthPrefixed(b, WholeFrame.framing);
+      if (s.kind === 'skip') return s;
+      const h = gmsg.readFrameHeader(b, WholeFrame.framing.sync.length, WholeFrame.framing.escape, 2);
+      if (!h) return s;
+      const hv = WholeFrame.HeaderView.unchecked(h);
+      const body = Number(hv.len) + -3;
+      const bad = { kind: 'skip', size: 1, consume: 0, consumeOnError: 0, error: Err.BadLength };
+      const id = gmsg.toInt(hv.id);
+      if (id === 1n && (body < 5)) return bad;  // Reading
+      if (id === 2n && (body < 1)) return bad;  // Note
+      return s;
+    }
     /** Validate one complete frame (as found by scan()) and split it: { header, body } (text: { typeId, body }). */
     static open(frame) {
       frame = gmsg.toBytes(frame);
@@ -664,6 +711,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return EscapedWithEndHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = EscapedWithEndHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); EscapedWithEndHeader.write(w, m); return w.toBytes(); }
     encode() { return EscapedWithEndHeader.encode(this); }
@@ -685,7 +734,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'EscapedWithEndHeader';
     static minWireSize = 2;
     static wireSize = 2;
@@ -694,14 +744,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 2) gmsg.fail(Err.Truncated);
-      return new EscapedWithEndHeaderView(data.subarray(0, 2), null, null);
+      return new EscapedWithEndHeaderView(data.subarray(0, 2), null, null, data.length - 2);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new EscapedWithEndHeaderView(data.subarray(0, 2), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new EscapedWithEndHeaderView(data.subarray(0, 2), null, null, data.length - 2); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get id() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     get len() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -750,7 +802,20 @@
     static messages = [Reading, Note];
     static escape = gmsg.xorEscape(125, 32, [126, 13]);
     static framing = { sync: this.prefix, lengthOffset: 2, lengthSize: 1, lengthEndian: 'big', add: 4, minFrame: 6, maxFrame: this.maxFrame, escape: this.escape, suffixLen: 1 };
-    static scan(b) { return gmsg.scanLengthPrefixed(b, EscapedWithEnd.framing); }
+    /** Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BadLength as soon as the header has arrived. */
+    static scan(b) {
+      const s = gmsg.scanLengthPrefixed(b, EscapedWithEnd.framing);
+      if (s.kind === 'skip') return s;
+      const h = gmsg.readFrameHeader(b, EscapedWithEnd.framing.sync.length, EscapedWithEnd.framing.escape, 2);
+      if (!h) return s;
+      const hv = EscapedWithEnd.HeaderView.unchecked(h);
+      const body = Number(hv.len) + -2;
+      const bad = { kind: 'skip', size: 1, consume: 0, consumeOnError: 0, error: Err.BadLength };
+      const id = gmsg.toInt(hv.id);
+      if (id === 1n && (body < 5)) return bad;  // Reading
+      if (id === 2n && (body < 1)) return bad;  // Note
+      return s;
+    }
     /** Validate one complete frame (as found by scan()) and split it: { header, body } (text: { typeId, body }). */
     static open(frame) {
       frame = gmsg.toBytes(frame);
@@ -865,6 +930,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return FixedWithEndHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = FixedWithEndHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); FixedWithEndHeader.write(w, m); return w.toBytes(); }
     encode() { return FixedWithEndHeader.encode(this); }
@@ -884,7 +951,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'FixedWithEndHeader';
     static minWireSize = 1;
     static wireSize = 1;
@@ -893,14 +961,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 1) gmsg.fail(Err.Truncated);
-      return new FixedWithEndHeaderView(data.subarray(0, 1), null, null);
+      return new FixedWithEndHeaderView(data.subarray(0, 1), null, null, data.length - 1);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new FixedWithEndHeaderView(data.subarray(0, 1), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new FixedWithEndHeaderView(data.subarray(0, 1), null, null, data.length - 1); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get id() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
      *  property (null for padding and constants). */
@@ -1006,5 +1076,438 @@
     }
   }
 
-  return Object.freeze({ Reading, ReadingView, Note, NoteView, AdjustedHeader, AdjustedHeaderView, Adjusted, WholeFrameHeader, WholeFrameHeaderView, WholeFrame, EscapedWithEndHeader, EscapedWithEndHeaderView, EscapedWithEnd, FixedWithEndHeader, FixedWithEndHeaderView, FixedWithEnd });
+  class LooseHeader {
+    constructor(init) {
+      this.id = 0;
+      this.len = 0;
+      if (init) Object.assign(this, init);
+    }
+    static messageName = 'LooseHeader';
+    static minWireSize = 2;
+    static maxWireSize = 2;
+    static wireSize = 2;
+
+    static read(r) {
+      const m = new LooseHeader();
+      {
+        const v0 = r.read('u8', 'big');
+        m.id = v0;
+      }
+      {
+        const v0 = r.read('u8', 'big');
+        m.len = v0;
+      }
+      return m;
+    }
+    static write(w, m) {
+      w.write('u8', m.id, 'big');
+      w.write('u8', m.len, 'big');
+    }
+    /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
+    static decode(bytes) { return LooseHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = LooseHeader.read(r); return { message, extra: r.remaining }; }
+    /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
+    static encode(m) { const w = new gmsg.Writer(); LooseHeader.write(w, m); return w.toBytes(); }
+    encode() { return LooseHeader.encode(this); }
+    /** A validated zero-copy view over encoded bytes. */
+    static view(bytes) { return LooseHeaderView.from(bytes); }
+    printTo(p) {
+      p.begin('LooseHeader');
+      p.key('id');
+      p.int(this.id);
+      p.key('len');
+      p.int(this.len);
+      p.end();
+    }
+    toString(opts) { return gmsg.print(this, opts); }
+  }
+
+  // Zero-copy view over an encoded LooseHeader; fields are read on access.
+  class LooseHeaderView {
+    #b;
+    #o;
+    #p;
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
+    static messageName = 'LooseHeader';
+    static minWireSize = 2;
+    static wireSize = 2;
+
+    /** Validate `data` and build a view. Trailing bytes beyond the message are ignored. Throws GmpError. */
+    static from(data) {
+      data = gmsg.toBytes(data);
+      if (data.length < 2) gmsg.fail(Err.Truncated);
+      return new LooseHeaderView(data.subarray(0, 2), null, null, data.length - 2);
+    }
+    /** A view over data already validated by from() (no checks). */
+    static unchecked(data) { data = gmsg.toBytes(data); return new LooseHeaderView(data.subarray(0, 2), null, null, data.length - 2); }
+
+    /** The message bytes. */
+    get data() { return this.#b; }
+    get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
+    get id() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
+    get len() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
+    /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
+     *  property (null for padding and constants). */
+    ranges() {
+      const out = [];
+      out.push({ name: 'id', key: 'id', start: 0, end: 0 + 1 });
+      out.push({ name: 'len', key: 'len', start: 1, end: 1 + 1 });
+      return out;
+    }
+    printTo(p) {
+      p.begin('LooseHeader');
+      {
+        const x = this.id;
+        {
+          p.key('id');
+          p.int(x);
+        }
+      }
+      {
+        const x = this.len;
+        {
+          p.key('len');
+          p.int(x);
+        }
+      }
+      p.end();
+    }
+    toString(opts) { return gmsg.print(this, opts); }
+    /** Decode into the struct class. */
+    toStruct() { return LooseHeader.decode(this.#b); }
+  }
+
+  class Loose {
+    static maxFrame = 40;
+    static prefixSize = 1;  // sync / start delimiter
+    static headerSize = 2;
+    static trailerSize = 0;  // binary checksum
+    static suffixSize = 0;  // end delimiter
+    static prefix = Uint8Array.of(181);
+    static suffix = Uint8Array.of();
+    static Header = LooseHeader;
+    static HeaderView = LooseHeaderView;
+    /** The message views of this protocol. */
+    static views = [ReadingView, NoteView];
+    static messages = [Reading, Note];
+    static escape = gmsg.NO_ESCAPE;
+    static framing = { sync: this.prefix, lengthOffset: 2, lengthSize: 1, lengthEndian: 'big', add: 3, minFrame: 3, maxFrame: this.maxFrame, escape: this.escape, suffixLen: 0 };
+    /** Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BadLength as soon as the header has arrived. */
+    static scan(b) {
+      const s = gmsg.scanLengthPrefixed(b, Loose.framing);
+      if (s.kind === 'skip') return s;
+      const h = gmsg.readFrameHeader(b, Loose.framing.sync.length, Loose.framing.escape, 2);
+      if (!h) return s;
+      const hv = Loose.HeaderView.unchecked(h);
+      const body = Number(hv.len) + 0;
+      const bad = { kind: 'skip', size: 1, consume: 0, consumeOnError: 0, error: Err.BadLength };
+      const id = gmsg.toInt(hv.id);
+      if (id === 1n && (body < 5)) return bad;  // Reading
+      if (id === 2n && (body < 1)) return bad;  // Note
+      return s;
+    }
+    /** Validate one complete frame (as found by scan()) and split it: { header, body } (text: { typeId, body }). */
+    static open(frame) {
+      frame = gmsg.toBytes(frame);
+      if (frame.length < 3) gmsg.fail(Err.Truncated);
+      const fr = frame;
+      const interior = fr.subarray(1, fr.length - 0);
+      if (interior.length < 2 + 0) gmsg.fail(Err.Truncated);
+      const f = {};
+      f.header = LooseHeaderView.from(interior.subarray(0, 2));
+      f.body = interior.subarray(2, interior.length - 0);
+      return f;
+    }
+    /** The message view selected by the frame's type id (message_type). Throws GmpError (UnknownType, ...). */
+    static select(f) {
+      const id = gmsg.toInt(f.header.id);
+      if (id === 1n) return ReadingView.from(f.body);
+      if (id === 2n) return NoteView.from(f.body);
+      return gmsg.fail(Err.UnknownType);
+    }
+    /** gmsg.StreamParser hook: { header, message } of a complete frame. */
+    static process(frame) {
+      const f = Loose.open(frame);
+      return { header: f.header, message: Loose.select(f) };
+    }
+    /** Parse one frame at the start of `buffer` (whole-buffer / datagram mode): the message view. */
+    static parse(buffer) {
+      buffer = gmsg.toBytes(buffer);
+      const s = Loose.scan(buffer);
+      if (s.kind === 'need_more') gmsg.fail(Err.Truncated);
+      if (s.kind === 'skip') gmsg.fail(s.error === Err.None ? Err.BadSync : s.error);
+      return Loose.select(Loose.open(buffer.subarray(0, s.size)));
+    }
+    /** Parse one frame and decode it into its message class. */
+    static decode(buffer) { return Loose.parse(buffer).toStruct(); }
+    /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
+    static stream(options) { return new gmsg.StreamParser(Loose, options); }
+    /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
+    static encode(m, header) {
+      if (m instanceof Reading) return Loose.#encode0(m, header);
+      if (m instanceof Note) return Loose.#encode1(m, header);
+      return gmsg.fail(Err.InvalidValue, 'not a message of Loose (use the message classes)');
+    }
+    static #encode0(m, header) {
+      const w = new gmsg.Writer();
+      w.put(Loose.prefix);
+      const headerAt = w.pos;
+      const h = Object.assign(new LooseHeader(), header);
+      h.id = 1;
+      LooseHeader.write(w, h);
+      const bodyAt = w.pos;
+      Reading.write(w, m);
+      const bodyLen = w.pos - bodyAt;
+      {
+        const value = BigInt(bodyLen) - (0n);
+        if (value < 0n || value > 255n) gmsg.fail(Err.BadLength);
+        w.patchUint(headerAt + 1, value, 1, 'big');
+      }
+      let out = w.toBytes();
+      return out;
+    }
+    static #encode1(m, header) {
+      const w = new gmsg.Writer();
+      w.put(Loose.prefix);
+      const headerAt = w.pos;
+      const h = Object.assign(new LooseHeader(), header);
+      h.id = 2;
+      LooseHeader.write(w, h);
+      const bodyAt = w.pos;
+      Note.write(w, m);
+      const bodyLen = w.pos - bodyAt;
+      {
+        const value = BigInt(bodyLen) - (0n);
+        if (value < 0n || value > 255n) gmsg.fail(Err.BadLength);
+        w.patchUint(headerAt + 1, value, 1, 'big');
+      }
+      let out = w.toBytes();
+      return out;
+    }
+  }
+
+  class ExactHeader {
+    constructor(init) {
+      this.id = 0;
+      this.len = 0;
+      if (init) Object.assign(this, init);
+    }
+    static messageName = 'ExactHeader';
+    static minWireSize = 2;
+    static maxWireSize = 2;
+    static wireSize = 2;
+
+    static read(r) {
+      const m = new ExactHeader();
+      {
+        const v0 = r.read('u8', 'big');
+        m.id = v0;
+      }
+      {
+        const v0 = r.read('u8', 'big');
+        m.len = v0;
+      }
+      return m;
+    }
+    static write(w, m) {
+      w.write('u8', m.id, 'big');
+      w.write('u8', m.len, 'big');
+    }
+    /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
+    static decode(bytes) { return ExactHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = ExactHeader.read(r); return { message, extra: r.remaining }; }
+    /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
+    static encode(m) { const w = new gmsg.Writer(); ExactHeader.write(w, m); return w.toBytes(); }
+    encode() { return ExactHeader.encode(this); }
+    /** A validated zero-copy view over encoded bytes. */
+    static view(bytes) { return ExactHeaderView.from(bytes); }
+    printTo(p) {
+      p.begin('ExactHeader');
+      p.key('id');
+      p.int(this.id);
+      p.key('len');
+      p.int(this.len);
+      p.end();
+    }
+    toString(opts) { return gmsg.print(this, opts); }
+  }
+
+  // Zero-copy view over an encoded ExactHeader; fields are read on access.
+  class ExactHeaderView {
+    #b;
+    #o;
+    #p;
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
+    static messageName = 'ExactHeader';
+    static minWireSize = 2;
+    static wireSize = 2;
+
+    /** Validate `data` and build a view. Trailing bytes beyond the message are ignored. Throws GmpError. */
+    static from(data) {
+      data = gmsg.toBytes(data);
+      if (data.length < 2) gmsg.fail(Err.Truncated);
+      return new ExactHeaderView(data.subarray(0, 2), null, null, data.length - 2);
+    }
+    /** A view over data already validated by from() (no checks). */
+    static unchecked(data) { data = gmsg.toBytes(data); return new ExactHeaderView(data.subarray(0, 2), null, null, data.length - 2); }
+
+    /** The message bytes. */
+    get data() { return this.#b; }
+    get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
+    get id() { return gmsg.load(this.#b, 0, 'u8', 'big'); }
+    get len() { return gmsg.load(this.#b, 1, 'u8', 'big'); }
+    /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
+     *  property (null for padding and constants). */
+    ranges() {
+      const out = [];
+      out.push({ name: 'id', key: 'id', start: 0, end: 0 + 1 });
+      out.push({ name: 'len', key: 'len', start: 1, end: 1 + 1 });
+      return out;
+    }
+    printTo(p) {
+      p.begin('ExactHeader');
+      {
+        const x = this.id;
+        {
+          p.key('id');
+          p.int(x);
+        }
+      }
+      {
+        const x = this.len;
+        {
+          p.key('len');
+          p.int(x);
+        }
+      }
+      p.end();
+    }
+    toString(opts) { return gmsg.print(this, opts); }
+    /** Decode into the struct class. */
+    toStruct() { return ExactHeader.decode(this.#b); }
+  }
+
+  class Exact {
+    static maxFrame = 40;
+    static prefixSize = 1;  // sync / start delimiter
+    static headerSize = 2;
+    static trailerSize = 0;  // binary checksum
+    static suffixSize = 0;  // end delimiter
+    static prefix = Uint8Array.of(181);
+    static suffix = Uint8Array.of();
+    static Header = ExactHeader;
+    static HeaderView = ExactHeaderView;
+    /** The message views of this protocol. */
+    static views = [ReadingView, NoteView];
+    static messages = [Reading, Note];
+    static escape = gmsg.NO_ESCAPE;
+    static framing = { sync: this.prefix, lengthOffset: 2, lengthSize: 1, lengthEndian: 'big', add: 3, minFrame: 3, maxFrame: this.maxFrame, escape: this.escape, suffixLen: 0 };
+    /** Scan for a frame; a length the message type cannot have (shorter or longer than the message) is rejected with BadLength as soon as the header has arrived. */
+    static scan(b) {
+      const s = gmsg.scanLengthPrefixed(b, Exact.framing);
+      if (s.kind === 'skip') return s;
+      const h = gmsg.readFrameHeader(b, Exact.framing.sync.length, Exact.framing.escape, 2);
+      if (!h) return s;
+      const hv = Exact.HeaderView.unchecked(h);
+      const body = Number(hv.len) + 0;
+      const bad = { kind: 'skip', size: 1, consume: 0, consumeOnError: 0, error: Err.BadLength };
+      const id = gmsg.toInt(hv.id);
+      if (id === 1n && (body < 5 || body > 5)) return bad;  // Reading
+      if (id === 2n && (body < 1 || body > 25)) return bad;  // Note
+      return s;
+    }
+    /** Validate one complete frame (as found by scan()) and split it: { header, body } (text: { typeId, body }). */
+    static open(frame) {
+      frame = gmsg.toBytes(frame);
+      if (frame.length < 3) gmsg.fail(Err.Truncated);
+      const fr = frame;
+      const interior = fr.subarray(1, fr.length - 0);
+      if (interior.length < 2 + 0) gmsg.fail(Err.Truncated);
+      const f = {};
+      f.header = ExactHeaderView.from(interior.subarray(0, 2));
+      f.body = interior.subarray(2, interior.length - 0);
+      return f;
+    }
+    /** The message view selected by the frame's type id (message_type). Throws GmpError (UnknownType, ...). */
+    static select(f) {
+      const v = Exact.selectView(f);
+      if (gmsg.extraOf(v) !== 0) gmsg.fail(Err.BadLength);  // exact_size
+      return v;
+    }
+    static selectView(f) {
+      const id = gmsg.toInt(f.header.id);
+      if (id === 1n) return ReadingView.from(f.body);
+      if (id === 2n) return NoteView.from(f.body);
+      return gmsg.fail(Err.UnknownType);
+    }
+    /** gmsg.StreamParser hook: { header, message } of a complete frame. */
+    static process(frame) {
+      const f = Exact.open(frame);
+      return { header: f.header, message: Exact.select(f) };
+    }
+    /** Parse one frame at the start of `buffer` (whole-buffer / datagram mode): the message view. */
+    static parse(buffer) {
+      buffer = gmsg.toBytes(buffer);
+      const s = Exact.scan(buffer);
+      if (s.kind === 'need_more') gmsg.fail(Err.Truncated);
+      if (s.kind === 'skip') gmsg.fail(s.error === Err.None ? Err.BadSync : s.error);
+      return Exact.select(Exact.open(buffer.subarray(0, s.size)));
+    }
+    /** Parse one frame and decode it into its message class. */
+    static decode(buffer) { return Exact.parse(buffer).toStruct(); }
+    /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
+    static stream(options) { return new gmsg.StreamParser(Exact, options); }
+    /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
+    static encode(m, header) {
+      if (m instanceof Reading) return Exact.#encode0(m, header);
+      if (m instanceof Note) return Exact.#encode1(m, header);
+      return gmsg.fail(Err.InvalidValue, 'not a message of Exact (use the message classes)');
+    }
+    static #encode0(m, header) {
+      const w = new gmsg.Writer();
+      w.put(Exact.prefix);
+      const headerAt = w.pos;
+      const h = Object.assign(new ExactHeader(), header);
+      h.id = 1;
+      ExactHeader.write(w, h);
+      const bodyAt = w.pos;
+      Reading.write(w, m);
+      const bodyLen = w.pos - bodyAt;
+      {
+        const value = BigInt(bodyLen) - (0n);
+        if (value < 0n || value > 255n) gmsg.fail(Err.BadLength);
+        w.patchUint(headerAt + 1, value, 1, 'big');
+      }
+      let out = w.toBytes();
+      return out;
+    }
+    static #encode1(m, header) {
+      const w = new gmsg.Writer();
+      w.put(Exact.prefix);
+      const headerAt = w.pos;
+      const h = Object.assign(new ExactHeader(), header);
+      h.id = 2;
+      ExactHeader.write(w, h);
+      const bodyAt = w.pos;
+      Note.write(w, m);
+      const bodyLen = w.pos - bodyAt;
+      {
+        const value = BigInt(bodyLen) - (0n);
+        if (value < 0n || value > 255n) gmsg.fail(Err.BadLength);
+        w.patchUint(headerAt + 1, value, 1, 'big');
+      }
+      let out = w.toBytes();
+      return out;
+    }
+  }
+
+  return Object.freeze({ Reading, ReadingView, Note, NoteView, AdjustedHeader, AdjustedHeaderView, Adjusted, WholeFrameHeader, WholeFrameHeaderView, WholeFrame, EscapedWithEndHeader, EscapedWithEndHeaderView, EscapedWithEnd, FixedWithEndHeader, FixedWithEndHeaderView, FixedWithEnd, LooseHeader, LooseHeaderView, Loose, ExactHeader, ExactHeaderView, Exact });
 });

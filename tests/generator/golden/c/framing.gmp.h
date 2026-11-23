@@ -29,6 +29,8 @@ gmsg_error test_framing_reading_read(gmsg_reader* r, test_framing_reading* m);
 gmsg_error test_framing_reading_write(const test_framing_reading* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_framing_reading_decode(const uint8_t* data, size_t size, test_framing_reading* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_framing_reading_decode_extra(const uint8_t* data, size_t size, test_framing_reading* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_framing_reading_encode(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -38,9 +40,10 @@ void test_framing_reading_print(const test_framing_reading* m, gmsg_printer* p);
 typedef struct test_framing_reading_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } test_framing_reading_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_framing_reading_view_from(const uint8_t* data, size_t size, test_framing_reading_view* out);
 /* Build a view over data already validated by test_framing_reading_view_from() (no checks). */
 test_framing_reading_view test_framing_reading_view_unchecked(const uint8_t* data, size_t size);
@@ -48,6 +51,8 @@ test_framing_reading_view test_framing_reading_view_unchecked(const uint8_t* dat
 gmsg_error test_framing_reading_view_to_struct(const test_framing_reading_view* v, test_framing_reading* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_framing_reading_view_print(const test_framing_reading_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_framing_reading_view_extra_bytes(const test_framing_reading_view* v) { return v->extra; }
 
 static inline uint8_t test_framing_reading_view_channel(const test_framing_reading_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -71,6 +76,8 @@ gmsg_error test_framing_note_read(gmsg_reader* r, test_framing_note* m);
 gmsg_error test_framing_note_write(const test_framing_note* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_framing_note_decode(const uint8_t* data, size_t size, test_framing_note* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_framing_note_decode_extra(const uint8_t* data, size_t size, test_framing_note* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_framing_note_encode(const test_framing_note* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -80,10 +87,11 @@ void test_framing_note_print(const test_framing_note* m, gmsg_printer* p);
 typedef struct test_framing_note_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
     uint32_t off[3];  /* field offsets */
 } test_framing_note_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_framing_note_view_from(const uint8_t* data, size_t size, test_framing_note_view* out);
 /* Build a view over data already validated by test_framing_note_view_from() (no checks). */
 test_framing_note_view test_framing_note_view_unchecked(const uint8_t* data, size_t size);
@@ -91,6 +99,8 @@ test_framing_note_view test_framing_note_view_unchecked(const uint8_t* data, siz
 gmsg_error test_framing_note_view_to_struct(const test_framing_note_view* v, test_framing_note* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_framing_note_view_print(const test_framing_note_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_framing_note_view_extra_bytes(const test_framing_note_view* v) { return v->extra; }
 
 static inline uint8_t test_framing_note_view_n(const test_framing_note_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -115,6 +125,8 @@ gmsg_error test_framing_adjusted_header_read(gmsg_reader* r, test_framing_adjust
 gmsg_error test_framing_adjusted_header_write(const test_framing_adjusted_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_framing_adjusted_header_decode(const uint8_t* data, size_t size, test_framing_adjusted_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_framing_adjusted_header_decode_extra(const uint8_t* data, size_t size, test_framing_adjusted_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_framing_adjusted_header_encode(const test_framing_adjusted_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -124,9 +136,10 @@ void test_framing_adjusted_header_print(const test_framing_adjusted_header* m, g
 typedef struct test_framing_adjusted_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } test_framing_adjusted_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_framing_adjusted_header_view_from(const uint8_t* data, size_t size, test_framing_adjusted_header_view* out);
 /* Build a view over data already validated by test_framing_adjusted_header_view_from() (no checks). */
 test_framing_adjusted_header_view test_framing_adjusted_header_view_unchecked(const uint8_t* data, size_t size);
@@ -134,6 +147,8 @@ test_framing_adjusted_header_view test_framing_adjusted_header_view_unchecked(co
 gmsg_error test_framing_adjusted_header_view_to_struct(const test_framing_adjusted_header_view* v, test_framing_adjusted_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_framing_adjusted_header_view_print(const test_framing_adjusted_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_framing_adjusted_header_view_extra_bytes(const test_framing_adjusted_header_view* v) { return v->extra; }
 
 static inline uint8_t test_framing_adjusted_header_view_id(const test_framing_adjusted_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_LITTLE);
@@ -187,6 +202,7 @@ typedef struct test_framing_adjusted_received {
     test_framing_adjusted_any_view message;
     const uint8_t* bytes;  /* the frame as received */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } test_framing_adjusted_received;
 
 /* Result of test_framing_adjusted_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -229,6 +245,13 @@ gmsg_error test_framing_adjusted_stream_init(test_framing_adjusted_stream* s, ui
 static inline size_t test_framing_adjusted_stream_feed(test_framing_adjusted_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t test_framing_adjusted_stream_push(test_framing_adjusted_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool test_framing_adjusted_stream_next(test_framing_adjusted_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool test_framing_adjusted_stream_resync(test_framing_adjusted_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool test_framing_adjusted_stream_flush(test_framing_adjusted_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void test_framing_adjusted_stream_set_idle_timeout(test_framing_adjusted_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool test_framing_adjusted_stream_tick(test_framing_adjusted_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void test_framing_adjusted_stream_reset(test_framing_adjusted_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* test_framing_adjusted_stream_stats(const test_framing_adjusted_stream* s) { return &s->base.stats; }
 static inline gmsg_error test_framing_adjusted_stream_last_error(const test_framing_adjusted_stream* s) { return s->base.last_error; }
@@ -263,6 +286,8 @@ gmsg_error test_framing_whole_frame_header_read(gmsg_reader* r, test_framing_who
 gmsg_error test_framing_whole_frame_header_write(const test_framing_whole_frame_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_framing_whole_frame_header_decode(const uint8_t* data, size_t size, test_framing_whole_frame_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_framing_whole_frame_header_decode_extra(const uint8_t* data, size_t size, test_framing_whole_frame_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_framing_whole_frame_header_encode(const test_framing_whole_frame_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -272,9 +297,10 @@ void test_framing_whole_frame_header_print(const test_framing_whole_frame_header
 typedef struct test_framing_whole_frame_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } test_framing_whole_frame_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_framing_whole_frame_header_view_from(const uint8_t* data, size_t size, test_framing_whole_frame_header_view* out);
 /* Build a view over data already validated by test_framing_whole_frame_header_view_from() (no checks). */
 test_framing_whole_frame_header_view test_framing_whole_frame_header_view_unchecked(const uint8_t* data, size_t size);
@@ -282,6 +308,8 @@ test_framing_whole_frame_header_view test_framing_whole_frame_header_view_unchec
 gmsg_error test_framing_whole_frame_header_view_to_struct(const test_framing_whole_frame_header_view* v, test_framing_whole_frame_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_framing_whole_frame_header_view_print(const test_framing_whole_frame_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_framing_whole_frame_header_view_extra_bytes(const test_framing_whole_frame_header_view* v) { return v->extra; }
 
 static inline uint8_t test_framing_whole_frame_header_view_len(const test_framing_whole_frame_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -335,6 +363,7 @@ typedef struct test_framing_whole_frame_received {
     test_framing_whole_frame_any_view message;
     const uint8_t* bytes;  /* the frame as received */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } test_framing_whole_frame_received;
 
 /* Result of test_framing_whole_frame_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -377,6 +406,13 @@ gmsg_error test_framing_whole_frame_stream_init(test_framing_whole_frame_stream*
 static inline size_t test_framing_whole_frame_stream_feed(test_framing_whole_frame_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t test_framing_whole_frame_stream_push(test_framing_whole_frame_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool test_framing_whole_frame_stream_next(test_framing_whole_frame_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool test_framing_whole_frame_stream_resync(test_framing_whole_frame_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool test_framing_whole_frame_stream_flush(test_framing_whole_frame_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void test_framing_whole_frame_stream_set_idle_timeout(test_framing_whole_frame_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool test_framing_whole_frame_stream_tick(test_framing_whole_frame_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void test_framing_whole_frame_stream_reset(test_framing_whole_frame_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* test_framing_whole_frame_stream_stats(const test_framing_whole_frame_stream* s) { return &s->base.stats; }
 static inline gmsg_error test_framing_whole_frame_stream_last_error(const test_framing_whole_frame_stream* s) { return s->base.last_error; }
@@ -411,6 +447,8 @@ gmsg_error test_framing_escaped_with_end_header_read(gmsg_reader* r, test_framin
 gmsg_error test_framing_escaped_with_end_header_write(const test_framing_escaped_with_end_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_framing_escaped_with_end_header_decode(const uint8_t* data, size_t size, test_framing_escaped_with_end_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_framing_escaped_with_end_header_decode_extra(const uint8_t* data, size_t size, test_framing_escaped_with_end_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_framing_escaped_with_end_header_encode(const test_framing_escaped_with_end_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -420,9 +458,10 @@ void test_framing_escaped_with_end_header_print(const test_framing_escaped_with_
 typedef struct test_framing_escaped_with_end_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } test_framing_escaped_with_end_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_framing_escaped_with_end_header_view_from(const uint8_t* data, size_t size, test_framing_escaped_with_end_header_view* out);
 /* Build a view over data already validated by test_framing_escaped_with_end_header_view_from() (no checks). */
 test_framing_escaped_with_end_header_view test_framing_escaped_with_end_header_view_unchecked(const uint8_t* data, size_t size);
@@ -430,6 +469,8 @@ test_framing_escaped_with_end_header_view test_framing_escaped_with_end_header_v
 gmsg_error test_framing_escaped_with_end_header_view_to_struct(const test_framing_escaped_with_end_header_view* v, test_framing_escaped_with_end_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_framing_escaped_with_end_header_view_print(const test_framing_escaped_with_end_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_framing_escaped_with_end_header_view_extra_bytes(const test_framing_escaped_with_end_header_view* v) { return v->extra; }
 
 static inline uint8_t test_framing_escaped_with_end_header_view_id(const test_framing_escaped_with_end_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -483,6 +524,7 @@ typedef struct test_framing_escaped_with_end_received {
     test_framing_escaped_with_end_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } test_framing_escaped_with_end_received;
 
 /* Result of test_framing_escaped_with_end_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -525,6 +567,13 @@ gmsg_error test_framing_escaped_with_end_stream_init(test_framing_escaped_with_e
 static inline size_t test_framing_escaped_with_end_stream_feed(test_framing_escaped_with_end_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t test_framing_escaped_with_end_stream_push(test_framing_escaped_with_end_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool test_framing_escaped_with_end_stream_next(test_framing_escaped_with_end_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool test_framing_escaped_with_end_stream_resync(test_framing_escaped_with_end_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool test_framing_escaped_with_end_stream_flush(test_framing_escaped_with_end_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void test_framing_escaped_with_end_stream_set_idle_timeout(test_framing_escaped_with_end_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool test_framing_escaped_with_end_stream_tick(test_framing_escaped_with_end_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void test_framing_escaped_with_end_stream_reset(test_framing_escaped_with_end_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* test_framing_escaped_with_end_stream_stats(const test_framing_escaped_with_end_stream* s) { return &s->base.stats; }
 static inline gmsg_error test_framing_escaped_with_end_stream_last_error(const test_framing_escaped_with_end_stream* s) { return s->base.last_error; }
@@ -558,6 +607,8 @@ gmsg_error test_framing_fixed_with_end_header_read(gmsg_reader* r, test_framing_
 gmsg_error test_framing_fixed_with_end_header_write(const test_framing_fixed_with_end_header* m, gmsg_writer* w);
 /* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
 gmsg_error test_framing_fixed_with_end_header_decode(const uint8_t* data, size_t size, test_framing_fixed_with_end_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_framing_fixed_with_end_header_decode_extra(const uint8_t* data, size_t size, test_framing_fixed_with_end_header* out, size_t* extra);
 /* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
 gmsg_error test_framing_fixed_with_end_header_encode(const test_framing_fixed_with_end_header* m, uint8_t* out, size_t capacity, size_t* written);
 /* Human readable dump (gmp/c/print.h). */
@@ -567,9 +618,10 @@ void test_framing_fixed_with_end_header_print(const test_framing_fixed_with_end_
 typedef struct test_framing_fixed_with_end_header_view {
     const uint8_t* data;
     size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
 } test_framing_fixed_with_end_header_view;
 
-/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored. */
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
 gmsg_error test_framing_fixed_with_end_header_view_from(const uint8_t* data, size_t size, test_framing_fixed_with_end_header_view* out);
 /* Build a view over data already validated by test_framing_fixed_with_end_header_view_from() (no checks). */
 test_framing_fixed_with_end_header_view test_framing_fixed_with_end_header_view_unchecked(const uint8_t* data, size_t size);
@@ -577,6 +629,8 @@ test_framing_fixed_with_end_header_view test_framing_fixed_with_end_header_view_
 gmsg_error test_framing_fixed_with_end_header_view_to_struct(const test_framing_fixed_with_end_header_view* v, test_framing_fixed_with_end_header* out);
 /* Human readable dump (gmp/c/print.h); same text as the struct. */
 void test_framing_fixed_with_end_header_view_print(const test_framing_fixed_with_end_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_framing_fixed_with_end_header_view_extra_bytes(const test_framing_fixed_with_end_header_view* v) { return v->extra; }
 
 static inline uint8_t test_framing_fixed_with_end_header_view_id(const test_framing_fixed_with_end_header_view* v) {
     return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
@@ -623,6 +677,7 @@ typedef struct test_framing_fixed_with_end_received {
     test_framing_fixed_with_end_any_view message;
     const uint8_t* bytes;  /* the frame (unescaped in place: only header and body are meaningful) */
     size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
 } test_framing_fixed_with_end_received;
 
 /* Result of test_framing_fixed_with_end_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
@@ -663,6 +718,13 @@ gmsg_error test_framing_fixed_with_end_stream_init(test_framing_fixed_with_end_s
 static inline size_t test_framing_fixed_with_end_stream_feed(test_framing_fixed_with_end_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t test_framing_fixed_with_end_stream_push(test_framing_fixed_with_end_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool test_framing_fixed_with_end_stream_next(test_framing_fixed_with_end_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool test_framing_fixed_with_end_stream_resync(test_framing_fixed_with_end_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool test_framing_fixed_with_end_stream_flush(test_framing_fixed_with_end_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void test_framing_fixed_with_end_stream_set_idle_timeout(test_framing_fixed_with_end_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool test_framing_fixed_with_end_stream_tick(test_framing_fixed_with_end_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
 static inline void test_framing_fixed_with_end_stream_reset(test_framing_fixed_with_end_stream* s) { gmsg_stream_reset(&s->base); }
 static inline const gmsg_stream_stats* test_framing_fixed_with_end_stream_stats(const test_framing_fixed_with_end_stream* s) { return &s->base.stats; }
 static inline gmsg_error test_framing_fixed_with_end_stream_last_error(const test_framing_fixed_with_end_stream* s) { return s->base.last_error; }
@@ -680,6 +742,328 @@ bool test_framing_fixed_with_end_stream_poll_message(test_framing_fixed_with_end
 gmsg_poll test_framing_fixed_with_end_stream_poll_event(test_framing_fixed_with_end_stream* s, test_framing_fixed_with_end_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool test_framing_fixed_with_end_stream_poll_for(test_framing_fixed_with_end_stream* s, test_framing_fixed_with_end_kind kind, test_framing_fixed_with_end_any_view* out);
+
+/* ---- LooseHeader ------------------------------------------------------------------------------------- */
+
+typedef struct test_framing_loose_header {
+    uint8_t id;
+    uint8_t len;
+} test_framing_loose_header;
+
+#define TEST_FRAMING_LOOSE_HEADER_MIN_WIRE_SIZE 2
+#define TEST_FRAMING_LOOSE_HEADER_MAX_WIRE_SIZE 2
+#define TEST_FRAMING_LOOSE_HEADER_WIRE_SIZE 2
+
+/* Read / write one LooseHeader at a cursor. */
+gmsg_error test_framing_loose_header_read(gmsg_reader* r, test_framing_loose_header* m);
+gmsg_error test_framing_loose_header_write(const test_framing_loose_header* m, gmsg_writer* w);
+/* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
+gmsg_error test_framing_loose_header_decode(const uint8_t* data, size_t size, test_framing_loose_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_framing_loose_header_decode_extra(const uint8_t* data, size_t size, test_framing_loose_header* out, size_t* extra);
+/* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
+gmsg_error test_framing_loose_header_encode(const test_framing_loose_header* m, uint8_t* out, size_t capacity, size_t* written);
+/* Human readable dump (gmp/c/print.h). */
+void test_framing_loose_header_print(const test_framing_loose_header* m, gmsg_printer* p);
+
+/* Zero-copy view over an encoded LooseHeader; points into the caller's buffer. */
+typedef struct test_framing_loose_header_view {
+    const uint8_t* data;
+    size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
+} test_framing_loose_header_view;
+
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
+gmsg_error test_framing_loose_header_view_from(const uint8_t* data, size_t size, test_framing_loose_header_view* out);
+/* Build a view over data already validated by test_framing_loose_header_view_from() (no checks). */
+test_framing_loose_header_view test_framing_loose_header_view_unchecked(const uint8_t* data, size_t size);
+/* Decode into the eager struct. */
+gmsg_error test_framing_loose_header_view_to_struct(const test_framing_loose_header_view* v, test_framing_loose_header* out);
+/* Human readable dump (gmp/c/print.h); same text as the struct. */
+void test_framing_loose_header_view_print(const test_framing_loose_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_framing_loose_header_view_extra_bytes(const test_framing_loose_header_view* v) { return v->extra; }
+
+static inline uint8_t test_framing_loose_header_view_id(const test_framing_loose_header_view* v) {
+    return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
+}
+static inline uint8_t test_framing_loose_header_view_len(const test_framing_loose_header_view* v) {
+    return gmsg_load_u8(v->data + 1, GMSG_ENDIAN_BIG);
+}
+
+/* ==== protocol Loose =============================================================================== */
+
+#define TEST_FRAMING_LOOSE_MAX_FRAME 40  /* minimum stream buffer size */
+
+/* Message of a frame (kind 0 = none). */
+typedef enum test_framing_loose_kind {
+    TEST_FRAMING_LOOSE_NONE = 0,
+    TEST_FRAMING_LOOSE_READING = 1,
+    TEST_FRAMING_LOOSE_NOTE = 2,
+} test_framing_loose_kind;
+
+/* Any message view of Loose; views point into the frame buffer. */
+typedef struct test_framing_loose_any_view {
+    test_framing_loose_kind kind;
+    union {
+        test_framing_reading_view reading;
+        test_framing_note_view note;
+    } as;
+} test_framing_loose_any_view;
+
+/* Any decoded message of Loose. */
+typedef struct test_framing_loose_any_message {
+    test_framing_loose_kind kind;
+    union {
+        test_framing_reading reading;
+        test_framing_note note;
+    } as;
+} test_framing_loose_any_message;
+
+/* Callbacks for test_framing_loose_process() and the stream. NULL slots are skipped; for each frame the
+ * message's callback runs first, then on_frame. Views are valid only during the call. */
+typedef struct test_framing_loose_callbacks {
+    void* ctx;  /* passed to every callback */
+    void (*on_reading)(void* ctx, const test_framing_loose_header_view* h, const test_framing_reading_view* v);
+    void (*on_note)(void* ctx, const test_framing_loose_header_view* h, const test_framing_note_view* v);
+    void (*on_frame)(void* ctx, const test_framing_loose_header_view* h, const test_framing_loose_any_view* v);  /* every frame */
+    void (*on_error)(void* ctx, gmsg_error e, const uint8_t* data, size_t size);  /* stream: dropped bytes */
+} test_framing_loose_callbacks;
+
+/* A frame returned by test_framing_loose_stream_poll_frame(); views point into the stream buffer. */
+typedef struct test_framing_loose_received {
+    test_framing_loose_header_view header;
+    test_framing_loose_any_view message;
+    const uint8_t* bytes;  /* the frame as received */
+    size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored) */
+} test_framing_loose_received;
+
+/* Result of test_framing_loose_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
+typedef struct test_framing_loose_event {
+    test_framing_loose_any_view message;
+    gmsg_error error;
+    const uint8_t* data;  /* error: the dropped bytes */
+    size_t size;
+} test_framing_loose_event;
+
+/* Stream parser; set callbacks in .cb after test_framing_loose_stream_init(). */
+typedef struct test_framing_loose_stream {
+    gmsg_stream base;  /* first member */
+    test_framing_loose_callbacks cb;
+    /* internal: pull API state */
+    uint8_t mode_;
+    test_framing_loose_kind want_;
+    test_framing_loose_received got_;
+    test_framing_loose_any_message* msg_;
+} test_framing_loose_stream;
+
+/* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). */
+gmsg_error test_framing_loose_parse(const uint8_t* data, size_t size, test_framing_loose_any_view* out);
+/* Parse one frame and decode it into the message struct. */
+gmsg_error test_framing_loose_decode(const uint8_t* data, size_t size, test_framing_loose_any_message* out);
+/* Parse one frame and pass its message to the callbacks (cb may be NULL). */
+gmsg_error test_framing_loose_process(const uint8_t* data, size_t size, const test_framing_loose_callbacks* cb);
+gmsg_error test_framing_loose_encode_reading(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written);
+gmsg_error test_framing_loose_encode_reading_with_header(const test_framing_loose_header* h, const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written);  /* id / length fields are filled in */
+gmsg_error test_framing_loose_encode_note(const test_framing_note* m, uint8_t* out, size_t capacity, size_t* written);
+gmsg_error test_framing_loose_encode_note_with_header(const test_framing_loose_header* h, const test_framing_note* m, uint8_t* out, size_t capacity, size_t* written);  /* id / length fields are filled in */
+gmsg_error test_framing_loose_encode(const test_framing_loose_any_message* m, uint8_t* out, size_t capacity, size_t* written);
+/* Print the message held (gmp/c/print.h); kind 0 prints <none>. */
+void test_framing_loose_any_view_print(const test_framing_loose_any_view* v, gmsg_printer* p);
+void test_framing_loose_any_message_print(const test_framing_loose_any_message* m, gmsg_printer* p);
+
+/* GMSG_ERR_BUFFER_FULL when size < TEST_FRAMING_LOOSE_MAX_FRAME. Clears the callbacks. */
+gmsg_error test_framing_loose_stream_init(test_framing_loose_stream* s, uint8_t* buf, size_t size);
+/* Push data and deliver every complete frame; returns the number of frames delivered. */
+static inline size_t test_framing_loose_stream_feed(test_framing_loose_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
+static inline size_t test_framing_loose_stream_push(test_framing_loose_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
+static inline bool test_framing_loose_stream_next(test_framing_loose_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool test_framing_loose_stream_resync(test_framing_loose_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool test_framing_loose_stream_flush(test_framing_loose_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void test_framing_loose_stream_set_idle_timeout(test_framing_loose_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool test_framing_loose_stream_tick(test_framing_loose_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
+static inline void test_framing_loose_stream_reset(test_framing_loose_stream* s) { gmsg_stream_reset(&s->base); }
+static inline const gmsg_stream_stats* test_framing_loose_stream_stats(const test_framing_loose_stream* s) { return &s->base.stats; }
+static inline gmsg_error test_framing_loose_stream_last_error(const test_framing_loose_stream* s) { return s->base.last_error; }
+static inline size_t test_framing_loose_stream_buffered(const test_framing_loose_stream* s) { return gmsg_stream_buffered(&s->base); }
+/* Changes whenever views returned by the poll functions expire. */
+static inline uint32_t test_framing_loose_stream_generation(const test_framing_loose_stream* s) { return gmsg_stream_generation(&s->base); }
+
+/* Pull API. Returned views point into the stream buffer and stay valid until the next call on the
+ * stream. Message callbacks are never called (except by poll_for for other messages); errors go to
+ * cb.on_error, except in poll_event, which returns them. All return false / GMSG_POLL_NEED_MORE when
+ * more input is needed. */
+bool test_framing_loose_stream_poll(test_framing_loose_stream* s, test_framing_loose_any_view* out);
+bool test_framing_loose_stream_poll_frame(test_framing_loose_stream* s, test_framing_loose_received* out);
+bool test_framing_loose_stream_poll_message(test_framing_loose_stream* s, test_framing_loose_any_message* out);  /* decoded copy; decode failures are reported like bad frames */
+gmsg_poll test_framing_loose_stream_poll_event(test_framing_loose_stream* s, test_framing_loose_event* out);
+/* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
+bool test_framing_loose_stream_poll_for(test_framing_loose_stream* s, test_framing_loose_kind kind, test_framing_loose_any_view* out);
+
+/* ---- ExactHeader ------------------------------------------------------------------------------------- */
+
+typedef struct test_framing_exact_header {
+    uint8_t id;
+    uint8_t len;
+} test_framing_exact_header;
+
+#define TEST_FRAMING_EXACT_HEADER_MIN_WIRE_SIZE 2
+#define TEST_FRAMING_EXACT_HEADER_MAX_WIRE_SIZE 2
+#define TEST_FRAMING_EXACT_HEADER_WIRE_SIZE 2
+
+/* Read / write one ExactHeader at a cursor. */
+gmsg_error test_framing_exact_header_read(gmsg_reader* r, test_framing_exact_header* m);
+gmsg_error test_framing_exact_header_write(const test_framing_exact_header* m, gmsg_writer* w);
+/* Decode from a buffer (trailing bytes are ignored; *out is unspecified on error). */
+gmsg_error test_framing_exact_header_decode(const uint8_t* data, size_t size, test_framing_exact_header* out);
+/* Like _decode; *extra receives the number of bytes after the message (which _decode ignores). */
+gmsg_error test_framing_exact_header_decode_extra(const uint8_t* data, size_t size, test_framing_exact_header* out, size_t* extra);
+/* Encode into out[0..capacity); *written receives the number of bytes (may be NULL). */
+gmsg_error test_framing_exact_header_encode(const test_framing_exact_header* m, uint8_t* out, size_t capacity, size_t* written);
+/* Human readable dump (gmp/c/print.h). */
+void test_framing_exact_header_print(const test_framing_exact_header* m, gmsg_printer* p);
+
+/* Zero-copy view over an encoded ExactHeader; points into the caller's buffer. */
+typedef struct test_framing_exact_header_view {
+    const uint8_t* data;
+    size_t size;  /* bytes of this message */
+    size_t extra;  /* bytes after the message in the data given to _from (ignored) */
+} test_framing_exact_header_view;
+
+/* Validate data[0..size) and build a view. Trailing bytes beyond the message are ignored (see _extra_bytes). */
+gmsg_error test_framing_exact_header_view_from(const uint8_t* data, size_t size, test_framing_exact_header_view* out);
+/* Build a view over data already validated by test_framing_exact_header_view_from() (no checks). */
+test_framing_exact_header_view test_framing_exact_header_view_unchecked(const uint8_t* data, size_t size);
+/* Decode into the eager struct. */
+gmsg_error test_framing_exact_header_view_to_struct(const test_framing_exact_header_view* v, test_framing_exact_header* out);
+/* Human readable dump (gmp/c/print.h); same text as the struct. */
+void test_framing_exact_header_view_print(const test_framing_exact_header_view* v, gmsg_printer* p);
+/* Bytes after the message in the data given to _from (ignored; a protocol with exact_size rejects them). */
+static inline size_t test_framing_exact_header_view_extra_bytes(const test_framing_exact_header_view* v) { return v->extra; }
+
+static inline uint8_t test_framing_exact_header_view_id(const test_framing_exact_header_view* v) {
+    return gmsg_load_u8(v->data + 0, GMSG_ENDIAN_BIG);
+}
+static inline uint8_t test_framing_exact_header_view_len(const test_framing_exact_header_view* v) {
+    return gmsg_load_u8(v->data + 1, GMSG_ENDIAN_BIG);
+}
+
+/* ==== protocol Exact =============================================================================== */
+
+#define TEST_FRAMING_EXACT_MAX_FRAME 40  /* minimum stream buffer size */
+
+/* Message of a frame (kind 0 = none). */
+typedef enum test_framing_exact_kind {
+    TEST_FRAMING_EXACT_NONE = 0,
+    TEST_FRAMING_EXACT_READING = 1,
+    TEST_FRAMING_EXACT_NOTE = 2,
+} test_framing_exact_kind;
+
+/* Any message view of Exact; views point into the frame buffer. */
+typedef struct test_framing_exact_any_view {
+    test_framing_exact_kind kind;
+    union {
+        test_framing_reading_view reading;
+        test_framing_note_view note;
+    } as;
+} test_framing_exact_any_view;
+
+/* Any decoded message of Exact. */
+typedef struct test_framing_exact_any_message {
+    test_framing_exact_kind kind;
+    union {
+        test_framing_reading reading;
+        test_framing_note note;
+    } as;
+} test_framing_exact_any_message;
+
+/* Callbacks for test_framing_exact_process() and the stream. NULL slots are skipped; for each frame the
+ * message's callback runs first, then on_frame. Views are valid only during the call. */
+typedef struct test_framing_exact_callbacks {
+    void* ctx;  /* passed to every callback */
+    void (*on_reading)(void* ctx, const test_framing_exact_header_view* h, const test_framing_reading_view* v);
+    void (*on_note)(void* ctx, const test_framing_exact_header_view* h, const test_framing_note_view* v);
+    void (*on_frame)(void* ctx, const test_framing_exact_header_view* h, const test_framing_exact_any_view* v);  /* every frame */
+    void (*on_error)(void* ctx, gmsg_error e, const uint8_t* data, size_t size);  /* stream: dropped bytes */
+} test_framing_exact_callbacks;
+
+/* A frame returned by test_framing_exact_stream_poll_frame(); views point into the stream buffer. */
+typedef struct test_framing_exact_received {
+    test_framing_exact_header_view header;
+    test_framing_exact_any_view message;
+    const uint8_t* bytes;  /* the frame as received */
+    size_t size;
+    size_t extra;  /* bytes in the frame after the message (ignored; always 0 with exact_size) */
+} test_framing_exact_received;
+
+/* Result of test_framing_exact_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */
+typedef struct test_framing_exact_event {
+    test_framing_exact_any_view message;
+    gmsg_error error;
+    const uint8_t* data;  /* error: the dropped bytes */
+    size_t size;
+} test_framing_exact_event;
+
+/* Stream parser; set callbacks in .cb after test_framing_exact_stream_init(). */
+typedef struct test_framing_exact_stream {
+    gmsg_stream base;  /* first member */
+    test_framing_exact_callbacks cb;
+    /* internal: pull API state */
+    uint8_t mode_;
+    test_framing_exact_kind want_;
+    test_framing_exact_received got_;
+    test_framing_exact_any_message* msg_;
+} test_framing_exact_stream;
+
+/* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). */
+gmsg_error test_framing_exact_parse(const uint8_t* data, size_t size, test_framing_exact_any_view* out);
+/* Parse one frame and decode it into the message struct. */
+gmsg_error test_framing_exact_decode(const uint8_t* data, size_t size, test_framing_exact_any_message* out);
+/* Parse one frame and pass its message to the callbacks (cb may be NULL). */
+gmsg_error test_framing_exact_process(const uint8_t* data, size_t size, const test_framing_exact_callbacks* cb);
+gmsg_error test_framing_exact_encode_reading(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written);
+gmsg_error test_framing_exact_encode_reading_with_header(const test_framing_exact_header* h, const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written);  /* id / length fields are filled in */
+gmsg_error test_framing_exact_encode_note(const test_framing_note* m, uint8_t* out, size_t capacity, size_t* written);
+gmsg_error test_framing_exact_encode_note_with_header(const test_framing_exact_header* h, const test_framing_note* m, uint8_t* out, size_t capacity, size_t* written);  /* id / length fields are filled in */
+gmsg_error test_framing_exact_encode(const test_framing_exact_any_message* m, uint8_t* out, size_t capacity, size_t* written);
+/* Print the message held (gmp/c/print.h); kind 0 prints <none>. */
+void test_framing_exact_any_view_print(const test_framing_exact_any_view* v, gmsg_printer* p);
+void test_framing_exact_any_message_print(const test_framing_exact_any_message* m, gmsg_printer* p);
+
+/* GMSG_ERR_BUFFER_FULL when size < TEST_FRAMING_EXACT_MAX_FRAME. Clears the callbacks. */
+gmsg_error test_framing_exact_stream_init(test_framing_exact_stream* s, uint8_t* buf, size_t size);
+/* Push data and deliver every complete frame; returns the number of frames delivered. */
+static inline size_t test_framing_exact_stream_feed(test_framing_exact_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
+static inline size_t test_framing_exact_stream_push(test_framing_exact_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
+static inline bool test_framing_exact_stream_next(test_framing_exact_stream* s) { return gmsg_stream_next(&s->base); }
+/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
+ * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
+ * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
+static inline bool test_framing_exact_stream_resync(test_framing_exact_stream* s) { return gmsg_stream_resync(&s->base); }
+static inline bool test_framing_exact_stream_flush(test_framing_exact_stream* s) { return gmsg_stream_flush(&s->base); }
+static inline void test_framing_exact_stream_set_idle_timeout(test_framing_exact_stream* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }
+static inline bool test_framing_exact_stream_tick(test_framing_exact_stream* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }
+static inline void test_framing_exact_stream_reset(test_framing_exact_stream* s) { gmsg_stream_reset(&s->base); }
+static inline const gmsg_stream_stats* test_framing_exact_stream_stats(const test_framing_exact_stream* s) { return &s->base.stats; }
+static inline gmsg_error test_framing_exact_stream_last_error(const test_framing_exact_stream* s) { return s->base.last_error; }
+static inline size_t test_framing_exact_stream_buffered(const test_framing_exact_stream* s) { return gmsg_stream_buffered(&s->base); }
+/* Changes whenever views returned by the poll functions expire. */
+static inline uint32_t test_framing_exact_stream_generation(const test_framing_exact_stream* s) { return gmsg_stream_generation(&s->base); }
+
+/* Pull API. Returned views point into the stream buffer and stay valid until the next call on the
+ * stream. Message callbacks are never called (except by poll_for for other messages); errors go to
+ * cb.on_error, except in poll_event, which returns them. All return false / GMSG_POLL_NEED_MORE when
+ * more input is needed. */
+bool test_framing_exact_stream_poll(test_framing_exact_stream* s, test_framing_exact_any_view* out);
+bool test_framing_exact_stream_poll_frame(test_framing_exact_stream* s, test_framing_exact_received* out);
+bool test_framing_exact_stream_poll_message(test_framing_exact_stream* s, test_framing_exact_any_message* out);  /* decoded copy; decode failures are reported like bad frames */
+gmsg_poll test_framing_exact_stream_poll_event(test_framing_exact_stream* s, test_framing_exact_event* out);
+/* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
+bool test_framing_exact_stream_poll_for(test_framing_exact_stream* s, test_framing_exact_kind kind, test_framing_exact_any_view* out);
 
 #ifdef __cplusplus
 } /* extern "C" */

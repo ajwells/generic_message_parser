@@ -59,6 +59,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Reading.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Reading.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Reading.write(w, m); return w.toBytes(); }
     encode() { return Reading.encode(this); }
@@ -84,7 +86,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Reading';
     static minWireSize = 6;
 
@@ -110,6 +113,7 @@
       pos += 4;
       v.#o[4] = pos;
       v.#b = data.subarray(0, pos);
+      v.#x = data.length - pos;
       return v;
     }
     /** A view over data already validated by from() (no checks). */
@@ -118,6 +122,8 @@
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get channel() { return gmsg.load(this.#b, 0, 'u8', 'little'); }
     get name_len() { return gmsg.load(this.#b, 1, 'u8', 'little'); }
     get name() { return gmsg.latin1String(this.#b, 2, 2 + (this.#o[3] - this.#o[2])); }
@@ -224,6 +230,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Batch.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Batch.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Batch.write(w, m); return w.toBytes(); }
     encode() { return Batch.encode(this); }
@@ -253,7 +261,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Batch';
     static minWireSize = 4;
 
@@ -282,6 +291,7 @@
       }
       v.#o[4] = pos;
       v.#b = data.subarray(0, pos);
+      v.#x = data.length - pos;
       return v;
     }
     /** A view over data already validated by from() (no checks). */
@@ -290,6 +300,8 @@
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get when() { return $ext0.decodeBcdTime(new gmsg.Reader(this.#b.subarray(0, 0 + 3))); }
     get n() { return gmsg.load(this.#b, 3, 'u8', 'little'); }
     get readings() { return gmsg.seqArray(this.#b.subarray(4, 4 + (this.#o[3] - this.#o[2])), (b) => ReadingView.unchecked(b)); }
@@ -375,6 +387,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return Ping.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = Ping.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); Ping.write(w, m); return w.toBytes(); }
     encode() { return Ping.encode(this); }
@@ -396,7 +410,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'Ping';
     static minWireSize = 8;
     static wireSize = 8;
@@ -405,14 +420,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 8) gmsg.fail(Err.Truncated);
-      return new PingView(data.subarray(0, 8), null, null);
+      return new PingView(data.subarray(0, 8), null, null, data.length - 8);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new PingView(data.subarray(0, 8), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new PingView(data.subarray(0, 8), null, null, data.length - 8); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get seq() { return gmsg.load(this.#b, 0, 'u32', 'little'); }
     get payload() { return this.#b.subarray(4, 4 + 4); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
@@ -475,6 +492,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return HdlcHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = HdlcHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); HdlcHeader.write(w, m); return w.toBytes(); }
     encode() { return HdlcHeader.encode(this); }
@@ -494,7 +513,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'HdlcHeader';
     static minWireSize = 2;
     static wireSize = 2;
@@ -504,14 +524,16 @@
       data = gmsg.toBytes(data);
       if (data.length < 2) gmsg.fail(Err.Truncated);
       if (gmsg.load(data, 0, 'u8', 'little') !== 255) gmsg.fail(Err.BadConst);
-      return new HdlcHeaderView(data.subarray(0, 2), null, null);
+      return new HdlcHeaderView(data.subarray(0, 2), null, null, data.length - 2);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new HdlcHeaderView(data.subarray(0, 2), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new HdlcHeaderView(data.subarray(0, 2), null, null, data.length - 2); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get kind() { return gmsg.load(this.#b, 1, 'u8', 'little'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
      *  property (null for padding and constants). */
@@ -657,6 +679,8 @@
     }
     /** Decode from bytes (trailing bytes are ignored). Throws gmsg.GmpError. */
     static decode(bytes) { return SummedHeader.read(new gmsg.Reader(bytes)); }
+    /** Like decode(bytes): { message, extra }, `extra` = bytes after the message (which decode ignores). */
+    static decodeWithExtra(bytes) { const r = new gmsg.Reader(bytes); const message = SummedHeader.read(r); return { message, extra: r.remaining }; }
     /** Encode `m` (this class or a plain object with the same fields) to a new Uint8Array. */
     static encode(m) { const w = new gmsg.Writer(); SummedHeader.write(w, m); return w.toBytes(); }
     encode() { return SummedHeader.encode(this); }
@@ -676,7 +700,8 @@
     #b;
     #o;
     #p;
-    constructor(b, o, p) { this.#b = b; this.#o = o; this.#p = p; }
+    #x;
+    constructor(b, o, p, x = 0) { this.#b = b; this.#o = o; this.#p = p; this.#x = x; }
     static messageName = 'SummedHeader';
     static minWireSize = 1;
     static wireSize = 1;
@@ -685,14 +710,16 @@
     static from(data) {
       data = gmsg.toBytes(data);
       if (data.length < 1) gmsg.fail(Err.Truncated);
-      return new SummedHeaderView(data.subarray(0, 1), null, null);
+      return new SummedHeaderView(data.subarray(0, 1), null, null, data.length - 1);
     }
     /** A view over data already validated by from() (no checks). */
-    static unchecked(data) { return new SummedHeaderView(data.subarray(0, 1), null, null); }
+    static unchecked(data) { data = gmsg.toBytes(data); return new SummedHeaderView(data.subarray(0, 1), null, null, data.length - 1); }
 
     /** The message bytes. */
     get data() { return this.#b; }
     get wireSize() { return this.#b.length; }
+    /** Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them). */
+    get extraBytes() { return this.#x; }
     get kind() { return gmsg.load(this.#b, 0, 'u8', 'little'); }
     /** Byte ranges of the present fields (relative to data), in wire order: { name, key, start, end }; key is the
      *  property (null for padding and constants). */

@@ -1,5 +1,6 @@
 # Framing options not covered by the other schemas: length adjust, every length / checksum coverage, little-endian
-# length and checksum fields, and an end delimiter after escaped fixed and length-prefixed frames.
+# length and checksum fields, an end delimiter after escaped fixed and length-prefixed frames, and data after the
+# message (reported as extra, or rejected with exact_size).
 schema_version: 1
 namespace: test::framing
 defaults: { endian: big }
@@ -75,3 +76,30 @@ protocols:
     checksum: { algo: xor8 }
     message_type: { field: id }
     messages: [Reading]
+
+  # no checksum: a length that is too large is only noticed through the data after the message (counted as extra)
+  Loose:
+    header:
+      - { name: id, type: u8 }
+      - { name: len, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0xB5]
+      length: { field: len, covers: body }
+      max_frame: 40
+    message_type: { field: id }
+    messages: [Reading, Note]
+
+  # the same with exact_size: a frame with data after its message fails with BadLength
+  Exact:
+    exact_size: true
+    header:
+      - { name: id, type: u8 }
+      - { name: len, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0xB5]
+      length: { field: len, covers: body }
+      max_frame: 40
+    message_type: { field: id }
+    messages: [Reading, Note]

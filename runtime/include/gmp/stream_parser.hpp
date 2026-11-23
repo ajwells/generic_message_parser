@@ -12,6 +12,12 @@
 // The handler is either passed on every call (`feed(bytes, handler)`, Handler = void) or stored in the parser
 // (`Handler` = its type, or a reference to it): then `feed(bytes)` / `next()` take no handler. Generated protocols
 // add `make_stream(handler)`, `StreamWith<H>` and `CallbackStream` (runtime callbacks, see gmp/callbacks.hpp).
+//
+// Recovery on an idle link: a frame whose (corrupted) length claims more bytes than will ever arrive holds back the
+// frames buffered behind it. resync() gives up on such a frame; set_idle_timeout(t) + tick(now) do that
+// automatically after `t` without new bytes (the parser has no clock: `now` is any monotonic unsigned time the
+// application passes). flush() drops everything buffered. These only drop data (reported to the error handler);
+// frames that become complete are then delivered by the usual next() / feed() / poll() calls.
 
 #include <algorithm>
 #include <array>
@@ -50,11 +56,27 @@ constexpr void invoke_if(H& h, A&&... args) {
     if constexpr (std::invocable<H&, A...>) std::invoke(h, std::forward<A>(args)...);
 }
 
+/// Data after a decoded message: bytes for binary views (extra_bytes()), tokens for text views (extra_tokens()),
+/// the same for the alternative held by a std::variant of views (AnyView); 0 for other types.
+template <class V>
+constexpr std::size_t extra_of(const V& v) noexcept {
+    if constexpr (requires { v.extra_bytes(); }) return v.extra_bytes();
+    else if constexpr (requires { v.extra_tokens(); }) return v.extra_tokens();
+    else return 0;
+}
+template <class... V>
+constexpr std::size_t extra_of(const std::variant<V...>& v) noexcept {
+    return std::visit([](const auto& x) { return extra_of(x); }, v);
+}
+
 struct StreamStats {
     std::uint32_t frames = 0;        // frames delivered successfully
     std::uint32_t frame_errors = 0;  // frames rejected (checksum, unknown message type, decode error)
     std::uint32_t bytes_skipped = 0; // bytes discarded while resynchronising
     std::uint32_t overflows = 0;     // times the buffer filled without a complete frame
+    std::uint32_t resyncs = 0;       // incomplete frames given up by resync() (also from tick())
+    std::uint32_t flushes = 0;       // flush() calls that dropped buffered bytes
+    std::uint32_t frames_with_extra = 0;  // delivered frames with data after their message (ignored)
 };
 
 namespace detail {
@@ -94,13 +116,49 @@ public:
         const std::size_t n = std::min(in.size(), Capacity - tail_);
         std::copy_n(in.begin(), n, buf_.begin() + static_cast<std::ptrdiff_t>(tail_));
         tail_ += n;
+        received_ += static_cast<std::uint32_t>(n);
         return n;
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // recovery: resync / flush / idle timeout. They only drop data; frames that then become complete are
+    // delivered by the next next() / feed() / poll() call.
+    // ---------------------------------------------------------------------------------------------
+
+    /// Give up on the frame at the head of the buffer when it is incomplete (e.g. its length field claims more bytes
+    /// than will arrive): report it as FrameError{Truncated, its buffered bytes}, drop its first byte and let the
+    /// next scan resynchronise. Returns false (and does nothing) when the buffer is empty or its head frame is
+    /// complete. Errors go to the stored handler (if any) or to `handler`.
+    bool resync() { return resync_impl([&](const FrameError& e) { report(e); }); }
+    template <class H>
+    bool resync(H&& handler) { return resync_impl([&](const FrameError& e) { invoke_if(handler, e); }); }
+
+    /// Drop every buffered byte, reported as one FrameError{Truncated, bytes}. Returns false when nothing was buffered.
+    bool flush() { return flush_impl([&](const FrameError& e) { report(e); }); }
+    template <class H>
+    bool flush(H&& handler) { return flush_impl([&](const FrameError& e) { invoke_if(handler, e); }); }
+
+    /// Call resync() from tick() once the link has been idle for `t` (in the unit of the times passed to tick());
+    /// 0 turns it off (the default).
+    void set_idle_timeout(std::uint32_t t) noexcept { idle_timeout_ = t; }
+    [[nodiscard]] std::uint32_t idle_timeout() const noexcept { return idle_timeout_; }
+
+    /// Call periodically with the current time (any monotonic unsigned clock; wraparound is fine). Bytes pushed
+    /// since the previous tick count as activity. When an incomplete frame has waited `idle_timeout()` without new
+    /// bytes, it is given up as by resync() (returns true); the next resync needs another idle period.
+    bool tick(std::uint32_t now) { return tick_impl(now, [&] { return resync(); }); }
+    template <class H>
+    bool tick(std::uint32_t now, H&& handler) { return tick_impl(now, [&] { return resync(handler); }); }
 
     /// Deliver the next frame (or dropped data) to `handler`. Returns false when more input is required.
     template <class H>
     bool next(H&& handler) {
-        const Step s = step([&](mut_bytes frame) { return Protocol::process(frame, handler); });
+        const Step s = step([&](mut_bytes frame) {
+            if constexpr (requires { Protocol::process(frame, handler, &last_extra_); })
+                return Protocol::process(frame, handler, &last_extra_);
+            else
+                return Protocol::process(frame, handler);
+        });
         if (s.kind == StepKind::error) invoke_if(handler, FrameError{s.error, s.bytes});
         release();
         return s.kind != StepKind::need_more;
@@ -150,6 +208,7 @@ public:
                         out.emplace(typename P::Received{f.header, std::move(v), bytes_view(frame)});
                     else
                         out.emplace(typename P::Received{std::move(v), bytes_view(frame)});
+                    if constexpr (requires { out->extra; }) out->extra = last_extra_;
                     return Error::None;
                 });
             }))
@@ -226,6 +285,7 @@ public:
         held_ = 0;
         holding_ = false;
         last_error_ = Error::None;
+        ticked_ = false;
         ++generation_;
     }
     [[nodiscard]] const StreamStats& stats() const noexcept { return stats_; }
@@ -243,10 +303,11 @@ private:
     /// a protocol with escaping gets the frame back as received (P::restore_frame), so resynchronisation scans
     /// the bytes as they arrived.
     template <class P, class Use>
-    static Error open_view(mut_bytes frame, Use&& use) {
+    Error open_view(mut_bytes frame, Use&& use) {
         auto f = P::open(frame);
         if (!f) return f.error();
         auto v = P::select_message(*f);
+        if (v) last_extra_ = extra_of(*v);
         const Error e = v ? use(*f, *v) : v.error();
         if constexpr (requires { P::restore_frame(frame, f->unescaped_size); })
             if (e != Error::None) P::restore_frame(frame, f->unescaped_size);
@@ -269,9 +330,11 @@ private:
             switch (s.kind) {
                 case FrameScan::Kind::frame: {
                     const mut_bytes frame(buf_.data() + head_, s.size);
+                    last_extra_ = 0;
                     const Error e = accept(frame);
                     if (e == Error::None) {
                         ++stats_.frames;
+                        if (last_extra_ != 0) ++stats_.frames_with_extra;
                         hold(s.consume);
                         return {StepKind::frame, Error::None, bytes_view(frame)};
                     }
@@ -318,6 +381,54 @@ private:
             if (s.kind == StepKind::need_more) return false;
             if constexpr (!std::is_void_v<Handler>) invoke_if(handler_, FrameError{s.error, s.bytes});
         }
+    }
+
+    /// Report an error to the stored handler, if any.
+    void report(const FrameError& e) {
+        if constexpr (!std::is_void_v<Handler>) invoke_if(handler_, e);
+        else (void)e;
+    }
+
+    template <class Report>
+    bool resync_impl(Report&& report_error) {
+        release();
+        if (head_ == tail_) return false;
+        const bytes_view pending(buf_.data() + head_, tail_ - head_);
+        if (Protocol::scan(pending).kind != FrameScan::Kind::need_more) return false;  // nothing stuck at the head
+        ++stats_.resyncs;
+        ++stats_.bytes_skipped;
+        last_error_ = Error::Truncated;
+        report_error(FrameError{Error::Truncated, pending});
+        consume(1);
+        ++generation_;
+        return true;
+    }
+
+    template <class Report>
+    bool flush_impl(Report&& report_error) {
+        release();
+        if (head_ == tail_) return false;
+        const bytes_view pending(buf_.data() + head_, tail_ - head_);
+        ++stats_.flushes;
+        stats_.bytes_skipped += static_cast<std::uint32_t>(pending.size());
+        last_error_ = Error::Truncated;
+        report_error(FrameError{Error::Truncated, pending});
+        head_ = tail_ = 0;
+        ++generation_;
+        return true;
+    }
+
+    template <class Resync>
+    bool tick_impl(std::uint32_t now, Resync&& resync_now) {
+        if (!ticked_ || received_ != seen_) {  // first tick, or bytes arrived since the last one
+            ticked_ = true;
+            seen_ = received_;
+            last_activity_ = now;
+            return false;
+        }
+        if (idle_timeout_ == 0 || static_cast<std::uint32_t>(now - last_activity_) < idle_timeout_) return false;
+        last_activity_ = now;  // a further resync needs another idle period
+        return resync_now();
     }
 
     /// Hand a message to the stored handler, with the header when it accepts one (as Protocol::process does).
@@ -369,6 +480,12 @@ private:
     Error last_error_ = Error::None;
     std::uint32_t generation_ = 0;  // changes whenever held bytes are released (expires polled views)
     StreamStats stats_{};
+    std::size_t last_extra_ = 0;       // data after the message of the frame being accepted
+    std::uint32_t received_ = 0;       // bytes pushed (wraps; only compared for change)
+    std::uint32_t seen_ = 0;           // received_ at the last tick
+    std::uint32_t last_activity_ = 0;  // time of the last tick that saw new bytes (or of the last idle resync)
+    std::uint32_t idle_timeout_ = 0;   // 0 = off
+    bool ticked_ = false;
     [[no_unique_address]] Storage handler_{};
 };
 

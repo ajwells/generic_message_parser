@@ -348,6 +348,8 @@ int main() {
         Noisy<f::WholeFrame>{"framing", "protocol:WholeFrame", {}}.add(n).noise({0x55}).add(r).corrupt(r2).add(r2).done();
         Noisy<f::EscapedWithEnd>{"framing", "protocol:EscapedWithEnd", {}}.add(r2).noise({0x0D, 0x7D}).add(n).corrupt(r).add(r).done();
         Noisy<f::FixedWithEnd>{"framing", "protocol:FixedWithEnd", {}}.add(r).noise({0xC1}).corrupt(r2).add(r2).add(r).done();
+        Noisy<f::Loose>{"framing", "protocol:Loose", {}}.add(r).noise({0xB5, 0x01, 0x07, 0x02, 0, 0, 0, 5, 0xEE, 0xEE}).corrupt(n).add(n).corrupt(r).add(r2).noise({0xB5, 0x01}).add(r).done();
+        Noisy<f::Exact>{"framing", "protocol:Exact", {}}.add(r).noise({0xB5, 0x01, 0x07, 0x02, 0, 0, 0, 5, 0xEE, 0xEE}).corrupt(n).add(n).corrupt(r).add(r2).noise({0xB5, 0x01}).add(r).done();
     }
     // ---- NMEA text ---------------------------------------------------------------------------------
     {

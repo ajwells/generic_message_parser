@@ -91,6 +91,15 @@ gmsg_error test_fieldcrc_mixed_decode(const uint8_t* data, size_t size, test_fie
     return test_fieldcrc_mixed_read(&r, out);
 }
 
+gmsg_error test_fieldcrc_mixed_decode_extra(const uint8_t* data, size_t size, test_fieldcrc_mixed* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_fieldcrc_mixed_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_fieldcrc_mixed_encode(const test_fieldcrc_mixed* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_fieldcrc_mixed_write(m, &w);
@@ -168,6 +177,7 @@ gmsg_error test_fieldcrc_mixed_view_from(const uint8_t* data, size_t size, test_
     pos += 2;
     v.off[6] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -247,6 +257,16 @@ gmsg_error test_fieldcrc_reading_decode(const uint8_t* data, size_t size, test_f
     const size_t n = gmsg_split((const char*)data, size, TEST_FIELDCRC_READING_SEPARATOR, tok, 1);
     gmsg_memset(out, 0, sizeof *out);
     return test_fieldcrc_reading_read_text(tok, n < 1 ? n : 1, out);
+}
+
+gmsg_error test_fieldcrc_reading_decode_extra(const uint8_t* data, size_t size, test_fieldcrc_reading* out, size_t* extra) {
+    gmsg_str tok[1];
+    const size_t n = gmsg_split((const char*)data, size, TEST_FIELDCRC_READING_SEPARATOR, tok, 1);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_fieldcrc_reading_read_text(tok, n < 1 ? n : 1, out);
+    *extra = e == GMSG_OK && n > 1 ? n - 1 : 0;
+    return e;
 }
 
 gmsg_error test_fieldcrc_reading_encode(const test_fieldcrc_reading* m, uint8_t* out, size_t capacity, size_t* written) {

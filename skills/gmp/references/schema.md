@@ -174,7 +174,17 @@ protocols:
     checksum: { ... }
     message_type: { field: msg_id }   # binary: header field. text: { token: 0 }
     messages: [Status, Command]
+    exact_size: false             # true: data after the message in a frame fails with BadLength
 ```
+
+- Data after the message (a body longer than the message, extra text tokens) is ignored by default and reported:
+  view `extra_bytes()` / `extra_tokens()`, `decode(data, extra)`, `Received::extra`, `stats().frames_with_extra`.
+  `exact_size: true` rejects it (`BadLength`); not for `fixed` framing (it pads).
+- `length_prefixed` (length counting unescaped bytes): the stream rejects a length the frame's message type cannot
+  have as soon as the header arrives (`BadLength`): below the message's minimum size, or above its maximum with
+  `exact_size`.
+- Streams recover on an idle link with `resync()` (give up an incomplete head frame), `flush()` (drop everything) and
+  `set_idle_timeout(t)` + `tick(now)` (resync after `t` without new bytes; `now` is any monotonic unsigned time).
 
 ### framing
 

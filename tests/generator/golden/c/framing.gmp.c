@@ -36,6 +36,15 @@ gmsg_error test_framing_reading_decode(const uint8_t* data, size_t size, test_fr
     return test_framing_reading_read(&r, out);
 }
 
+gmsg_error test_framing_reading_decode_extra(const uint8_t* data, size_t size, test_framing_reading* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_framing_reading_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_framing_reading_encode(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_framing_reading_write(m, &w);
@@ -59,15 +68,16 @@ gmsg_error test_framing_reading_view_from(const uint8_t* data, size_t size, test
     if (size < 5) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 5;
+    out->extra = size - 5;
     return GMSG_OK;
 }
 
 test_framing_reading_view test_framing_reading_view_unchecked(const uint8_t* data, size_t size) {
     test_framing_reading_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 5;
+    v.extra = size - 5;
     return v;
 }
 
@@ -125,6 +135,15 @@ gmsg_error test_framing_note_decode(const uint8_t* data, size_t size, test_frami
     return test_framing_note_read(&r, out);
 }
 
+gmsg_error test_framing_note_decode_extra(const uint8_t* data, size_t size, test_framing_note* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_framing_note_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_framing_note_encode(const test_framing_note* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_framing_note_write(m, &w);
@@ -161,6 +180,7 @@ gmsg_error test_framing_note_view_from(const uint8_t* data, size_t size, test_fr
     }
     v.off[2] = (uint32_t)pos;
     v.size = pos;
+    v.extra = size - pos;
     *out = v;
     return GMSG_OK;
 }
@@ -223,6 +243,15 @@ gmsg_error test_framing_adjusted_header_decode(const uint8_t* data, size_t size,
     return test_framing_adjusted_header_read(&r, out);
 }
 
+gmsg_error test_framing_adjusted_header_decode_extra(const uint8_t* data, size_t size, test_framing_adjusted_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_framing_adjusted_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_framing_adjusted_header_encode(const test_framing_adjusted_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_framing_adjusted_header_write(m, &w);
@@ -246,15 +275,16 @@ gmsg_error test_framing_adjusted_header_view_from(const uint8_t* data, size_t si
     if (size < 3) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 3;
+    out->extra = size - 3;
     return GMSG_OK;
 }
 
 test_framing_adjusted_header_view test_framing_adjusted_header_view_unchecked(const uint8_t* data, size_t size) {
     test_framing_adjusted_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 3;
+    v.extra = size - 3;
     return v;
 }
 
@@ -292,7 +322,23 @@ void test_framing_adjusted_any_message_print(const test_framing_adjusted_any_mes
 
 static const uint8_t test_framing_adjusted_prefix_[1] = {0xA5};
 static const gmsg_length_prefixed_config test_framing_adjusted_framing_ = {{{0xA5}, 1}, 2, 2, GMSG_ENDIAN_LITTLE, INT64_C(4), 8, 64, {false, 0, 0, 0, 0, {0}, {0}, {0}}, 0, false, 0, 0, false};
-static gmsg_frame_scan test_framing_adjusted_scan_(const uint8_t* b, size_t n) { return gmsg_scan_length_prefixed(b, n, &test_framing_adjusted_framing_); }
+/* Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BAD_LENGTH as soon as the header has arrived. */
+static gmsg_frame_scan test_framing_adjusted_scan_(const uint8_t* b, size_t n) {
+    const gmsg_frame_scan s = gmsg_scan_length_prefixed(b, n, &test_framing_adjusted_framing_);
+    uint8_t h[3];
+    test_framing_adjusted_header_view hv;
+    int64_t body;
+    if (s.kind == GMSG_SCAN_SKIP) return s;
+    if (!gmsg_read_frame_header(b, n, test_framing_adjusted_framing_.sync.len, &test_framing_adjusted_framing_.escape, h, 3)) return s;
+    hv = test_framing_adjusted_header_view_unchecked(h, 3);
+    body = (int64_t)test_framing_adjusted_header_view_len(&hv) + INT64_C(-4);
+    switch ((int64_t)test_framing_adjusted_header_view_id(&hv)) {
+        case INT64_C(1): if (body < 5) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Reading */
+        case INT64_C(2): if (body < 1) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Note */
+        default: break;
+    }
+    return s;
+}
 
 /* A validated frame split into its parts (pointers into the frame buffer). */
 typedef struct test_framing_adjusted_frame_ {
@@ -388,13 +434,29 @@ gmsg_error test_framing_adjusted_process(const uint8_t* data, size_t size, const
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { test_framing_adjusted_mode_deliver_ = 0, test_framing_adjusted_mode_capture_ = 1, test_framing_adjusted_mode_message_ = 2, test_framing_adjusted_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t test_framing_adjusted_extra_(const test_framing_adjusted_any_view* v) {
+    switch (v->kind) {
+        case TEST_FRAMING_ADJUSTED_READING: return test_framing_reading_view_extra_bytes(&v->as.reading);
+        case TEST_FRAMING_ADJUSTED_NOTE: return test_framing_note_view_extra_bytes(&v->as.note);
+        default: return 0;
+    }
+}
+
 static gmsg_error test_framing_adjusted_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     test_framing_adjusted_stream* s = (test_framing_adjusted_stream*)gs;
     test_framing_adjusted_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == test_framing_adjusted_mode_deliver_) return test_framing_adjusted_process_frame_(frame, n, &s->cb);
     if ((e = test_framing_adjusted_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == test_framing_adjusted_mode_deliver_) {
+        test_framing_adjusted_any_view v;
+        if ((e = test_framing_adjusted_select_(&f, &v)) != GMSG_OK) return e;
+        gs->last_extra = test_framing_adjusted_extra_(&v);
+        test_framing_adjusted_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = test_framing_adjusted_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = test_framing_adjusted_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -593,6 +655,15 @@ gmsg_error test_framing_whole_frame_header_decode(const uint8_t* data, size_t si
     return test_framing_whole_frame_header_read(&r, out);
 }
 
+gmsg_error test_framing_whole_frame_header_decode_extra(const uint8_t* data, size_t size, test_framing_whole_frame_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_framing_whole_frame_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_framing_whole_frame_header_encode(const test_framing_whole_frame_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_framing_whole_frame_header_write(m, &w);
@@ -616,15 +687,16 @@ gmsg_error test_framing_whole_frame_header_view_from(const uint8_t* data, size_t
     if (size < 2) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 2;
+    out->extra = size - 2;
     return GMSG_OK;
 }
 
 test_framing_whole_frame_header_view test_framing_whole_frame_header_view_unchecked(const uint8_t* data, size_t size) {
     test_framing_whole_frame_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 2;
+    v.extra = size - 2;
     return v;
 }
 
@@ -662,7 +734,23 @@ void test_framing_whole_frame_any_message_print(const test_framing_whole_frame_a
 
 static const uint8_t test_framing_whole_frame_prefix_[2] = {0x55, 0xAA};
 static const gmsg_length_prefixed_config test_framing_whole_frame_framing_ = {{{0x55, 0xAA}, 2}, 2, 1, GMSG_ENDIAN_BIG, INT64_C(2), 5, 64, {false, 0, 0, 0, 0, {0}, {0}, {0}}, 0, false, 0, 0, false};
-static gmsg_frame_scan test_framing_whole_frame_scan_(const uint8_t* b, size_t n) { return gmsg_scan_length_prefixed(b, n, &test_framing_whole_frame_framing_); }
+/* Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BAD_LENGTH as soon as the header has arrived. */
+static gmsg_frame_scan test_framing_whole_frame_scan_(const uint8_t* b, size_t n) {
+    const gmsg_frame_scan s = gmsg_scan_length_prefixed(b, n, &test_framing_whole_frame_framing_);
+    uint8_t h[2];
+    test_framing_whole_frame_header_view hv;
+    int64_t body;
+    if (s.kind == GMSG_SCAN_SKIP) return s;
+    if (!gmsg_read_frame_header(b, n, test_framing_whole_frame_framing_.sync.len, &test_framing_whole_frame_framing_.escape, h, 2)) return s;
+    hv = test_framing_whole_frame_header_view_unchecked(h, 2);
+    body = (int64_t)test_framing_whole_frame_header_view_len(&hv) + INT64_C(-3);
+    switch ((int64_t)test_framing_whole_frame_header_view_id(&hv)) {
+        case INT64_C(1): if (body < 5) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Reading */
+        case INT64_C(2): if (body < 1) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Note */
+        default: break;
+    }
+    return s;
+}
 
 /* A validated frame split into its parts (pointers into the frame buffer). */
 typedef struct test_framing_whole_frame_frame_ {
@@ -758,13 +846,29 @@ gmsg_error test_framing_whole_frame_process(const uint8_t* data, size_t size, co
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { test_framing_whole_frame_mode_deliver_ = 0, test_framing_whole_frame_mode_capture_ = 1, test_framing_whole_frame_mode_message_ = 2, test_framing_whole_frame_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t test_framing_whole_frame_extra_(const test_framing_whole_frame_any_view* v) {
+    switch (v->kind) {
+        case TEST_FRAMING_WHOLE_FRAME_READING: return test_framing_reading_view_extra_bytes(&v->as.reading);
+        case TEST_FRAMING_WHOLE_FRAME_NOTE: return test_framing_note_view_extra_bytes(&v->as.note);
+        default: return 0;
+    }
+}
+
 static gmsg_error test_framing_whole_frame_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     test_framing_whole_frame_stream* s = (test_framing_whole_frame_stream*)gs;
     test_framing_whole_frame_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == test_framing_whole_frame_mode_deliver_) return test_framing_whole_frame_process_frame_(frame, n, &s->cb);
     if ((e = test_framing_whole_frame_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == test_framing_whole_frame_mode_deliver_) {
+        test_framing_whole_frame_any_view v;
+        if ((e = test_framing_whole_frame_select_(&f, &v)) != GMSG_OK) return e;
+        gs->last_extra = test_framing_whole_frame_extra_(&v);
+        test_framing_whole_frame_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = test_framing_whole_frame_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = test_framing_whole_frame_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -963,6 +1067,15 @@ gmsg_error test_framing_escaped_with_end_header_decode(const uint8_t* data, size
     return test_framing_escaped_with_end_header_read(&r, out);
 }
 
+gmsg_error test_framing_escaped_with_end_header_decode_extra(const uint8_t* data, size_t size, test_framing_escaped_with_end_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_framing_escaped_with_end_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_framing_escaped_with_end_header_encode(const test_framing_escaped_with_end_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_framing_escaped_with_end_header_write(m, &w);
@@ -986,15 +1099,16 @@ gmsg_error test_framing_escaped_with_end_header_view_from(const uint8_t* data, s
     if (size < 2) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 2;
+    out->extra = size - 2;
     return GMSG_OK;
 }
 
 test_framing_escaped_with_end_header_view test_framing_escaped_with_end_header_view_unchecked(const uint8_t* data, size_t size) {
     test_framing_escaped_with_end_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 2;
+    v.extra = size - 2;
     return v;
 }
 
@@ -1033,7 +1147,23 @@ void test_framing_escaped_with_end_any_message_print(const test_framing_escaped_
 static const uint8_t test_framing_escaped_with_end_prefix_[1] = {0x7E};
 static const uint8_t test_framing_escaped_with_end_suffix_[1] = {0x0D};
 static const gmsg_length_prefixed_config test_framing_escaped_with_end_framing_ = {{{0x7E}, 1}, 2, 1, GMSG_ENDIAN_BIG, INT64_C(4), 6, 80, {true, 0x7D, GMSG_ESCAPE_XOR, 0x20, 2, {0x7E, 0x0D}, {0}, {0x2000u, 0x0u, 0x0u, 0x60000000u, 0x0u, 0x0u, 0x0u, 0x0u}}, 1, false, 0, 0, false};
-static gmsg_frame_scan test_framing_escaped_with_end_scan_(const uint8_t* b, size_t n) { return gmsg_scan_length_prefixed(b, n, &test_framing_escaped_with_end_framing_); }
+/* Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BAD_LENGTH as soon as the header has arrived. */
+static gmsg_frame_scan test_framing_escaped_with_end_scan_(const uint8_t* b, size_t n) {
+    const gmsg_frame_scan s = gmsg_scan_length_prefixed(b, n, &test_framing_escaped_with_end_framing_);
+    uint8_t h[2];
+    test_framing_escaped_with_end_header_view hv;
+    int64_t body;
+    if (s.kind == GMSG_SCAN_SKIP) return s;
+    if (!gmsg_read_frame_header(b, n, test_framing_escaped_with_end_framing_.sync.len, &test_framing_escaped_with_end_framing_.escape, h, 2)) return s;
+    hv = test_framing_escaped_with_end_header_view_unchecked(h, 2);
+    body = (int64_t)test_framing_escaped_with_end_header_view_len(&hv) + INT64_C(-2);
+    switch ((int64_t)test_framing_escaped_with_end_header_view_id(&hv)) {
+        case INT64_C(1): if (body < 5) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Reading */
+        case INT64_C(2): if (body < 1) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Note */
+        default: break;
+    }
+    return s;
+}
 
 /* A validated frame split into its parts (pointers into the frame buffer). */
 typedef struct test_framing_escaped_with_end_frame_ {
@@ -1170,13 +1300,29 @@ gmsg_error test_framing_escaped_with_end_process(uint8_t* data, size_t size, con
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { test_framing_escaped_with_end_mode_deliver_ = 0, test_framing_escaped_with_end_mode_capture_ = 1, test_framing_escaped_with_end_mode_message_ = 2, test_framing_escaped_with_end_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t test_framing_escaped_with_end_extra_(const test_framing_escaped_with_end_any_view* v) {
+    switch (v->kind) {
+        case TEST_FRAMING_ESCAPED_WITH_END_READING: return test_framing_reading_view_extra_bytes(&v->as.reading);
+        case TEST_FRAMING_ESCAPED_WITH_END_NOTE: return test_framing_note_view_extra_bytes(&v->as.note);
+        default: return 0;
+    }
+}
+
 static gmsg_error test_framing_escaped_with_end_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     test_framing_escaped_with_end_stream* s = (test_framing_escaped_with_end_stream*)gs;
     test_framing_escaped_with_end_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == test_framing_escaped_with_end_mode_deliver_) return test_framing_escaped_with_end_process_frame_(frame, n, &s->cb);
     if ((e = test_framing_escaped_with_end_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == test_framing_escaped_with_end_mode_deliver_) {
+        test_framing_escaped_with_end_any_view v;
+        if ((e = test_framing_escaped_with_end_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = test_framing_escaped_with_end_extra_(&v);
+        test_framing_escaped_with_end_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = test_framing_escaped_with_end_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = test_framing_escaped_with_end_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -1387,6 +1533,15 @@ gmsg_error test_framing_fixed_with_end_header_decode(const uint8_t* data, size_t
     return test_framing_fixed_with_end_header_read(&r, out);
 }
 
+gmsg_error test_framing_fixed_with_end_header_decode_extra(const uint8_t* data, size_t size, test_framing_fixed_with_end_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_framing_fixed_with_end_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error test_framing_fixed_with_end_header_encode(const test_framing_fixed_with_end_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = test_framing_fixed_with_end_header_write(m, &w);
@@ -1408,15 +1563,16 @@ gmsg_error test_framing_fixed_with_end_header_view_from(const uint8_t* data, siz
     if (size < 1) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 test_framing_fixed_with_end_header_view test_framing_fixed_with_end_header_view_unchecked(const uint8_t* data, size_t size) {
     test_framing_fixed_with_end_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -1582,13 +1738,28 @@ gmsg_error test_framing_fixed_with_end_process(uint8_t* data, size_t size, const
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { test_framing_fixed_with_end_mode_deliver_ = 0, test_framing_fixed_with_end_mode_capture_ = 1, test_framing_fixed_with_end_mode_message_ = 2, test_framing_fixed_with_end_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t test_framing_fixed_with_end_extra_(const test_framing_fixed_with_end_any_view* v) {
+    switch (v->kind) {
+        case TEST_FRAMING_FIXED_WITH_END_READING: return test_framing_reading_view_extra_bytes(&v->as.reading);
+        default: return 0;
+    }
+}
+
 static gmsg_error test_framing_fixed_with_end_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     test_framing_fixed_with_end_stream* s = (test_framing_fixed_with_end_stream*)gs;
     test_framing_fixed_with_end_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == test_framing_fixed_with_end_mode_deliver_) return test_framing_fixed_with_end_process_frame_(frame, n, &s->cb);
     if ((e = test_framing_fixed_with_end_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == test_framing_fixed_with_end_mode_deliver_) {
+        test_framing_fixed_with_end_any_view v;
+        if ((e = test_framing_fixed_with_end_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
+        gs->last_extra = test_framing_fixed_with_end_extra_(&v);
+        test_framing_fixed_with_end_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = test_framing_fixed_with_end_select_restore_(frame, n, &f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = test_framing_fixed_with_end_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;
@@ -1720,6 +1891,818 @@ gmsg_error test_framing_fixed_with_end_encode_reading_with_header(const test_fra
 gmsg_error test_framing_fixed_with_end_encode(const test_framing_fixed_with_end_any_message* m, uint8_t* out, size_t capacity, size_t* written) {
     switch (m->kind) {
         case TEST_FRAMING_FIXED_WITH_END_READING: return test_framing_fixed_with_end_encode_reading(&m->as.reading, out, capacity, written);
+        default: break;
+    }
+    if (written) *written = 0;
+    return GMSG_ERR_UNKNOWN_TYPE;
+}
+
+/* ---- LooseHeader ------------------------------------------------------------------------------------- */
+
+gmsg_error test_framing_loose_header_read(gmsg_reader* r, test_framing_loose_header* m) {
+    gmsg_error e = GMSG_OK;
+    (void)r;
+    (void)m;
+    {
+        uint8_t v0 = 0;
+        if ((e = gmsg_read_u8(r, GMSG_ENDIAN_BIG, &v0)) != GMSG_OK) return e;
+        m->id = v0;
+    }
+    {
+        uint8_t v0 = 0;
+        if ((e = gmsg_read_u8(r, GMSG_ENDIAN_BIG, &v0)) != GMSG_OK) return e;
+        m->len = v0;
+    }
+    return e;
+}
+
+gmsg_error test_framing_loose_header_write(const test_framing_loose_header* m, gmsg_writer* w) {
+    gmsg_error e = GMSG_OK;
+    (void)w;
+    (void)m;
+    if ((e = gmsg_write_u8(w, GMSG_ENDIAN_BIG, m->id)) != GMSG_OK) return e;
+    if ((e = gmsg_write_u8(w, GMSG_ENDIAN_BIG, m->len)) != GMSG_OK) return e;
+    return e;
+}
+
+gmsg_error test_framing_loose_header_decode(const uint8_t* data, size_t size, test_framing_loose_header* out) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_memset(out, 0, sizeof *out);
+    return test_framing_loose_header_read(&r, out);
+}
+
+gmsg_error test_framing_loose_header_decode_extra(const uint8_t* data, size_t size, test_framing_loose_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_framing_loose_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
+gmsg_error test_framing_loose_header_encode(const test_framing_loose_header* m, uint8_t* out, size_t capacity, size_t* written) {
+    gmsg_writer w = gmsg_writer_init(out, capacity);
+    const gmsg_error e = test_framing_loose_header_write(m, &w);
+    if (written) *written = e == GMSG_OK ? w.pos : 0;
+    return e;
+}
+
+void test_framing_loose_header_print(const test_framing_loose_header* m, gmsg_printer* p) {
+    (void)m;
+    gmsg_print_begin(p, "LooseHeader");
+    gmsg_print_key(p, "id");
+    gmsg_print_u64(p, (uint64_t)m->id);
+    gmsg_print_key(p, "len");
+    gmsg_print_u64(p, (uint64_t)m->len);
+    gmsg_print_end(p);
+}
+
+gmsg_error test_framing_loose_header_view_from(const uint8_t* data, size_t size, test_framing_loose_header_view* out) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 2) return GMSG_ERR_TRUNCATED;
+    out->data = data;
+    out->size = 2;
+    out->extra = size - 2;
+    return GMSG_OK;
+}
+
+test_framing_loose_header_view test_framing_loose_header_view_unchecked(const uint8_t* data, size_t size) {
+    test_framing_loose_header_view v;
+    gmsg_memset(&v, 0, sizeof v);
+    v.data = data;
+    v.size = 2;
+    v.extra = size - 2;
+    return v;
+}
+
+gmsg_error test_framing_loose_header_view_to_struct(const test_framing_loose_header_view* v, test_framing_loose_header* out) {
+    return test_framing_loose_header_decode(v->data, v->size, out);
+}
+
+void test_framing_loose_header_view_print(const test_framing_loose_header_view* v, gmsg_printer* p) {
+    (void)v;
+    gmsg_print_begin(p, "LooseHeader");
+    gmsg_print_key(p, "id");
+    gmsg_print_u64(p, (uint64_t)test_framing_loose_header_view_id(v));
+    gmsg_print_key(p, "len");
+    gmsg_print_u64(p, (uint64_t)test_framing_loose_header_view_len(v));
+    gmsg_print_end(p);
+}
+
+/* ==== protocol Loose =============================================================================== */
+
+void test_framing_loose_any_view_print(const test_framing_loose_any_view* v, gmsg_printer* p) {
+    switch (v->kind) {
+        case TEST_FRAMING_LOOSE_READING: test_framing_reading_view_print(&v->as.reading, p); break;
+        case TEST_FRAMING_LOOSE_NOTE: test_framing_note_view_print(&v->as.note, p); break;
+        default: gmsg_print_text(p, "<none>", 6); break;
+    }
+}
+
+void test_framing_loose_any_message_print(const test_framing_loose_any_message* v, gmsg_printer* p) {
+    switch (v->kind) {
+        case TEST_FRAMING_LOOSE_READING: test_framing_reading_print(&v->as.reading, p); break;
+        case TEST_FRAMING_LOOSE_NOTE: test_framing_note_print(&v->as.note, p); break;
+        default: gmsg_print_text(p, "<none>", 6); break;
+    }
+}
+
+static const uint8_t test_framing_loose_prefix_[1] = {0xB5};
+static const gmsg_length_prefixed_config test_framing_loose_framing_ = {{{0xB5}, 1}, 2, 1, GMSG_ENDIAN_BIG, INT64_C(3), 3, 40, {false, 0, 0, 0, 0, {0}, {0}, {0}}, 0, false, 0, 0, false};
+/* Scan for a frame; a length the message type cannot have (shorter than the message) is rejected with BAD_LENGTH as soon as the header has arrived. */
+static gmsg_frame_scan test_framing_loose_scan_(const uint8_t* b, size_t n) {
+    const gmsg_frame_scan s = gmsg_scan_length_prefixed(b, n, &test_framing_loose_framing_);
+    uint8_t h[2];
+    test_framing_loose_header_view hv;
+    int64_t body;
+    if (s.kind == GMSG_SCAN_SKIP) return s;
+    if (!gmsg_read_frame_header(b, n, test_framing_loose_framing_.sync.len, &test_framing_loose_framing_.escape, h, 2)) return s;
+    hv = test_framing_loose_header_view_unchecked(h, 2);
+    body = (int64_t)test_framing_loose_header_view_len(&hv) + INT64_C(0);
+    switch ((int64_t)test_framing_loose_header_view_id(&hv)) {
+        case INT64_C(1): if (body < 5) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Reading */
+        case INT64_C(2): if (body < 1) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Note */
+        default: break;
+    }
+    return s;
+}
+
+/* A validated frame split into its parts (pointers into the frame buffer). */
+typedef struct test_framing_loose_frame_ {
+    test_framing_loose_header_view header;
+    const uint8_t* body;
+    size_t body_size;
+} test_framing_loose_frame_;
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. */
+static gmsg_error test_framing_loose_open_(const uint8_t* frame, size_t size, test_framing_loose_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 3) return GMSG_ERR_TRUNCATED;
+    const size_t interior_n = size - 1 - 0;
+    const uint8_t* interior = frame + 1;
+    if (interior_n < 2) return GMSG_ERR_TRUNCATED;
+    if ((e = test_framing_loose_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
+    f->body = interior + 2;
+    f->body_size = interior_n - 2 - 0;
+    return GMSG_OK;
+}
+
+/* Decode the message view selected by the frame's type id (message_type). */
+static gmsg_error test_framing_loose_select_(const test_framing_loose_frame_* f, test_framing_loose_any_view* out) {
+    switch ((int64_t)test_framing_loose_header_view_id(&f->header)) {
+        case INT64_C(1): {  /* Reading */
+            out->kind = TEST_FRAMING_LOOSE_READING;
+            return test_framing_reading_view_from(f->body, f->body_size, &out->as.reading);
+        }
+        case INT64_C(2): {  /* Note */
+            out->kind = TEST_FRAMING_LOOSE_NOTE;
+            return test_framing_note_view_from(f->body, f->body_size, &out->as.note);
+        }
+        default: break;
+    }
+    out->kind = TEST_FRAMING_LOOSE_NONE;
+    return GMSG_ERR_UNKNOWN_TYPE;
+}
+
+static void test_framing_loose_deliver_(const test_framing_loose_callbacks* cb, const test_framing_loose_frame_* f, const test_framing_loose_any_view* v) {
+    switch (v->kind) {
+        case TEST_FRAMING_LOOSE_READING: if (cb->on_reading) cb->on_reading(cb->ctx, &f->header, &v->as.reading); break;
+        case TEST_FRAMING_LOOSE_NOTE: if (cb->on_note) cb->on_note(cb->ctx, &f->header, &v->as.note); break;
+        default: break;
+    }
+    if (cb->on_frame) cb->on_frame(cb->ctx, &f->header, v);
+}
+
+/* Validate a complete frame, select its message and deliver it (C++: P::process). */
+static gmsg_error test_framing_loose_process_frame_(const uint8_t* frame, size_t size, const test_framing_loose_callbacks* cb) {
+    test_framing_loose_frame_ f;
+    test_framing_loose_any_view v;
+    gmsg_error e = GMSG_OK;
+    if ((e = test_framing_loose_open_(frame, size, &f)) != GMSG_OK) return e;
+    if ((e = test_framing_loose_select_(&f, &v)) != GMSG_OK) return e;
+    if (cb) test_framing_loose_deliver_(cb, &f, &v);
+    return GMSG_OK;
+}
+
+gmsg_error test_framing_loose_parse(const uint8_t* data, size_t size, test_framing_loose_any_view* out) {
+    test_framing_loose_frame_ f;
+    gmsg_error e = GMSG_OK;
+    const gmsg_frame_scan s = test_framing_loose_scan_(data, size);
+    if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
+    if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
+    if ((e = test_framing_loose_open_(data, s.size, &f)) != GMSG_OK) return e;
+    return test_framing_loose_select_(&f, out);
+}
+
+gmsg_error test_framing_loose_decode(const uint8_t* data, size_t size, test_framing_loose_any_message* out) {
+    test_framing_loose_any_view v;
+    gmsg_error e = GMSG_OK;
+    if ((e = test_framing_loose_parse(data, size, &v)) != GMSG_OK) return e;
+    out->kind = v.kind;
+    switch (v.kind) {
+        case TEST_FRAMING_LOOSE_READING: return test_framing_reading_view_to_struct(&v.as.reading, &out->as.reading);
+        case TEST_FRAMING_LOOSE_NOTE: return test_framing_note_view_to_struct(&v.as.note, &out->as.note);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+gmsg_error test_framing_loose_process(const uint8_t* data, size_t size, const test_framing_loose_callbacks* cb) {
+    const gmsg_frame_scan s = test_framing_loose_scan_(data, size);
+    if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
+    if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
+    return test_framing_loose_process_frame_(data, s.size, cb);
+}
+
+/* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
+enum { test_framing_loose_mode_deliver_ = 0, test_framing_loose_mode_capture_ = 1, test_framing_loose_mode_message_ = 2, test_framing_loose_mode_for_ = 3 };
+
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t test_framing_loose_extra_(const test_framing_loose_any_view* v) {
+    switch (v->kind) {
+        case TEST_FRAMING_LOOSE_READING: return test_framing_reading_view_extra_bytes(&v->as.reading);
+        case TEST_FRAMING_LOOSE_NOTE: return test_framing_note_view_extra_bytes(&v->as.note);
+        default: return 0;
+    }
+}
+
+static gmsg_error test_framing_loose_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
+    test_framing_loose_stream* s = (test_framing_loose_stream*)gs;
+    test_framing_loose_frame_ f;
+    gmsg_error e = GMSG_OK;
+    if ((e = test_framing_loose_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == test_framing_loose_mode_deliver_) {
+        test_framing_loose_any_view v;
+        if ((e = test_framing_loose_select_(&f, &v)) != GMSG_OK) return e;
+        gs->last_extra = test_framing_loose_extra_(&v);
+        test_framing_loose_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
+    if ((e = test_framing_loose_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = test_framing_loose_extra_(&s->got_.message);
+    s->got_.header = f.header;
+    s->got_.bytes = frame;
+    s->got_.size = n;
+    if (s->mode_ == test_framing_loose_mode_for_ && s->got_.message.kind != s->want_) {
+        test_framing_loose_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+        s->got_.message.kind = TEST_FRAMING_LOOSE_NONE;
+    }
+    if (s->mode_ == test_framing_loose_mode_message_) {
+        switch (s->got_.message.kind) {
+            case TEST_FRAMING_LOOSE_READING: s->msg_->kind = TEST_FRAMING_LOOSE_READING; return test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading);
+            case TEST_FRAMING_LOOSE_NOTE: s->msg_->kind = TEST_FRAMING_LOOSE_NOTE; return test_framing_note_view_to_struct(&s->got_.message.as.note, &s->msg_->as.note);
+            default: return GMSG_ERR_UNKNOWN_TYPE;
+        }
+    }
+    return GMSG_OK;
+}
+
+bool test_framing_loose_stream_poll(test_framing_loose_stream* s, test_framing_loose_any_view* out) {
+    bool ok;
+    s->mode_ = test_framing_loose_mode_capture_;
+    ok = gmsg_stream_pull(&s->base);
+    s->mode_ = test_framing_loose_mode_deliver_;
+    if (ok) *out = s->got_.message;
+    return ok;
+}
+
+bool test_framing_loose_stream_poll_frame(test_framing_loose_stream* s, test_framing_loose_received* out) {
+    bool ok;
+    s->mode_ = test_framing_loose_mode_capture_;
+    ok = gmsg_stream_pull(&s->base);
+    s->mode_ = test_framing_loose_mode_deliver_;
+    if (ok) *out = s->got_;
+    return ok;
+}
+
+bool test_framing_loose_stream_poll_message(test_framing_loose_stream* s, test_framing_loose_any_message* out) {
+    bool ok;
+    s->mode_ = test_framing_loose_mode_message_;
+    s->msg_ = out;
+    ok = gmsg_stream_pull(&s->base);
+    s->mode_ = test_framing_loose_mode_deliver_;
+    s->msg_ = NULL;
+    return ok;
+}
+
+gmsg_poll test_framing_loose_stream_poll_event(test_framing_loose_stream* s, test_framing_loose_event* out) {
+    gmsg_step step;
+    s->mode_ = test_framing_loose_mode_capture_;
+    step = gmsg_stream_step(&s->base);
+    s->mode_ = test_framing_loose_mode_deliver_;
+    if (step.kind == GMSG_STEP_NEED_MORE) return GMSG_POLL_NEED_MORE;
+    if (step.kind == GMSG_STEP_ERROR) {
+        out->message.kind = TEST_FRAMING_LOOSE_NONE;
+        out->error = step.error;
+        out->data = step.data;
+        out->size = step.size;
+        return GMSG_POLL_ERROR;
+    }
+    out->message = s->got_.message;
+    out->error = GMSG_OK;
+    out->data = NULL;
+    out->size = 0;
+    return GMSG_POLL_MESSAGE;
+}
+
+bool test_framing_loose_stream_poll_for(test_framing_loose_stream* s, test_framing_loose_kind kind, test_framing_loose_any_view* out) {
+    bool hit = false;
+    s->mode_ = test_framing_loose_mode_for_;
+    s->want_ = kind;
+    while (gmsg_stream_pull(&s->base)) {
+        if (s->got_.message.kind == kind) {
+            *out = s->got_.message;
+            hit = true;
+            break;
+        }
+    }
+    s->mode_ = test_framing_loose_mode_deliver_;
+    return hit;
+}
+
+static void test_framing_loose_stream_error_(gmsg_stream* s, gmsg_error e, const uint8_t* data, size_t n) {
+    const test_framing_loose_callbacks* cb = &((test_framing_loose_stream*)s)->cb;
+    if (cb->on_error) cb->on_error(cb->ctx, e, data, n);
+}
+
+gmsg_error test_framing_loose_stream_init(test_framing_loose_stream* s, uint8_t* buf, size_t size) {
+    gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
+    return gmsg_stream_init(&s->base, buf, size, TEST_FRAMING_LOOSE_MAX_FRAME, test_framing_loose_scan_, test_framing_loose_stream_process_, test_framing_loose_stream_error_);
+}
+
+gmsg_error test_framing_loose_encode_reading(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written) {
+    test_framing_loose_header h;
+    gmsg_memset(&h, 0, sizeof h);
+    return test_framing_loose_encode_reading_with_header(&h, m, out, capacity, written);
+}
+
+gmsg_error test_framing_loose_encode_reading_with_header(const test_framing_loose_header* hdr, const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written) {
+    test_framing_loose_header h = *hdr;
+    gmsg_writer w = gmsg_writer_init(out, capacity);
+    gmsg_error e = GMSG_OK;
+    if (written) *written = 0;
+    if ((e = gmsg_write_bytes(&w, test_framing_loose_prefix_, 1)) != GMSG_OK) return e;
+    const size_t header_at = w.pos;
+    (void)header_at;
+    h.id = ((uint8_t)INT64_C(1));
+    if ((e = test_framing_loose_header_write(&h, &w)) != GMSG_OK) return e;
+    const size_t body_at = w.pos;
+    if ((e = test_framing_reading_write(m, &w)) != GMSG_OK) return e;
+    const size_t body_len = w.pos - body_at;
+    (void)body_len;
+    {
+        const int64_t value = (int64_t)(body_len) - (INT64_C(0));
+        if (value < 0 || (uint64_t)value > UINT64_C(255)) return GMSG_ERR_BAD_LENGTH;
+        gmsg_write_patch_uint(&w, header_at + 1, 1, GMSG_ENDIAN_BIG, (uint64_t)value);
+    }
+    size_t total = w.pos;
+    if (written) *written = total;
+    return GMSG_OK;
+}
+
+gmsg_error test_framing_loose_encode_note(const test_framing_note* m, uint8_t* out, size_t capacity, size_t* written) {
+    test_framing_loose_header h;
+    gmsg_memset(&h, 0, sizeof h);
+    return test_framing_loose_encode_note_with_header(&h, m, out, capacity, written);
+}
+
+gmsg_error test_framing_loose_encode_note_with_header(const test_framing_loose_header* hdr, const test_framing_note* m, uint8_t* out, size_t capacity, size_t* written) {
+    test_framing_loose_header h = *hdr;
+    gmsg_writer w = gmsg_writer_init(out, capacity);
+    gmsg_error e = GMSG_OK;
+    if (written) *written = 0;
+    if ((e = gmsg_write_bytes(&w, test_framing_loose_prefix_, 1)) != GMSG_OK) return e;
+    const size_t header_at = w.pos;
+    (void)header_at;
+    h.id = ((uint8_t)INT64_C(2));
+    if ((e = test_framing_loose_header_write(&h, &w)) != GMSG_OK) return e;
+    const size_t body_at = w.pos;
+    if ((e = test_framing_note_write(m, &w)) != GMSG_OK) return e;
+    const size_t body_len = w.pos - body_at;
+    (void)body_len;
+    {
+        const int64_t value = (int64_t)(body_len) - (INT64_C(0));
+        if (value < 0 || (uint64_t)value > UINT64_C(255)) return GMSG_ERR_BAD_LENGTH;
+        gmsg_write_patch_uint(&w, header_at + 1, 1, GMSG_ENDIAN_BIG, (uint64_t)value);
+    }
+    size_t total = w.pos;
+    if (written) *written = total;
+    return GMSG_OK;
+}
+
+gmsg_error test_framing_loose_encode(const test_framing_loose_any_message* m, uint8_t* out, size_t capacity, size_t* written) {
+    switch (m->kind) {
+        case TEST_FRAMING_LOOSE_READING: return test_framing_loose_encode_reading(&m->as.reading, out, capacity, written);
+        case TEST_FRAMING_LOOSE_NOTE: return test_framing_loose_encode_note(&m->as.note, out, capacity, written);
+        default: break;
+    }
+    if (written) *written = 0;
+    return GMSG_ERR_UNKNOWN_TYPE;
+}
+
+/* ---- ExactHeader ------------------------------------------------------------------------------------- */
+
+gmsg_error test_framing_exact_header_read(gmsg_reader* r, test_framing_exact_header* m) {
+    gmsg_error e = GMSG_OK;
+    (void)r;
+    (void)m;
+    {
+        uint8_t v0 = 0;
+        if ((e = gmsg_read_u8(r, GMSG_ENDIAN_BIG, &v0)) != GMSG_OK) return e;
+        m->id = v0;
+    }
+    {
+        uint8_t v0 = 0;
+        if ((e = gmsg_read_u8(r, GMSG_ENDIAN_BIG, &v0)) != GMSG_OK) return e;
+        m->len = v0;
+    }
+    return e;
+}
+
+gmsg_error test_framing_exact_header_write(const test_framing_exact_header* m, gmsg_writer* w) {
+    gmsg_error e = GMSG_OK;
+    (void)w;
+    (void)m;
+    if ((e = gmsg_write_u8(w, GMSG_ENDIAN_BIG, m->id)) != GMSG_OK) return e;
+    if ((e = gmsg_write_u8(w, GMSG_ENDIAN_BIG, m->len)) != GMSG_OK) return e;
+    return e;
+}
+
+gmsg_error test_framing_exact_header_decode(const uint8_t* data, size_t size, test_framing_exact_header* out) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_memset(out, 0, sizeof *out);
+    return test_framing_exact_header_read(&r, out);
+}
+
+gmsg_error test_framing_exact_header_decode_extra(const uint8_t* data, size_t size, test_framing_exact_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = test_framing_exact_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
+gmsg_error test_framing_exact_header_encode(const test_framing_exact_header* m, uint8_t* out, size_t capacity, size_t* written) {
+    gmsg_writer w = gmsg_writer_init(out, capacity);
+    const gmsg_error e = test_framing_exact_header_write(m, &w);
+    if (written) *written = e == GMSG_OK ? w.pos : 0;
+    return e;
+}
+
+void test_framing_exact_header_print(const test_framing_exact_header* m, gmsg_printer* p) {
+    (void)m;
+    gmsg_print_begin(p, "ExactHeader");
+    gmsg_print_key(p, "id");
+    gmsg_print_u64(p, (uint64_t)m->id);
+    gmsg_print_key(p, "len");
+    gmsg_print_u64(p, (uint64_t)m->len);
+    gmsg_print_end(p);
+}
+
+gmsg_error test_framing_exact_header_view_from(const uint8_t* data, size_t size, test_framing_exact_header_view* out) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 2) return GMSG_ERR_TRUNCATED;
+    out->data = data;
+    out->size = 2;
+    out->extra = size - 2;
+    return GMSG_OK;
+}
+
+test_framing_exact_header_view test_framing_exact_header_view_unchecked(const uint8_t* data, size_t size) {
+    test_framing_exact_header_view v;
+    gmsg_memset(&v, 0, sizeof v);
+    v.data = data;
+    v.size = 2;
+    v.extra = size - 2;
+    return v;
+}
+
+gmsg_error test_framing_exact_header_view_to_struct(const test_framing_exact_header_view* v, test_framing_exact_header* out) {
+    return test_framing_exact_header_decode(v->data, v->size, out);
+}
+
+void test_framing_exact_header_view_print(const test_framing_exact_header_view* v, gmsg_printer* p) {
+    (void)v;
+    gmsg_print_begin(p, "ExactHeader");
+    gmsg_print_key(p, "id");
+    gmsg_print_u64(p, (uint64_t)test_framing_exact_header_view_id(v));
+    gmsg_print_key(p, "len");
+    gmsg_print_u64(p, (uint64_t)test_framing_exact_header_view_len(v));
+    gmsg_print_end(p);
+}
+
+/* ==== protocol Exact =============================================================================== */
+
+void test_framing_exact_any_view_print(const test_framing_exact_any_view* v, gmsg_printer* p) {
+    switch (v->kind) {
+        case TEST_FRAMING_EXACT_READING: test_framing_reading_view_print(&v->as.reading, p); break;
+        case TEST_FRAMING_EXACT_NOTE: test_framing_note_view_print(&v->as.note, p); break;
+        default: gmsg_print_text(p, "<none>", 6); break;
+    }
+}
+
+void test_framing_exact_any_message_print(const test_framing_exact_any_message* v, gmsg_printer* p) {
+    switch (v->kind) {
+        case TEST_FRAMING_EXACT_READING: test_framing_reading_print(&v->as.reading, p); break;
+        case TEST_FRAMING_EXACT_NOTE: test_framing_note_print(&v->as.note, p); break;
+        default: gmsg_print_text(p, "<none>", 6); break;
+    }
+}
+
+static const uint8_t test_framing_exact_prefix_[1] = {0xB5};
+static const gmsg_length_prefixed_config test_framing_exact_framing_ = {{{0xB5}, 1}, 2, 1, GMSG_ENDIAN_BIG, INT64_C(3), 3, 40, {false, 0, 0, 0, 0, {0}, {0}, {0}}, 0, false, 0, 0, false};
+/* Scan for a frame; a length the message type cannot have (shorter or longer than the message) is rejected with BAD_LENGTH as soon as the header has arrived. */
+static gmsg_frame_scan test_framing_exact_scan_(const uint8_t* b, size_t n) {
+    const gmsg_frame_scan s = gmsg_scan_length_prefixed(b, n, &test_framing_exact_framing_);
+    uint8_t h[2];
+    test_framing_exact_header_view hv;
+    int64_t body;
+    if (s.kind == GMSG_SCAN_SKIP) return s;
+    if (!gmsg_read_frame_header(b, n, test_framing_exact_framing_.sync.len, &test_framing_exact_framing_.escape, h, 2)) return s;
+    hv = test_framing_exact_header_view_unchecked(h, 2);
+    body = (int64_t)test_framing_exact_header_view_len(&hv) + INT64_C(0);
+    switch ((int64_t)test_framing_exact_header_view_id(&hv)) {
+        case INT64_C(1): if (body < 5 || body > 5) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Reading */
+        case INT64_C(2): if (body < 1 || body > 25) return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* Note */
+        default: break;
+    }
+    return s;
+}
+
+/* A validated frame split into its parts (pointers into the frame buffer). */
+typedef struct test_framing_exact_frame_ {
+    test_framing_exact_header_view header;
+    const uint8_t* body;
+    size_t body_size;
+} test_framing_exact_frame_;
+
+/* Validate one complete frame (as delimited by the scanner) and split it into header and body. */
+static gmsg_error test_framing_exact_open_(const uint8_t* frame, size_t size, test_framing_exact_frame_* f) {
+    gmsg_error e = GMSG_OK;
+    (void)e;
+    if (size < 3) return GMSG_ERR_TRUNCATED;
+    const size_t interior_n = size - 1 - 0;
+    const uint8_t* interior = frame + 1;
+    if (interior_n < 2) return GMSG_ERR_TRUNCATED;
+    if ((e = test_framing_exact_header_view_from(interior, 2, &f->header)) != GMSG_OK) return e;
+    f->body = interior + 2;
+    f->body_size = interior_n - 2 - 0;
+    return GMSG_OK;
+}
+
+/* Decode the message view selected by the frame's type id (message_type). */
+static gmsg_error test_framing_exact_select_(const test_framing_exact_frame_* f, test_framing_exact_any_view* out) {
+    switch ((int64_t)test_framing_exact_header_view_id(&f->header)) {
+        case INT64_C(1): {  /* Reading */
+            out->kind = TEST_FRAMING_EXACT_READING;
+            { const gmsg_error e = test_framing_reading_view_from(f->body, f->body_size, &out->as.reading); if (e != GMSG_OK) return e; }
+            if (test_framing_reading_view_extra_bytes(&out->as.reading) != 0) return GMSG_ERR_BAD_LENGTH;  /* exact_size */
+            return GMSG_OK;
+        }
+        case INT64_C(2): {  /* Note */
+            out->kind = TEST_FRAMING_EXACT_NOTE;
+            { const gmsg_error e = test_framing_note_view_from(f->body, f->body_size, &out->as.note); if (e != GMSG_OK) return e; }
+            if (test_framing_note_view_extra_bytes(&out->as.note) != 0) return GMSG_ERR_BAD_LENGTH;  /* exact_size */
+            return GMSG_OK;
+        }
+        default: break;
+    }
+    out->kind = TEST_FRAMING_EXACT_NONE;
+    return GMSG_ERR_UNKNOWN_TYPE;
+}
+
+static void test_framing_exact_deliver_(const test_framing_exact_callbacks* cb, const test_framing_exact_frame_* f, const test_framing_exact_any_view* v) {
+    switch (v->kind) {
+        case TEST_FRAMING_EXACT_READING: if (cb->on_reading) cb->on_reading(cb->ctx, &f->header, &v->as.reading); break;
+        case TEST_FRAMING_EXACT_NOTE: if (cb->on_note) cb->on_note(cb->ctx, &f->header, &v->as.note); break;
+        default: break;
+    }
+    if (cb->on_frame) cb->on_frame(cb->ctx, &f->header, v);
+}
+
+/* Validate a complete frame, select its message and deliver it (C++: P::process). */
+static gmsg_error test_framing_exact_process_frame_(const uint8_t* frame, size_t size, const test_framing_exact_callbacks* cb) {
+    test_framing_exact_frame_ f;
+    test_framing_exact_any_view v;
+    gmsg_error e = GMSG_OK;
+    if ((e = test_framing_exact_open_(frame, size, &f)) != GMSG_OK) return e;
+    if ((e = test_framing_exact_select_(&f, &v)) != GMSG_OK) return e;
+    if (cb) test_framing_exact_deliver_(cb, &f, &v);
+    return GMSG_OK;
+}
+
+gmsg_error test_framing_exact_parse(const uint8_t* data, size_t size, test_framing_exact_any_view* out) {
+    test_framing_exact_frame_ f;
+    gmsg_error e = GMSG_OK;
+    const gmsg_frame_scan s = test_framing_exact_scan_(data, size);
+    if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
+    if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
+    if ((e = test_framing_exact_open_(data, s.size, &f)) != GMSG_OK) return e;
+    return test_framing_exact_select_(&f, out);
+}
+
+gmsg_error test_framing_exact_decode(const uint8_t* data, size_t size, test_framing_exact_any_message* out) {
+    test_framing_exact_any_view v;
+    gmsg_error e = GMSG_OK;
+    if ((e = test_framing_exact_parse(data, size, &v)) != GMSG_OK) return e;
+    out->kind = v.kind;
+    switch (v.kind) {
+        case TEST_FRAMING_EXACT_READING: return test_framing_reading_view_to_struct(&v.as.reading, &out->as.reading);
+        case TEST_FRAMING_EXACT_NOTE: return test_framing_note_view_to_struct(&v.as.note, &out->as.note);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+gmsg_error test_framing_exact_process(const uint8_t* data, size_t size, const test_framing_exact_callbacks* cb) {
+    const gmsg_frame_scan s = test_framing_exact_scan_(data, size);
+    if (s.kind == GMSG_SCAN_NEED_MORE) return GMSG_ERR_TRUNCATED;
+    if (s.kind == GMSG_SCAN_SKIP) return s.error == GMSG_OK ? GMSG_ERR_BAD_SYNC : s.error;
+    return test_framing_exact_process_frame_(data, s.size, cb);
+}
+
+/* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
+enum { test_framing_exact_mode_deliver_ = 0, test_framing_exact_mode_capture_ = 1, test_framing_exact_mode_message_ = 2, test_framing_exact_mode_for_ = 3 };
+
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t test_framing_exact_extra_(const test_framing_exact_any_view* v) {
+    switch (v->kind) {
+        case TEST_FRAMING_EXACT_READING: return test_framing_reading_view_extra_bytes(&v->as.reading);
+        case TEST_FRAMING_EXACT_NOTE: return test_framing_note_view_extra_bytes(&v->as.note);
+        default: return 0;
+    }
+}
+
+static gmsg_error test_framing_exact_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
+    test_framing_exact_stream* s = (test_framing_exact_stream*)gs;
+    test_framing_exact_frame_ f;
+    gmsg_error e = GMSG_OK;
+    if ((e = test_framing_exact_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == test_framing_exact_mode_deliver_) {
+        test_framing_exact_any_view v;
+        if ((e = test_framing_exact_select_(&f, &v)) != GMSG_OK) return e;
+        gs->last_extra = test_framing_exact_extra_(&v);
+        test_framing_exact_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
+    if ((e = test_framing_exact_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = test_framing_exact_extra_(&s->got_.message);
+    s->got_.header = f.header;
+    s->got_.bytes = frame;
+    s->got_.size = n;
+    if (s->mode_ == test_framing_exact_mode_for_ && s->got_.message.kind != s->want_) {
+        test_framing_exact_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+        s->got_.message.kind = TEST_FRAMING_EXACT_NONE;
+    }
+    if (s->mode_ == test_framing_exact_mode_message_) {
+        switch (s->got_.message.kind) {
+            case TEST_FRAMING_EXACT_READING: s->msg_->kind = TEST_FRAMING_EXACT_READING; return test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading);
+            case TEST_FRAMING_EXACT_NOTE: s->msg_->kind = TEST_FRAMING_EXACT_NOTE; return test_framing_note_view_to_struct(&s->got_.message.as.note, &s->msg_->as.note);
+            default: return GMSG_ERR_UNKNOWN_TYPE;
+        }
+    }
+    return GMSG_OK;
+}
+
+bool test_framing_exact_stream_poll(test_framing_exact_stream* s, test_framing_exact_any_view* out) {
+    bool ok;
+    s->mode_ = test_framing_exact_mode_capture_;
+    ok = gmsg_stream_pull(&s->base);
+    s->mode_ = test_framing_exact_mode_deliver_;
+    if (ok) *out = s->got_.message;
+    return ok;
+}
+
+bool test_framing_exact_stream_poll_frame(test_framing_exact_stream* s, test_framing_exact_received* out) {
+    bool ok;
+    s->mode_ = test_framing_exact_mode_capture_;
+    ok = gmsg_stream_pull(&s->base);
+    s->mode_ = test_framing_exact_mode_deliver_;
+    if (ok) *out = s->got_;
+    return ok;
+}
+
+bool test_framing_exact_stream_poll_message(test_framing_exact_stream* s, test_framing_exact_any_message* out) {
+    bool ok;
+    s->mode_ = test_framing_exact_mode_message_;
+    s->msg_ = out;
+    ok = gmsg_stream_pull(&s->base);
+    s->mode_ = test_framing_exact_mode_deliver_;
+    s->msg_ = NULL;
+    return ok;
+}
+
+gmsg_poll test_framing_exact_stream_poll_event(test_framing_exact_stream* s, test_framing_exact_event* out) {
+    gmsg_step step;
+    s->mode_ = test_framing_exact_mode_capture_;
+    step = gmsg_stream_step(&s->base);
+    s->mode_ = test_framing_exact_mode_deliver_;
+    if (step.kind == GMSG_STEP_NEED_MORE) return GMSG_POLL_NEED_MORE;
+    if (step.kind == GMSG_STEP_ERROR) {
+        out->message.kind = TEST_FRAMING_EXACT_NONE;
+        out->error = step.error;
+        out->data = step.data;
+        out->size = step.size;
+        return GMSG_POLL_ERROR;
+    }
+    out->message = s->got_.message;
+    out->error = GMSG_OK;
+    out->data = NULL;
+    out->size = 0;
+    return GMSG_POLL_MESSAGE;
+}
+
+bool test_framing_exact_stream_poll_for(test_framing_exact_stream* s, test_framing_exact_kind kind, test_framing_exact_any_view* out) {
+    bool hit = false;
+    s->mode_ = test_framing_exact_mode_for_;
+    s->want_ = kind;
+    while (gmsg_stream_pull(&s->base)) {
+        if (s->got_.message.kind == kind) {
+            *out = s->got_.message;
+            hit = true;
+            break;
+        }
+    }
+    s->mode_ = test_framing_exact_mode_deliver_;
+    return hit;
+}
+
+static void test_framing_exact_stream_error_(gmsg_stream* s, gmsg_error e, const uint8_t* data, size_t n) {
+    const test_framing_exact_callbacks* cb = &((test_framing_exact_stream*)s)->cb;
+    if (cb->on_error) cb->on_error(cb->ctx, e, data, n);
+}
+
+gmsg_error test_framing_exact_stream_init(test_framing_exact_stream* s, uint8_t* buf, size_t size) {
+    gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
+    return gmsg_stream_init(&s->base, buf, size, TEST_FRAMING_EXACT_MAX_FRAME, test_framing_exact_scan_, test_framing_exact_stream_process_, test_framing_exact_stream_error_);
+}
+
+gmsg_error test_framing_exact_encode_reading(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written) {
+    test_framing_exact_header h;
+    gmsg_memset(&h, 0, sizeof h);
+    return test_framing_exact_encode_reading_with_header(&h, m, out, capacity, written);
+}
+
+gmsg_error test_framing_exact_encode_reading_with_header(const test_framing_exact_header* hdr, const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written) {
+    test_framing_exact_header h = *hdr;
+    gmsg_writer w = gmsg_writer_init(out, capacity);
+    gmsg_error e = GMSG_OK;
+    if (written) *written = 0;
+    if ((e = gmsg_write_bytes(&w, test_framing_exact_prefix_, 1)) != GMSG_OK) return e;
+    const size_t header_at = w.pos;
+    (void)header_at;
+    h.id = ((uint8_t)INT64_C(1));
+    if ((e = test_framing_exact_header_write(&h, &w)) != GMSG_OK) return e;
+    const size_t body_at = w.pos;
+    if ((e = test_framing_reading_write(m, &w)) != GMSG_OK) return e;
+    const size_t body_len = w.pos - body_at;
+    (void)body_len;
+    {
+        const int64_t value = (int64_t)(body_len) - (INT64_C(0));
+        if (value < 0 || (uint64_t)value > UINT64_C(255)) return GMSG_ERR_BAD_LENGTH;
+        gmsg_write_patch_uint(&w, header_at + 1, 1, GMSG_ENDIAN_BIG, (uint64_t)value);
+    }
+    size_t total = w.pos;
+    if (written) *written = total;
+    return GMSG_OK;
+}
+
+gmsg_error test_framing_exact_encode_note(const test_framing_note* m, uint8_t* out, size_t capacity, size_t* written) {
+    test_framing_exact_header h;
+    gmsg_memset(&h, 0, sizeof h);
+    return test_framing_exact_encode_note_with_header(&h, m, out, capacity, written);
+}
+
+gmsg_error test_framing_exact_encode_note_with_header(const test_framing_exact_header* hdr, const test_framing_note* m, uint8_t* out, size_t capacity, size_t* written) {
+    test_framing_exact_header h = *hdr;
+    gmsg_writer w = gmsg_writer_init(out, capacity);
+    gmsg_error e = GMSG_OK;
+    if (written) *written = 0;
+    if ((e = gmsg_write_bytes(&w, test_framing_exact_prefix_, 1)) != GMSG_OK) return e;
+    const size_t header_at = w.pos;
+    (void)header_at;
+    h.id = ((uint8_t)INT64_C(2));
+    if ((e = test_framing_exact_header_write(&h, &w)) != GMSG_OK) return e;
+    const size_t body_at = w.pos;
+    if ((e = test_framing_note_write(m, &w)) != GMSG_OK) return e;
+    const size_t body_len = w.pos - body_at;
+    (void)body_len;
+    {
+        const int64_t value = (int64_t)(body_len) - (INT64_C(0));
+        if (value < 0 || (uint64_t)value > UINT64_C(255)) return GMSG_ERR_BAD_LENGTH;
+        gmsg_write_patch_uint(&w, header_at + 1, 1, GMSG_ENDIAN_BIG, (uint64_t)value);
+    }
+    size_t total = w.pos;
+    if (written) *written = total;
+    return GMSG_OK;
+}
+
+gmsg_error test_framing_exact_encode(const test_framing_exact_any_message* m, uint8_t* out, size_t capacity, size_t* written) {
+    switch (m->kind) {
+        case TEST_FRAMING_EXACT_READING: return test_framing_exact_encode_reading(&m->as.reading, out, capacity, written);
+        case TEST_FRAMING_EXACT_NOTE: return test_framing_exact_encode_note(&m->as.note, out, capacity, written);
         default: break;
     }
     if (written) *written = 0;

@@ -55,6 +55,15 @@ gmsg_error vehicle_can_engine_data_decode(const uint8_t* data, size_t size, vehi
     return vehicle_can_engine_data_read(&r, out);
 }
 
+gmsg_error vehicle_can_engine_data_decode_extra(const uint8_t* data, size_t size, vehicle_can_engine_data* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = vehicle_can_engine_data_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error vehicle_can_engine_data_encode(const vehicle_can_engine_data* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = vehicle_can_engine_data_write(m, &w);
@@ -77,15 +86,16 @@ gmsg_error vehicle_can_engine_data_view_from(const uint8_t* data, size_t size, v
     if ((e = vehicle_can_engine_data_signals_check(data + 0)) != GMSG_OK) return e;
     out->data = data;
     out->size = 8;
+    out->extra = size - 8;
     return GMSG_OK;
 }
 
 vehicle_can_engine_data_view vehicle_can_engine_data_view_unchecked(const uint8_t* data, size_t size) {
     vehicle_can_engine_data_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 8;
+    v.extra = size - 8;
     return v;
 }
 
@@ -138,6 +148,15 @@ gmsg_error vehicle_can_sensor_decode(const uint8_t* data, size_t size, vehicle_c
     return vehicle_can_sensor_read(&r, out);
 }
 
+gmsg_error vehicle_can_sensor_decode_extra(const uint8_t* data, size_t size, vehicle_can_sensor* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = vehicle_can_sensor_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error vehicle_can_sensor_encode(const vehicle_can_sensor* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = vehicle_can_sensor_write(m, &w);
@@ -162,15 +181,16 @@ gmsg_error vehicle_can_sensor_view_from(const uint8_t* data, size_t size, vehicl
     if (size < 3) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 3;
+    out->extra = size - 3;
     return GMSG_OK;
 }
 
 vehicle_can_sensor_view vehicle_can_sensor_view_unchecked(const uint8_t* data, size_t size) {
     vehicle_can_sensor_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 3;
+    v.extra = size - 3;
     return v;
 }
 
@@ -334,6 +354,15 @@ gmsg_error vehicle_can_fixed_link_header_decode(const uint8_t* data, size_t size
     return vehicle_can_fixed_link_header_read(&r, out);
 }
 
+gmsg_error vehicle_can_fixed_link_header_decode_extra(const uint8_t* data, size_t size, vehicle_can_fixed_link_header* out, size_t* extra) {
+    gmsg_reader r = gmsg_reader_init(data, size);
+    gmsg_error e;
+    gmsg_memset(out, 0, sizeof *out);
+    e = vehicle_can_fixed_link_header_read(&r, out);
+    *extra = e == GMSG_OK ? size - r.pos : 0;
+    return e;
+}
+
 gmsg_error vehicle_can_fixed_link_header_encode(const vehicle_can_fixed_link_header* m, uint8_t* out, size_t capacity, size_t* written) {
     gmsg_writer w = gmsg_writer_init(out, capacity);
     const gmsg_error e = vehicle_can_fixed_link_header_write(m, &w);
@@ -355,15 +384,16 @@ gmsg_error vehicle_can_fixed_link_header_view_from(const uint8_t* data, size_t s
     if (size < 1) return GMSG_ERR_TRUNCATED;
     out->data = data;
     out->size = 1;
+    out->extra = size - 1;
     return GMSG_OK;
 }
 
 vehicle_can_fixed_link_header_view vehicle_can_fixed_link_header_view_unchecked(const uint8_t* data, size_t size) {
     vehicle_can_fixed_link_header_view v;
     gmsg_memset(&v, 0, sizeof v);
-    (void)size;
     v.data = data;
     v.size = 1;
+    v.extra = size - 1;
     return v;
 }
 
@@ -487,13 +517,28 @@ gmsg_error vehicle_can_fixed_link_process(const uint8_t* data, size_t size, cons
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
 enum { vehicle_can_fixed_link_mode_deliver_ = 0, vehicle_can_fixed_link_mode_capture_ = 1, vehicle_can_fixed_link_mode_message_ = 2, vehicle_can_fixed_link_mode_for_ = 3 };
 
+/* Data after the message (bytes, or tokens for text messages). */
+static size_t vehicle_can_fixed_link_extra_(const vehicle_can_fixed_link_any_view* v) {
+    switch (v->kind) {
+        case VEHICLE_CAN_FIXED_LINK_SENSOR: return vehicle_can_sensor_view_extra_bytes(&v->as.sensor);
+        default: return 0;
+    }
+}
+
 static gmsg_error vehicle_can_fixed_link_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
     vehicle_can_fixed_link_stream* s = (vehicle_can_fixed_link_stream*)gs;
     vehicle_can_fixed_link_frame_ f;
     gmsg_error e = GMSG_OK;
-    if (s->mode_ == vehicle_can_fixed_link_mode_deliver_) return vehicle_can_fixed_link_process_frame_(frame, n, &s->cb);
     if ((e = vehicle_can_fixed_link_open_(frame, n, &f)) != GMSG_OK) return e;
+    if (s->mode_ == vehicle_can_fixed_link_mode_deliver_) {
+        vehicle_can_fixed_link_any_view v;
+        if ((e = vehicle_can_fixed_link_select_(&f, &v)) != GMSG_OK) return e;
+        gs->last_extra = vehicle_can_fixed_link_extra_(&v);
+        vehicle_can_fixed_link_deliver_(&s->cb, &f, &v);
+        return GMSG_OK;
+    }
     if ((e = vehicle_can_fixed_link_select_(&f, &s->got_.message)) != GMSG_OK) return e;
+    gs->last_extra = s->got_.extra = vehicle_can_fixed_link_extra_(&s->got_.message);
     s->got_.header = f.header;
     s->got_.bytes = frame;
     s->got_.size = n;

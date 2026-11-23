@@ -146,6 +146,8 @@ private:
             h_.line(n_ + "_any_view message;");
             h_.line(std::string("const uint8_t* bytes;  /* the frame") + (escape_ ? " (unescaped in place: only header and body are meaningful)" : " as received") + " */");
             h_.line("size_t size;");
+            h_.line(std::string("size_t extra;  /* ") + (text_ ? "tokens" : "bytes") + " in the frame after the message (ignored" +
+                    (p_.exact_size ? "; always 0 with exact_size) */" : ") */"));
             h_.close("} " + n_ + "_received;");
             h_.line();
             h_.line("/* Result of " + n_ + "_stream_poll_event(): a message (GMSG_POLL_MESSAGE) or an error (GMSG_POLL_ERROR). */");
@@ -215,6 +217,13 @@ private:
             h_.line("static inline size_t " + st + "_feed(" + st + "* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }");
             h_.line("static inline size_t " + st + "_push(" + st + "* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }");
             h_.line("static inline bool " + st + "_next(" + st + "* s) { return gmsg_stream_next(&s->base); }");
+            h_.line("/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become");
+            h_.line(" * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the");
+            h_.line(" * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */");
+            h_.line("static inline bool " + st + "_resync(" + st + "* s) { return gmsg_stream_resync(&s->base); }");
+            h_.line("static inline bool " + st + "_flush(" + st + "* s) { return gmsg_stream_flush(&s->base); }");
+            h_.line("static inline void " + st + "_set_idle_timeout(" + st + "* s, uint32_t t) { gmsg_stream_set_idle_timeout(&s->base, t); }");
+            h_.line("static inline bool " + st + "_tick(" + st + "* s, uint32_t now) { return gmsg_stream_tick(&s->base, now); }");
             h_.line("static inline void " + st + "_reset(" + st + "* s) { gmsg_stream_reset(&s->base); }");
             h_.line("static inline const gmsg_stream_stats* " + st + "_stats(const " + st + "* s) { return &s->base.stats; }");
             h_.line("static inline gmsg_error " + st + "_last_error(const " + st + "* s) { return s->base.last_error; }");
@@ -272,7 +281,11 @@ private:
                         ", " + sz(p_.max_frame) + ", " + escape_init(p_) + ", " + suffix + ", " + (cw ? "true" : "false") + ", " +
                         (cw ? sz(p_.header_size) : "0") + ", " + (cw ? sz(p_.trailer_size) : "0") + ", " +
                         (cw && fr.length_covers == FramingSpec::LengthCovers::BodyChecksum ? "true" : "false") + "};");
-                s_.line("static gmsg_frame_scan " + n_ + "_scan_(const uint8_t* b, size_t n) { return gmsg_scan_length_prefixed(b, n, &" + cfg_ + "); }");
+                if (p_.size_checks.empty()) {
+                    s_.line("static gmsg_frame_scan " + n_ + "_scan_(const uint8_t* b, size_t n) { return gmsg_scan_length_prefixed(b, n, &" + cfg_ + "); }");
+                    break;
+                }
+                emit_checked_scan();
                 break;
             }
             case FT::Delimited:
@@ -297,6 +310,42 @@ private:
         if (escape_) s_.line("size_t unescaped_n;  /* size of the unescaped part (to restore the frame) */");
         s_.close("} " + n_ + "_frame_;");
         s_.line();
+    }
+
+    static std::string size_fail(const SizeCheck& c) {
+        std::string s;
+        if (c.min > 0) s = "body < " + std::to_string(c.min);
+        if (c.max) s += (s.empty() ? "" : " || ") + std::string("body > ") + std::to_string(*c.max);
+        return s;
+    }
+
+    /// length_prefixed scan that also rejects a length the frame's message type cannot have, as soon as the header has
+    /// arrived (C++: the generated scan()).
+    void emit_checked_scan() {
+        s_.line(std::string("/* Scan for a frame; a length the message type cannot have (") +
+                (p_.exact_size ? "shorter or longer than the message" : "shorter than the message") +
+                ") is rejected with BAD_LENGTH as soon as the header has arrived. */");
+        s_.open("static gmsg_frame_scan " + n_ + "_scan_(const uint8_t* b, size_t n) {");
+        s_.line("const gmsg_frame_scan s = gmsg_scan_length_prefixed(b, n, &" + cfg_ + ");");
+        s_.line("uint8_t h[" + H() + "];");
+        s_.line(hv_ + " hv;");
+        s_.line("int64_t body;");
+        s_.line("if (s.kind == GMSG_SCAN_SKIP) return s;");
+        s_.line("if (!gmsg_read_frame_header(b, n, " + cfg_ + ".sync.len, &" + cfg_ + ".escape, h, " + H() + ")) return s;");
+        s_.line("hv = " + hv_ + "_unchecked(h, " + H() + ");");
+        s_.line("body = (int64_t)" + hv_ + "_" + p_.framing.length->name + "(&hv) + " + int_literal(p_.length_to_body) + ";");
+        if (p_.message_type.kind == MessageTypeSpec::Kind::None) {
+            s_.line("if (" + size_fail(p_.size_checks.front()) + ") return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH);");
+        } else {
+            s_.open("switch ((int64_t)" + hv_ + "_" + p_.message_type.field->name + "(&hv)) {");
+            for (const auto& c : p_.size_checks)
+                s_.line("case " + int_literal(std::get<std::int64_t>(p_.type_ids[c.message])) + ": if (" + size_fail(c) +
+                        ") return gmsg_scan_skip(1, GMSG_ERR_BAD_LENGTH); break;  /* " + p_.messages[c.message]->name + " */");
+            s_.line("default: break;");
+            s_.close();
+        }
+        s_.line("return s;");
+        s_.close();
     }
 
     std::string P() const { return sz(p_.prefix_size); }
@@ -535,7 +584,15 @@ private:
         auto body = [&](std::size_t i) {
             const auto* m = p_.messages[i];
             s_.line("out->kind = " + kind(*m) + ";");
-            s_.line("return " + view_name(c_, *m) + "_from(f->body, f->body_size, &out->as." + member(*m) + ");");
+            if (!p_.exact_size) {
+                s_.line("return " + view_name(c_, *m) + "_from(f->body, f->body_size, &out->as." + member(*m) + ");");
+                return;
+            }
+            s_.line("{ const gmsg_error e = " + view_name(c_, *m) + "_from(f->body, f->body_size, &out->as." + member(*m) +
+                    "); if (e != GMSG_OK) return e; }");
+            s_.line("if (" + view_name(c_, *m) + (m->format == Format::Text ? "_extra_tokens" : "_extra_bytes") + "(&out->as." +
+                    member(*m) + ") != 0) return GMSG_ERR_BAD_LENGTH;  /* exact_size */");
+            s_.line("return GMSG_OK;");
         };
         switch (p_.message_type.kind) {
             case MessageTypeSpec::Kind::None: body(0); break;
@@ -649,13 +706,30 @@ private:
         s_.line("/* stream modes: deliver to callbacks (feed / next), or capture for the pull API */");
         s_.line("enum { " + mode("deliver") + " = 0, " + mode("capture") + " = 1, " + mode("message") + " = 2, " + mode("for") + " = 3 };");
         s_.line();
+        s_.line("/* Data after the message (bytes, or tokens for text messages). */");
+        s_.open("static size_t " + n_ + "_extra_(const " + n_ + "_any_view* v) {");
+        s_.open("switch (v->kind) {");
+        for (const auto* m : p_.messages)
+            s_.line("case " + kind(*m) + ": return " + view_name(c_, *m) + (m->format == Format::Text ? "_extra_tokens" : "_extra_bytes") +
+                    "(&v->as." + member(*m) + ");");
+        s_.line("default: return 0;");
+        s_.close();
+        s_.close();
+        s_.line();
         s_.open("static gmsg_error " + st + "_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {");
         s_.line(st + "* s = (" + st + "*)gs;");
         s_.line(n_ + "_frame_ f;");
         s_.line("gmsg_error e = GMSG_OK;");
-        s_.line("if (s->mode_ == " + mode("deliver") + ") return " + n_ + "_process_frame_(frame, n, &s->cb);");
         s_.line(try_(n_ + "_open_(frame, n, &f)"));
+        s_.open("if (s->mode_ == " + mode("deliver") + ") {");
+        s_.line(n_ + "_any_view v;");
+        s_.line(try_(select_call("frame", "n", "&v")));
+        s_.line("gs->last_extra = " + n_ + "_extra_(&v);");
+        s_.line(n_ + "_deliver_(&s->cb, &f, &v);");
+        s_.line("return GMSG_OK;");
+        s_.close();
         s_.line(try_(select_call("frame", "n", "&s->got_.message")));
+        s_.line("gs->last_extra = s->got_.extra = " + n_ + "_extra_(&s->got_.message);");
         if (has_header_) s_.line("s->got_.header = f.header;");
         s_.line("s->got_.bytes = frame;");
         s_.line("s->got_.size = n;");

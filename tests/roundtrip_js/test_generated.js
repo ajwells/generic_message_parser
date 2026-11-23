@@ -51,6 +51,7 @@ for (const msg of ref.messages) {
       if (!vc && !c.view.err) {
         T.eq(gmsg.print(v), c.view.multi, `${what}: view print`);
         if (c.view.size !== undefined) T.eq(v.wireSize, c.view.size, `${what}: view size`);
+        if (c.view.extra !== undefined) T.eq(gmsg.extraOf(v), c.view.extra, `${what}: data after the message`);
       }
     }
   });
@@ -89,9 +90,27 @@ for (const proto of ref.protocols) {
       });
       s.on('error', (e) => { ev += `E${e.code}:${e.bytes.length}\n`; });
       const wire = hexToBytes(c.hex);
-      for (let pos = 0; pos < wire.length; pos += c.chunk) s.feed(wire.subarray(pos, Math.min(wire.length, pos + c.chunk)));
+      if (c.chunk) {
+        for (let pos = 0; pos < wire.length; pos += c.chunk) s.feed(wire.subarray(pos, Math.min(wire.length, pos + c.chunk)));
+      } else {
+        // recovery run (js_crossref.cpp): chunks of 3, then the recorded resync / flush / tick ops
+        s.setIdleTimeout(2);
+        let now = 0, k = 0;
+        const op = (c2) => {
+          now++;
+          const did = c2 === 'r' ? s.resync() : c2 === 'f' ? s.flush() : c2 === 't' ? s.tick(now) : false;
+          ev += `R${did ? 1 : 0}\n`;
+          while (s.next()) { /* deliver */ }
+        };
+        for (let pos = 0; pos < wire.length; pos += 3) {
+          s.feed(wire.subarray(pos, Math.min(wire.length, pos + 3)));
+          op(c.ops[k++]);
+        }
+        while (k < c.ops.length) op(c.ops[k++]);
+      }
       T.eq(ev, c.events, `${proto.name} stream ${c.hex} chunk ${c.chunk}`);
-      T.eqList([s.stats.frames, s.stats.frameErrors, s.stats.bytesSkipped, s.stats.overflows], c.stats, `${proto.name} stream stats`);
+      T.eqList([s.stats.frames, s.stats.frameErrors, s.stats.bytesSkipped, s.stats.overflows, s.stats.resyncs, s.stats.flushes,
+        s.stats.framesWithExtra], c.stats, `${proto.name} stream stats`);
     }
   });
 }

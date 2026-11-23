@@ -498,6 +498,13 @@
     }
     return { kind: 'done', wire: i, error: Err.None };
   }
+  /** The n header bytes after the sync pattern (`prefix` bytes) at the start of buf, unescaped when `escape` is
+   *  enabled, or null while they have not all arrived / the escaping is invalid (gmp::read_frame_header). */
+  function readFrameHeader(buf, prefix, escape, n) {
+    if (!escape || !escape.enabled) return buf.length < prefix + n ? null : buf.slice(prefix, prefix + n);
+    const out = new Uint8Array(n);
+    return walkEscaped(buf, prefix, n, escape, 0, out).kind === 'done' ? out : null;
+  }
   /** Unescape bytes[start, end) in place; returns the new end (gmp::unescape_in_place). */
   function unescapeInPlace(buf, cfg, start = 0, end = buf.length) {
     let w = start;
@@ -691,6 +698,8 @@
   // static `messageName`. The frame passed to process() is a copy that the result may keep. Generated protocols
   // (gmpc --lang js) provide all of these.
   // ================================================================================================================
+  /** Data after a decoded message: extraBytes (binary views) or extraTokens (text views); 0 otherwise. */
+  const extraOf = (v) => (v == null ? 0 : v.extraBytes !== undefined ? v.extraBytes : v.extraTokens !== undefined ? v.extraTokens : 0);
   const errorOf = (s) => { const e = new GmpError(s.error); e.bytes = s.bytes; e.offset = s.offset; return e; };
 
   class StreamParser {
@@ -702,9 +711,14 @@
       this.head = 0;
       this.tail = 0;
       this.listeners = new Map();
-      this.stats = { frames: 0, frameErrors: 0, bytesSkipped: 0, overflows: 0 };
+      this.stats = { frames: 0, frameErrors: 0, bytesSkipped: 0, overflows: 0, resyncs: 0, flushes: 0, framesWithExtra: 0 };
       this.lastError = Err.None;
       this.consumed = 0;  // bytes removed from the front of the buffer since construction / reset()
+      this.received = 0;  // bytes pushed
+      this.idleTimeout = 0;  // tick(): resync after this long without new bytes; 0 = off
+      this.ticked = false;
+      this.seen = 0;
+      this.lastActivity = 0;
     }
     get buffered() { return this.tail - this.head; }
     /** Stream offset of the next buffered byte (bytes consumed so far). */
@@ -733,7 +747,56 @@
       const n = Math.min(b.length, this.capacity - this.tail);
       this.buf.set(b.subarray(0, n), this.tail);
       this.tail += n;
+      this.received += n;
       return n;
+    }
+
+    // ---- recovery: they only drop data; frames that then become complete are delivered by next() / feed() / poll()
+    /** Give up on the frame at the head of the buffer when it is incomplete (e.g. a corrupted length claims more
+     *  bytes than will arrive): report it to the 'error' listeners as Truncated with its buffered bytes, drop its
+     *  first byte and let the next scan resynchronise. Returns false when the buffer is empty or its head frame is
+     *  complete. */
+    resync() {
+      if (this.head === this.tail) return false;
+      const pending = this.buf.subarray(this.head, this.tail);
+      if (this.protocol.scan(pending).kind !== 'need_more') return false;
+      this.stats.resyncs++;
+      this.stats.bytesSkipped++;
+      this.lastError = Err.Truncated;
+      const offset = this.consumed;
+      const bytes = pending.slice();
+      this.consume(1);
+      this.reportError({ error: Err.Truncated, bytes, offset });
+      return true;
+    }
+    /** Drop every buffered byte, reported to the 'error' listeners as one Truncated error. Returns false when
+     *  nothing was buffered. */
+    flush() {
+      if (this.head === this.tail) return false;
+      const offset = this.consumed;
+      const bytes = this.buf.slice(this.head, this.tail);
+      this.stats.flushes++;
+      this.stats.bytesSkipped += bytes.length;
+      this.lastError = Err.Truncated;
+      this.consume(bytes.length);
+      this.reportError({ error: Err.Truncated, bytes, offset });
+      return true;
+    }
+    /** resync() from tick() once the link has been idle for `t` (unit of the times passed to tick()); 0 = off. */
+    setIdleTimeout(t) { this.idleTimeout = t; }
+    /** Call periodically with the current time (e.g. Date.now()). Bytes pushed since the previous tick count as
+     *  activity; after idleTimeout without new bytes an incomplete head frame is given up as by resync() (returns
+     *  true). The next resync needs another idle period. */
+    tick(now) {
+      if (!this.ticked || this.received !== this.seen) {
+        this.ticked = true;
+        this.seen = this.received;
+        this.lastActivity = now;
+        return false;
+      }
+      if (!this.idleTimeout || now - this.lastActivity < this.idleTimeout) return false;
+      this.lastActivity = now;
+      return this.resync();
     }
     /** Push all of `bytes` and deliver every complete frame to the listeners. Returns the number of frames. */
     feed(bytes) {
@@ -760,7 +823,7 @@
     /** Like poll(), as { header, message, bytes } (header is undefined for protocols without one). */
     pollFrame() {
       const f = this.pull();
-      return f ? { header: f.header, message: f.message, bytes: f.bytes, offset: f.offset } : null;
+      return f ? { header: f.header, message: f.message, bytes: f.bytes, offset: f.offset, extra: f.extra } : null;
     }
     /** Like poll(), decoded into the message class (a frame whose struct decode fails is reported as an error). */
     pollMessage() {
@@ -778,7 +841,7 @@
       const s = this.step();
       if (s.kind === 'need_more') return null;
       if (s.kind === 'error') return { error: errorOf(s), offset: s.offset };
-      return { message: s.frame.message, header: s.frame.header, bytes: s.frame.bytes, offset: s.frame.offset };
+      return { message: s.frame.message, header: s.frame.header, bytes: s.frame.bytes, offset: s.frame.offset, extra: s.frame.extra };
     }
     /** Wait (without blocking) for a message of one type; other messages go to the listeners. */
     pollFor(what) {
@@ -815,9 +878,10 @@
 
     reset() {
       this.head = this.tail = 0;
-      this.stats = { frames: 0, frameErrors: 0, bytesSkipped: 0, overflows: 0 };
+      this.stats = { frames: 0, frameErrors: 0, bytesSkipped: 0, overflows: 0, resyncs: 0, flushes: 0, framesWithExtra: 0 };
       this.lastError = Err.None;
       this.consumed = 0;
+      this.ticked = false;
     }
 
     // ---- internals ---------------------------------------------------------------------------------------------
@@ -843,6 +907,7 @@
           try {
             f = this.protocol.process(bytes.slice());
             f.bytes = bytes;
+            f.extra = extraOf(f.message);
             f.offset = offset;
             if (accept) accept(f);
           } catch (e) {
@@ -851,6 +916,7 @@
           }
           if (error === Err.None) {
             this.stats.frames++;
+            if (f.extra) this.stats.framesWithExtra++;
             this.consume(s.consume);
             return { kind: 'frame', frame: f };
           }
@@ -1429,14 +1495,14 @@
     Reader, Writer,
     extractBits, insertBits, signExtend, getBits, setBits,
     checksum,
-    xorEscape, mapEscape, indexEscape, NO_ESCAPE, walkEscaped, unescapeInPlace, unescape, unescapedSize,
+    xorEscape, mapEscape, indexEscape, NO_ESCAPE, walkEscaped, readFrameHeader, unescapeInPlace, unescape, unescapedSize,
     escapeOverhead, escapeRange, escape,
     FrameScan, findPatternAtStart, matchesAt, scanFixed, scanLengthPrefixed, scanDelimited,
     StreamParser,
     formatFloat, formatGeneral, parseFloat: parseFloatText,
     text: Object.freeze({ split: splitTokens, parseInt: parseInt_, parseFloat: parseFloatText, parseChar, parseHexByte, hexValue,
       hexText, TextWriter }),
-    attempt, count, concat, fixedArray, seqArray, printNested, knownEnum, checkChar,
+    attempt, count, concat, fixedArray, seqArray, printNested, knownEnum, checkChar, extraOf,
     Printer, print, enumType,
   });
 });
