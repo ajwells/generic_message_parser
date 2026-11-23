@@ -31,7 +31,12 @@ add_library(gmpc_lib STATIC
         src/backend/js/js_common.cpp
         src/backend/js/emit_binary_message.cpp
         src/backend/js/emit_text_message.cpp
-        src/backend/js/emit_protocol.cpp)
+        src/backend/js/emit_protocol.cpp
+        src/backend/py/py_backend.cpp
+        src/backend/py/py_common.cpp
+        src/backend/py/emit_binary_message.cpp
+        src/backend/py/emit_text_message.cpp
+        src/backend/py/emit_protocol.cpp)
 target_include_directories(gmpc_lib PUBLIC src)
 target_link_libraries(gmpc_lib PUBLIC yaml-cpp::yaml-cpp)
 target_compile_options(gmpc_lib PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra>)

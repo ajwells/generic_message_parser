@@ -6,14 +6,14 @@
   const D = G.decoder;
 
   // ----------------------------------------------------------------------------------------------
-  // code language: C++, C or JavaScript (`?lang=c`, `?lang=js`, remembered in localStorage). Schemas and decoding
-  // are shared; only code samples, API names and error names differ.
+  // code language: C++, C, JavaScript or Python (`?lang=c`, `?lang=js`, `?lang=py`, remembered in localStorage).
+  // Schemas and decoding are shared; only code samples, API names and error names differ.
   // ----------------------------------------------------------------------------------------------
-  const LANGS = { cpp: 'C++', c: 'C', js: 'JavaScript' };
+  const LANGS = { cpp: 'C++', c: 'C', js: 'JavaScript', py: 'Python' };
   const LANG_KEY = 'gmp-guide-lang';
   let lang = 'cpp';
-  /** The C++, C or JavaScript variant of a piece of content. */
-  const ln = (cpp, c, js) => (lang === 'c' ? c : lang === 'js' ? js : cpp);
+  /** The C++, C, JavaScript or Python variant of a piece of content. */
+  const ln = (cpp, c, js, py) => (lang === 'c' ? c : lang === 'js' ? js : lang === 'py' ? py : cpp);
   G.guideLang = () => lang;
 
   // ----------------------------------------------------------------------------------------------
@@ -325,7 +325,7 @@ protocols:
     printing: {
       title: 'Printing decoded messages', yaml: Y.structure, cards: ['message:Report'],
       decode: [
-        { target: 'message:Report', label: () => ln('gmp::println(report, stdout)', 'guide_report_print(&report, &printer)', 'console.log(String(report))') + ': enum names with their value, units, nested blocks', input: '5A 02 00 00 00 42 01 6B', view: 'print' },
+        { target: 'message:Report', label: () => ln('gmp::println(report, stdout)', 'guide_report_print(&report, &printer)', 'console.log(String(report))', 'print(report)') + ': enum names with their value, units, nested blocks', input: '5A 02 00 00 00 42 01 6B', view: 'print' },
         { target: 'message:Report', label: 'single_line style; the conditional Fault block is <absent>', input: '5A 01 00 00', view: 'line' },
       ],
     },
@@ -387,7 +387,7 @@ protocols:
   function overview() {
     const step = (kind, title, sub, body) => `<div class="g-step" style="--f:var(--k-${kind});--b:var(--k-${kind}-b)"><div class="g-step-t">${title}</div><div class="g-step-s">${sub}</div>${body ? `<div class="g-step-b">${body}</div>` : ''}</div>`;
     return `
-      <p class="g-lead">GMP turns a <b>YAML description of a wire protocol</b> into dependency-free ${ln('C++23', 'C99 / C11 (or C++23)', 'JavaScript (Node.js or the browser)')} that decodes, validates and
+      <p class="g-lead">GMP turns a <b>YAML description of a wire protocol</b> into dependency-free ${ln('C++23', 'C99 / C11 (or C++23)', 'JavaScript (Node.js or the browser)', 'Python 3.12+ (dataclasses, with an optional C accelerator)')} that decodes, validates and
       encodes it. Unlike protobuf the wire format is not fixed: the schema describes <i>existing</i> binary and text protocols,
       from CAN payloads and sensor registers to NMEA sentences and framed serial links.</p>
       <div class="g-pipeline">
@@ -397,14 +397,14 @@ protocols:
         <div class="g-arrow">→</div>
         ${ln(step('int', 'schema.gmp.hpp', 'one header per schema', '<code>struct</code> · <code>View</code> · <code>Protocol</code>'),
              step('int', 'schema.gmp.h + .c', 'one pair per schema', '<code>struct</code> · <code>_view</code> · <code>_stream</code>'),
-             step('int', 'schema.gmp.js', 'one module per schema', '<code>class</code> · <code>View</code> · <code>Protocol</code>'))}
+             step('int', 'schema.gmp.js', 'one module per schema', '<code>class</code> · <code>View</code> · <code>Protocol</code>'), step('int', 'schema_gmp.py', 'one module per schema', '<code>@dataclass</code> · <code>View</code> · <code>Protocol</code>'))}
         <div class="g-arrow">→</div>
-        ${step('string', 'your code', 'decode · encode · stream', ln('<code>Link::Stream&lt;&gt;</code>', '<code>demo_link_stream</code>', '<code>Link.stream()</code>'))}
+        ${step('string', 'your code', 'decode · encode · stream', ln('<code>Link::Stream&lt;&gt;</code>', '<code>demo_link_stream</code>', '<code>Link.stream()</code>', '<code>Link.stream()</code>'))}
       </div>
       <div class="g-props">
         ${ln(['Header-only runtime', 'No heap', 'No exceptions / RTTI', 'C++23 std::expected', 'Zero-copy views', 'Eager structs', 'Streaming with resync', 'Binary and text'],
              ['Header-only or compiled runtime', 'No heap', 'C99 or later, no C library needed', 'Error codes + out parameters', 'Zero-copy views', 'Eager structs', 'Streaming with resync', 'Binary and text'],
-             ['Small runtime (gmsg.js)', 'No dependencies', 'Node.js or browser (UMD)', 'Throws GmpError', 'Zero-copy views', 'Plain classes', 'Streaming with resync', 'Binary and text']).map((t) => `<span class="badge accent">${t}</span>`).join('')}
+             ['Small runtime (gmsg.js)', 'No dependencies', 'Node.js or browser (UMD)', 'Throws GmpError', 'Zero-copy views', 'Plain classes', 'Streaming with resync', 'Binary and text'], ['Pure-Python runtime (gmsg)', 'No dependencies', 'Optional C accelerator (abi3)', 'Raises GmpError', 'Zero-copy views (memoryview)', 'Dataclasses', 'Streaming with resync', 'Binary and text']).map((t) => `<span class="badge accent">${t}</span>`).join('')}
       </div>
       <div class="g-cols">
         <div><h4>1 · Describe</h4>${code(`schema_version: 1
@@ -429,7 +429,9 @@ target_link_libraries(app PRIVATE link_msgs)`, `add_subdirectory(generic_message
 gmp_generate(TARGET link_msgs LANG c SCHEMAS link.yaml)   # link.gmp.h + link.gmp.c
 target_link_libraries(app PRIVATE link_msgs)`, `gmpc --lang js --out web link.yaml     # web/link.gmp.js
 cp runtime-js/gmsg.js web/                # the runtime, next to it
-# CMake: gmp_generate(TARGET link_js LANG js SCHEMAS link.yaml)`), 'text')}
+# CMake: gmp_generate(TARGET link_js LANG js SCHEMAS link.yaml)`, `pip install ./runtime-py                  # the runtime package gmsg (+ accelerator)
+gmpc --lang python --out app link.yaml     # app/link_gmp.py
+# CMake: gmp_generate(TARGET link_py LANG python SCHEMAS link.yaml)`), 'text')}
           <h4>3 · Use</h4>${code(ln(`demo::Status s;
 s.set_voltage_scaled(12.6);
 s.samples = {1, 2, 3};          // count is filled in automatically
@@ -460,14 +462,22 @@ const frame = demo.Link.encode(s);          // Uint8Array
 const stream = demo.Link.stream();          // bytes in any chunk size
 stream.on('Status', (v) => console.log(v.voltage_scaled));
 stream.on('error', (e) => { /* skipped bytes: e.code, e.bytes */ });
-stream.feed(chunk);`))}</div>
+stream.feed(chunk);`, `import link_gmp as demo
+s = demo.Status(samples=[1, 2, 3])          # count is filled in automatically
+s.voltage_scaled = 12.6
+frame = demo.Link.encode(s)                 # bytes
+
+stream = demo.Link.stream()                 # bytes in any chunk size
+stream.on(demo.Status, lambda v, h: print(v.voltage_scaled))
+stream.on('error', lambda e: ...)           # skipped bytes: e.code, e.data
+stream.feed(chunk)`))}</div>
       </div>`;
   }
 
   function anatomy() {
     return `
       <p>A schema has two layers. <b>Messages</b> describe a payload: an ordered list of fields, usable on their own
-      (${ln('<code>Status::decode(bytes)</code>', '<code>demo_status_decode(data, size, &amp;s)</code>', '<code>demo.Status.decode(bytes)</code>')}). <b>Protocols</b> wrap messages in frames on a byte stream:</p>
+      (${ln('<code>Status::decode(bytes)</code>', '<code>demo_status_decode(data, size, &amp;s)</code>', '<code>demo.Status.decode(bytes)</code>', '<code>demo.Status.decode(data)</code>')}). <b>Protocols</b> wrap messages in frames on a byte stream:</p>
       ${segBar([
         { label: 'prefix', sub: 'sync / start', kind: 'frame' },
         { label: 'header', sub: 'type id, length…', kind: 'int', w: 1.4 },
@@ -478,10 +488,10 @@ stream.feed(chunk);`))}</div>
       <div class="g-keys">
         ${[
           ['schema_version', '1', 'Required. Lets the format evolve.'],
-          ['namespace', 'acme::telemetry', ln('C++ namespace of the generated code.', 'Name prefix of the generated C code: <code>acme_telemetry_</code> (or <code>gmpc --opt prefix=…</code>).', 'Browser global of the generated module: <code>acme_telemetry</code> (or <code>gmpc --opt global=…</code>); with <code>require()</code> the module is what it returns.')],
+          ['namespace', 'acme::telemetry', ln('C++ namespace of the generated code.', 'Name prefix of the generated C code: <code>acme_telemetry_</code> (or <code>gmpc --opt prefix=…</code>).', 'Browser global of the generated module: <code>acme_telemetry</code> (or <code>gmpc --opt global=…</code>); with <code>require()</code> the module is what it returns.', 'Nothing in the code: the module is named after the schema file (<code>telemetry_gmp</code>); the namespace is in its docstring.')],
           ['defaults', '{ endian: big, … }', 'endian, bit_order, format, separator, access, strict_enums for everything below.'],
           ['enums', 'Mode: { … }', 'Named integer values, used as field types and type ids.'],
-          ['custom', 'types / checksums / framers', ln('Hooks into your own C++ code, checked with concepts.', 'Hooks into your own C code (<code>c:</code> blocks), signatures checked at compile time.', 'Hooks into your own JavaScript (<code>js:</code> blocks: a module and the names of its functions).')],
+          ['custom', 'types / checksums / framers', ln('Hooks into your own C++ code, checked with concepts.', 'Hooks into your own C code (<code>c:</code> blocks), signatures checked at compile time.', 'Hooks into your own JavaScript (<code>js:</code> blocks: a module and the names of its functions).', 'Hooks into your own Python (<code>python:</code> blocks: a module and the names of its functions).')],
           ['messages', 'Status: { fields: […] }', 'Payload layouts. Field order is wire order.'],
           ['protocols', 'Link: { framing, … }', 'Framing, header, checksum, message selection.'],
         ].map(([k, v, d]) => `<div class="g-key"><code class="g-k">${k}</code><code class="g-kv">${esc(v)}</code><p>${d}</p></div>`).join('')}
@@ -499,7 +509,7 @@ stream.feed(chunk);`))}</div>
       in a decoded example to see exactly which bytes it came from.</p>
       ${demo('scalars')}
       <h3 id="g-enums">Enums and bit fields</h3>
-      <p>Enums map numbers to names (${ln('<code>to_string()</code>, <code>is_known()</code>', '<code>_to_string()</code>, <code>_is_known()</code>', '<code>Mode.nameOf()</code>, <code>Mode.isKnown()</code>')}). With <code>strict: true</code> (or
+      <p>Enums map numbers to names (${ln('<code>to_string()</code>, <code>is_known()</code>', '<code>_to_string()</code>, <code>_is_known()</code>', '<code>Mode.nameOf()</code>, <code>Mode.isKnown()</code>', '<code>Mode.name_of()</code>, <code>Mode.is_known()</code>; fields hold <code>Mode</code> members, an <code>IntEnum</code>')}). With <code>strict: true</code> (or
       <code>defaults.strict_enums</code>) undeclared values fail with <code>UnknownEnum</code>, on decode and on encode.
       A <code>bits</code> group packs bit fields into whole bytes; each bit field can be a bool, an integer, an enum, a const or scaled.</p>
       ${demo('enums')}
@@ -507,7 +517,7 @@ stream.feed(chunk);`))}</div>
       <p>A CRC only proves the bytes arrived intact, not that the value makes sense. <code>min_value</code> / <code>max_value</code>
       limit the value as your code sees it: the scaled value (raw × scale + offset) when the field has a scale or offset,
       else the value itself. <code>min_raw</code> / <code>max_raw</code> limit the raw wire value. Limits are inclusive and can be
-      combined. Outside them, decoding (struct and view) and encoding fail with <code>${ln('ValueOutOfLimits', 'GMSG_ERR_VALUE_OUT_OF_LIMITS', 'gmsg.Err.ValueOutOfLimits')}</code>;
+      combined. Outside them, decoding (struct and view) and encoding fail with <code>${ln('ValueOutOfLimits', 'GMSG_ERR_VALUE_OUT_OF_LIMITS', 'gmsg.Err.ValueOutOfLimits', 'gmsg.Err.VALUE_OUT_OF_LIMITS')}</code>;
       a NaN always fails. They apply to numeric fields, bit fields, array elements and text tokens.</p>
       ${note('<code>max</code> is not a value limit: it is only the capacity of a variable-length bytes, string or array field. gmpc reports <code>max</code> anywhere else (and a <code>max</code> that does not match a fixed size) as an error.')}
       ${demo('limits')}
@@ -526,7 +536,7 @@ stream.feed(chunk);`))}</div>
       ${demo('containers')}
       <h3 id="g-structure">Nested messages, conditions, constants and padding</h3>
       <p>Messages can contain messages. <code>when:</code> makes a field exist only if an expression over earlier fields
-      is true (${ln('it becomes <code>std::optional</code>', 'the struct gets <code>bool has_&lt;field&gt;</code>', 'the property is <code>undefined</code> when absent')}). <code>const</code> fields are checked on decode and always written on encode.</p>
+      is true (${ln('it becomes <code>std::optional</code>', 'the struct gets <code>bool has_&lt;field&gt;</code>', 'the property is <code>undefined</code> when absent', 'the attribute is <code>None</code> when absent')}). <code>const</code> fields are checked on decode and always written on encode.</p>
       ${demo('structure')}`;
   }
 
@@ -536,14 +546,14 @@ stream.feed(chunk);`))}</div>
       <div class="g-formula">
         <div><span class="badge">raw</span> <code>0x6666</code></div><div class="g-arrow">→</div>
         <div><code>× scale + offset</code></div><div class="g-arrow">→</div>
-        <div><span class="badge accent">${ln('temperature_scaled()', '…_temperature_scaled(&amp;m)', 'temperature_scaled')}</span> <code>25.00 degC</code></div>
-        <div class="g-arrow">+</div><div><span class="badge accent">${ln('temperature_degf()', '…_temperature_degf(&amp;m)', 'temperature_degf')}</span> <code>77.00 degF</code></div>
+        <div><span class="badge accent">${ln('temperature_scaled()', '…_temperature_scaled(&amp;m)', 'temperature_scaled', 'temperature_scaled')}</span> <code>25.00 degC</code></div>
+        <div class="g-arrow">+</div><div><span class="badge accent">${ln('temperature_degf()', '…_temperature_degf(&amp;m)', 'temperature_degf', 'temperature_degf')}</span> <code>77.00 degF</code></div>
       </div>
       ${table(['key', 'generates', 'notes'], [
-        [kbd('scale / offset / unit'), ln('<code>x_scaled()</code>, <code>set_x_scaled(v)</code>', '<code>…_x_scaled(&amp;m)</code>, <code>…_set_x_scaled(&amp;m, v)</code>', '<code>x_scaled</code> (getter and setter)'), 'value = raw × scale + offset'],
-        [kbd('conversions: { degf: {…} }'), ln('<code>x_degf()</code>, <code>set_x_degf(v)</code>', '<code>…_x_degf(&amp;m)</code>, <code>…_set_x_degf(&amp;m, v)</code>', '<code>x_degf</code> (getter and setter)'), 'extra units for the same raw value'],
-        [kbd('crc: crc8_nrsc5'), ln('verified in read / from(), written by encode', 'verified in _read / _view_from, written by _encode', 'verified in read / from(), written by encode'), 'checksum stored right after the value'],
-        [kbd('computed: { serial: {…} }'), ln('<code>serial()</code>, <code>set_serial(v)</code>', '<code>…_serial(&amp;m)</code>, <code>…_set_serial(&amp;m, v)</code>', '<code>serial</code> (getter and setter)'), 'no bytes of its own; setter derived for shift / | packing'],
+        [kbd('scale / offset / unit'), ln('<code>x_scaled()</code>, <code>set_x_scaled(v)</code>', '<code>…_x_scaled(&amp;m)</code>, <code>…_set_x_scaled(&amp;m, v)</code>', '<code>x_scaled</code> (getter and setter)', '<code>x_scaled</code> (property with a setter)'), 'value = raw × scale + offset'],
+        [kbd('conversions: { degf: {…} }'), ln('<code>x_degf()</code>, <code>set_x_degf(v)</code>', '<code>…_x_degf(&amp;m)</code>, <code>…_set_x_degf(&amp;m, v)</code>', '<code>x_degf</code> (getter and setter)', '<code>x_degf</code> (property with a setter)'), 'extra units for the same raw value'],
+        [kbd('crc: crc8_nrsc5'), ln('verified in read / from(), written by encode', 'verified in _read / _view_from, written by _encode', 'verified in read / from(), written by encode', 'verified in read / from_bytes(), written by encode'), 'checksum stored right after the value'],
+        [kbd('computed: { serial: {…} }'), ln('<code>serial()</code>, <code>set_serial(v)</code>', '<code>…_serial(&amp;m)</code>, <code>…_set_serial(&amp;m, v)</code>', '<code>serial</code> (getter and setter)', '<code>serial</code> (property with a setter)'), 'no bytes of its own; setter derived for shift / | packing'],
       ])}
       ${demo('values')}`;
   }
@@ -559,7 +569,7 @@ stream.feed(chunk);`))}</div>
         [kbd('doc'), 'Copied into the generated code.'],
       ])}
       <div class="g-cols">
-        <div><h4>View: zero copy</h4><p>Wraps the input bytes; accessors read on demand. ${ln('<code>from()</code>', '<code>_view_from()</code>', '<code>from()</code>')} validates once.</p>
+        <div><h4>View: zero copy</h4><p>Wraps the input bytes; accessors read on demand. ${ln('<code>from()</code>', '<code>_view_from()</code>', '<code>from()</code>', '<code>from_bytes()</code>')} validates once.</p>
           ${code(ln(`auto v = demo::StatusView::from(bytes);
 if (!v) return v.error();          // gmp::Error
 double volts = v->voltage_scaled();
@@ -570,8 +580,10 @@ double volts = demo_status_view_voltage_scaled(&v);
 for (size_t i = 0; i < demo_status_view_samples_count(&v); ++i)
     use(demo_status_view_samples_at(&v, i));`, `const v = demo.StatusView.from(bytes);   // throws gmsg.GmpError
 const volts = v.voltage_scaled;
-for (const s of v.samples) use(s);`))}</div>
-        <div><h4>Struct: eager value</h4><p>${ln('Fixed-capacity members, <code>operator==</code>, and the only way to encode.', 'Fixed-capacity members (arrays with their count, <code>has_&lt;field&gt;</code> for conditions), and the only way to encode.', 'Plain classes (arrays, strings, Uint8Array; <code>undefined</code> for absent fields), and the only way to encode.')}</p>
+for (const s of v.samples) use(s);`, `v = demo.StatusView.from_bytes(data)     # raises gmsg.GmpError
+volts = v.voltage_scaled
+for s in v.samples: use(s)`))}</div>
+        <div><h4>Struct: eager value</h4><p>${ln('Fixed-capacity members, <code>operator==</code>, and the only way to encode.', 'Fixed-capacity members (arrays with their count, <code>has_&lt;field&gt;</code> for conditions), and the only way to encode.', 'Plain classes (arrays, strings, Uint8Array; <code>undefined</code> for absent fields), and the only way to encode.', 'Dataclasses (lists, str, bytes; <code>None</code> for absent fields; <code>==</code> and <code>repr</code>), and the only way to encode.')}</p>
           ${code(ln(`demo::Status s;
 s.set_voltage_scaled(12.6);
 s.samples = {1, 2, 3};
@@ -585,7 +597,10 @@ size_t n;
 gmsg_error e = demo_status_encode(&s, out, sizeof out, &n);`, `const s = new demo.Status();
 s.voltage_scaled = 12.6;
 s.samples = [1, 2, 3];
-const out = s.encode();            // Uint8Array; throws gmsg.GmpError`))}</div>
+const out = s.encode();            // Uint8Array; throws gmsg.GmpError`, `s = demo.Status()
+s.voltage_scaled = 12.6
+s.samples = [1, 2, 3]
+out = s.encode()                  # bytes; raises gmsg.GmpError`))}</div>
       </div>`;
   }
 
@@ -598,7 +613,7 @@ const out = s.encode();            // Uint8Array; throws gmsg.GmpError`))}</div>
         [kbd('fixed'), '<code>sync</code> + <code>size</code> bytes', 'Every frame is the same size; shorter bodies are zero padded.'],
         [kbd('length_prefixed'), '<code>sync</code> + header with a length', 'The length field (filled in on encode) says how much follows.'],
         [kbd('delimited'), '<code>start</code> … <code>end</code>', 'Search for the end pattern; HDLC-style shared flags allowed.'],
-        [kbd('custom'), 'your framer', ln('<code>static gmp::FrameScan scan(gmp::bytes_view)</code>', '<code>gmsg_frame_scan scan(const uint8_t*, size_t)</code>', '<code>scan(bytes)</code> returning <code>gmsg.FrameScan.*</code>')],
+        [kbd('custom'), 'your framer', ln('<code>static gmp::FrameScan scan(gmp::bytes_view)</code>', '<code>gmsg_frame_scan scan(const uint8_t*, size_t)</code>', '<code>scan(bytes)</code> returning <code>gmsg.FrameScan.*</code>', '<code>scan(buf)</code> returning <code>gmsg.FrameScan.*</code>')],
       ])}
       <h3 id="g-length">What the length counts</h3>
       ${[['body', [0, 0, 1, 0]], ['body_checksum', [0, 0, 1, 1]], ['header_body', [0, 1, 1, 0]], ['all', [1, 1, 1, 1]]].map(([c, on]) =>
@@ -642,7 +657,7 @@ message_type: { field: kind }
       </div>
       ${note(ln('In C++, <code>parse()</code> returns <code>AnyView</code>, a <code>std::variant</code> of the message views, and a stream handler is called with whichever view matched.',
                 'In C, <code>_parse()</code> fills <code>_any_view</code>, a tagged union (<code>kind</code> plus <code>as.&lt;message&gt;</code>), and the stream calls the <code>on_&lt;message&gt;</code> callback of whichever view matched.',
-                'In JavaScript, <code>parse()</code> returns the view of whichever message matched (check it with <code>instanceof</code>), and stream listeners are registered per message name.'))}`;
+                'In JavaScript, <code>parse()</code> returns the view of whichever message matched (check it with <code>instanceof</code>), and stream listeners are registered per message name.', 'In Python, <code>parse()</code> returns the view of whichever message matched (check it with <code>isinstance</code>), and stream listeners are registered per message class or name.'))}`;
   }
 
   function escaping() {
@@ -670,23 +685,23 @@ message_type: { field: kind }
 
   function text() {
     return `
-      <p>Text messages are tokens separated by a character. Numbers are parsed ${ln('with <code>std::from_chars</code>', 'exactly and locale free (the same results as C++ <code>std::from_chars</code>)', 'exactly and locale free (the same results as C++ <code>std::from_chars</code>)')};
+      <p>Text messages are tokens separated by a character. Numbers are parsed ${ln('with <code>std::from_chars</code>', 'exactly and locale free (the same results as C++ <code>std::from_chars</code>)', 'exactly and locale free (the same results as C++ <code>std::from_chars</code>)', 'exactly and locale free (the same results as C++ <code>std::from_chars</code>)')};
       <code>width</code> and <code>precision</code> control encoding, <code>optional</code> allows empty tokens, and
       <code>pad</code> skips tokens.</p>
       ${demo('nmea')}`;
   }
 
   function streaming() {
-    return ln(streamingCpp(), streamingC(), streamingJs()) + `
+    return ln(streamingCpp(), streamingC(), streamingJs(), streamingPy()) + `
       <h3 id="g-recover">Recovering on an idle link</h3>
       <p>A corrupted length field that claims more bytes than will arrive makes the parser wait, and good frames behind it
-      wait too. ${ln('<code>resync()</code>', '<code>demo_link_stream_resync(&amp;s)</code>', '<code>resync()</code>')} gives up on an
+      wait too. ${ln('<code>resync()</code>', '<code>demo_link_stream_resync(&amp;s)</code>', '<code>resync()</code>', '<code>resync()</code>')} gives up on an
       incomplete frame at the head (reported as <code>Truncated</code>) so the next scan finds them;
-      ${ln('<code>flush()</code>', '<code>demo_link_stream_flush(&amp;s)</code>', '<code>flush()</code>')} drops everything buffered.
-      With ${ln('<code>set_idle_timeout(t)</code>', '<code>demo_link_stream_set_idle_timeout(&amp;s, t)</code>', '<code>setIdleTimeout(t)</code>')}
-      and a periodic ${ln('<code>tick(now)</code>', '<code>demo_link_stream_tick(&amp;s, now)</code>', '<code>tick(Date.now())</code>')}
+      ${ln('<code>flush()</code>', '<code>demo_link_stream_flush(&amp;s)</code>', '<code>flush()</code>', '<code>flush()</code>')} drops everything buffered.
+      With ${ln('<code>set_idle_timeout(t)</code>', '<code>demo_link_stream_set_idle_timeout(&amp;s, t)</code>', '<code>setIdleTimeout(t)</code>', '<code>set_idle_timeout(t)</code>')}
+      and a periodic ${ln('<code>tick(now)</code>', '<code>demo_link_stream_tick(&amp;s, now)</code>', '<code>tick(Date.now())</code>', '<code>tick(time.monotonic())</code>')}
       this happens automatically after <code>t</code> without new bytes (any time unit; the parser has no clock). They only drop
-      data: frames that become complete come from the next ${ln('<code>next()</code> / <code>feed()</code> / <code>poll()</code>', '<code>_next</code> / <code>_feed</code> / poll call', '<code>next()</code> / <code>feed()</code> / <code>poll()</code>')}.</p>
+      data: frames that become complete come from the next ${ln('<code>next()</code> / <code>feed()</code> / <code>poll()</code>', '<code>_next</code> / <code>_feed</code> / poll call', '<code>next()</code> / <code>feed()</code> / <code>poll()</code>', '<code>next()</code> / <code>feed()</code> / <code>poll()</code>')}.</p>
       <p>For <code>length_prefixed</code> framing the scanner also checks the length against the frame's message type as soon as
       the header has arrived: a body shorter than the message (or, with <code>exact_size</code>, longer) is rejected with
       <code>BadLength</code> at once.</p>
@@ -695,7 +710,7 @@ message_type: { field: kind }
       newer senders that append fields still work, and reported:
       ${ln('<code>v.extra_bytes()</code> / <code>extra_tokens()</code>, <code>Received::extra</code>, <code>stats().frames_with_extra</code>, <code>Status::decode(bytes, extra)</code>',
         '<code>_view_extra_bytes(&amp;v)</code>, <code>received.extra</code>, <code>stats.frames_with_extra</code>, <code>demo_status_decode_extra(...)</code>',
-        '<code>v.extraBytes</code> / <code>extraTokens</code>, <code>frame.extra</code>, <code>stats.framesWithExtra</code>, <code>Status.decodeWithExtra(bytes)</code>')}.
+        '<code>v.extraBytes</code> / <code>extraTokens</code>, <code>frame.extra</code>, <code>stats.framesWithExtra</code>, <code>Status.decodeWithExtra(bytes)</code>', '<code>v.extra_bytes</code> / <code>extra_tokens</code>, <code>frame.extra</code>, <code>stats.frames_with_extra</code>, <code>Status.decode_with_extra(data)</code>')}.
       With <code>exact_size: true</code> on the protocol, such frames fail with <code>BadLength</code>.</p>`;
   }
 
@@ -729,6 +744,55 @@ const s = parser.pollMessage();    // decoded class instance
 const e = parser.pollEvent();      // { message, ... } or { error } in stream order
 const reply = parser.pollFor('Status');               // others go to the listeners meanwhile`)}
       ${demo('stream')}`;
+  }
+
+  function streamingPy() {
+    return `
+      <p><code>Link.stream()</code> is a <code>gmsg.StreamParser</code> with a buffer of <code>max_frame</code> bytes. Feed it
+      chunks of any size; it finds frames, validates them and calls your listeners with the matching view.</p>
+      <div class="g-flow">
+        ${['bytes in (any chunking)', 'scan: find sync / delimiter / length', 'open: checksum, unescape', 'select message by type id', 'listeners: on(Status, fn)'].map((t, i) =>
+          `<div class="g-flow-s"><span>${i + 1}</span>${esc(t)}</div>`).join('<div class="g-arrow">→</div>')}
+      </div>
+      ${code(`parser = demo.Link.stream()                            # or demo.Link.stream(capacity=4096)
+parser.on(demo.Status, lambda v, header: app.on_status(v))  # one or more listeners per message (class or name)
+parser.on('frame', lambda v, header: log.debug('%s', v))     # every valid frame, after its message listeners
+parser.on('error', lambda e: drop(e.code, e.data))           # garbage, bad checksums, unknown ids (gmsg.GmpError)
+parser.feed(chunk)                                          # returns the number of frames delivered
+st = parser.stats                                           # frames, frame_errors, bytes_skipped, overflows`)}
+      ${note("<code>on()</code> returns a function that removes the listener. The listener's second argument is the header view (<code>None</code> without a header).")}
+      <h3>Pulling messages</h3>
+      <p>Or ask for the next message yourself, which suits a request/response exchange. Views from the parser own a copy
+      of their frame, so they stay valid.</p>
+      ${code(`parser.push(chunk)
+while (m := parser.poll()) is not None:                # None: more input needed
+    if isinstance(m, demo.StatusView): use(m)
+for m in parser.messages(chunk): use(m)                 # push + poll as an iterator
+r = parser.poll_frame()      # gmsg.Received(message, header, bytes, offset, extra)
+s = parser.poll_message()    # decoded dataclass
+e = parser.poll_event()      # gmsg.Received or gmsg.GmpError, in stream order
+reply = parser.poll_for(demo.Status)                   # others go to the listeners meanwhile`)}
+      ${demo('stream')}`;
+  }
+
+  function generatedPy() {
+    return `
+      <p><code>gmpc --lang python</code> writes one module per schema, <code>&lt;schema&gt;_gmp.py</code> (Python 3.12+), built on
+      the runtime package <code>gmsg</code> (<code>pip install ./runtime-py</code>: pure Python, plus an optional C accelerator
+      built from the C runtime when a compiler is available; the results are the same). Messages are dataclasses, integers
+      are <code>int</code>, strings hold one character per byte, bytes are <code>bytes</code> (<code>memoryview</code> in views),
+      and absent fields are <code>None</code>. The behaviour and the printed text are those of C++ (cross-checked with and
+      without the accelerator). See README "Python output".</p>
+      ${table(['generated', 'what it is'], [
+        ['<code>@dataclass class M</code>', 'Attributes per field, <code>decode()</code>, <code>decode_with_extra()</code>, <code>encode()</code>, <code>read()</code> / <code>write()</code>, scaled / conversion / computed properties, <code>__str__</code> / <code>to_text()</code>, <code>==</code>.'],
+        ['<code>class MView</code>', '<code>from_bytes(data)</code> (text: <code>from_text(s)</code>) validates once; properties read from a <code>memoryview</code>. <code>to_struct()</code> copies out; <code>ranges()</code> gives the bytes of each field.'],
+        ['enum <code>E</code>', 'A <code>gmsg.GmpEnum</code> (an <code>IntEnum</code>) with <code>name_of()</code>, <code>is_known()</code> and <code>of()</code>; names that are Python keywords get a <code>_</code>.'],
+        ['<code>print_to()</code>, <code>to_text()</code>', 'On dataclasses, views and bit groups: the text of <code>gmsg.to_text</code> (see Printing for logs).'],
+        ['<code>class P</code>', '<code>parse()</code> → view, <code>decode()</code> → dataclass, <code>encode(m, header)</code>, <code>stream()</code>, <code>open()</code> / <code>select()</code> / <code>process()</code>, layout constants.'],
+      ])}
+      <h3>Errors</h3>
+      <p>Failures raise <code>gmsg.GmpError</code>; <code>e.code</code> is one of <code>gmsg.Err</code> (an <code>IntEnum</code>) and <code>str(e)</code> its text.</p>
+      ${errorTable()}`;
   }
 
   function generatedJs() {
@@ -837,7 +901,7 @@ auto reply = link.poll_for<demo::StatusView>();   // others go to the listeners 
     return `
       <p>${ln('Every generated struct, view and bit group has <code>print_to()</code>, so <code>gmp::print</code> can dump it',
              'Every generated struct, view and bit group has <code>_print(&amp;m, &amp;printer)</code> (<code>gmp/c/print.h</code>), with the same text as C++, to dump it',
-             'Every generated class, view and bit group has <code>printTo()</code> and <code>toString()</code>, so <code>gmsg.print</code> gives the same text as C++')}
+             'Every generated class, view and bit group has <code>printTo()</code> and <code>toString()</code>, so <code>gmsg.print</code> gives the same text as C++', 'Every generated dataclass, view and bit group has <code>print_to()</code>, <code>to_text()</code> and <code>__str__</code>, so <code>print(m)</code> gives the same text as C++')}
       for a console or a debug log. Enums print as <code>name (0xNN)</code> and undeclared values as
       <code>&lt;unknown&gt; (0x07)</code>, so the raw value is always visible. Scaled fields show the raw value followed
       by the engineering value and unit. Bytes print as hex, strings are quoted and escaped, and missing conditional fields
@@ -871,7 +935,12 @@ console.log(gmsg.print(status, { style: 'single_line' }));
 // options: style, indent, maxItems, maxBytes (0 = all), precision (significant digits of scaled values)
 
 // views print like their class, and Link.parse() results print whichever message matched
-stream.on('frame', (v) => log(String(v)));`))}
+stream.on('frame', (v) => log(String(v)));`, `print(status)                                      # multi-line text (the same as C++)
+print(status.to_text(style='single_line'))
+# options: style, indent, max_items, max_bytes (0 = all), precision (significant digits of scaled values)
+
+# views print like their dataclass, and Link.parse() results print whichever message matched
+stream.on('frame', lambda v, h: log.info('%s', v))`))}
       ${table(['field', 'printed as'], [
         ['integer, float, bool, char', '<code>42</code>, <code>1.5</code>, <code>true</code>, <code>\'N\'</code>'],
         ['enum', '<code>run (0x01)</code>, <code>&lt;unknown&gt; (0x07)</code>'],
@@ -883,11 +952,11 @@ stream.on('frame', (v) => log(String(v)));`))}
         ['computed value', '<code>serial: 305419896 (computed)</code>'],
         ['custom type', ln('your <code>gmp_print(gmp::Printer&amp;, const T&amp;)</code> next to the type, else <code>&lt;?&gt;</code>',
                            'the <code>print</code> function of its <code>c:</code> block, <code>void fn(gmsg_printer*, const T*)</code>, else <code>&lt;?&gt;</code>',
-                           'the <code>print</code> function of its <code>js:</code> block, <code>print(printer, value)</code>; else numbers and strings print as such, other values as <code>&lt;?&gt;</code>')],
+                           'the <code>print</code> function of its <code>js:</code> block, <code>print(printer, value)</code>; else numbers and strings print as such, other values as <code>&lt;?&gt;</code>', 'the <code>print</code> function of its <code>python:</code> block, <code>print(printer, value)</code>; else numbers and strings print as such, other values as <code>&lt;?&gt;</code>')],
       ])}
       ${note(ln('Bounded sinks (char buffers, static_string, or a callback that returns false) keep what fits and return <code>BufferFull</code>.',
                 'Bounded sinks (char buffers, or a write function that returns false) keep what fits; <code>gmsg_printer_finish()</code> returns <code>GMSG_ERR_BUFFER_FULL</code>.',
-                'Printing returns a string.') +
+                'Printing returns a string.', 'Printing returns a string.') +
              ' Printing never allocates. In the Studio decode tester, the <b>View</b> switch shows the same text for every decoded frame.')}
       ${demo('printing')}`;
   }
@@ -909,7 +978,7 @@ stream.on('frame', (v) => log(String(v)));`))}
   ];
   const errorTable = () => table(['error', 'meaning'], ERRORS.map(([cpp, c, d]) =>
     [ln(`<code>${cpp}</code>`, c.split(' / ').map((x) => `<code>GMSG_ERR_${x}</code>`).join(' / '),
-      cpp.split(' / ').map((x) => `<code>gmsg.Err.${x}</code>`).join(' / ')), d]));
+      cpp.split(' / ').map((x) => `<code>gmsg.Err.${x}</code>`).join(' / '), cpp.split(' / ').map((x) => `<code>gmsg.Err.${x.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase()}</code>`).join(' / ')), d]));
 
   function generatedC() {
     return `
@@ -935,6 +1004,7 @@ stream.on('frame', (v) => log(String(v)));`))}
   function cpp() {
     if (lang === 'c') return generatedC();
     if (lang === 'js') return generatedJs();
+    if (lang === 'py') return generatedPy();
     return `
       ${table(['generated', 'what it is'], [
         ['<code>struct M</code>', 'Members per field (std::optional when conditional), <code>decode()</code>, <code>encode()</code>, scaled / conversion / computed accessors, <code>operator==</code>.'],
@@ -1231,17 +1301,110 @@ stream.on('frame', (v) => log(String(v)));`))}
     poll: [[null, null, 'Iterate over the messages (or events) of a chunk. Polled views own their bytes, so they never expire.', 'for (const v of parser.messages(chunk)) …, parser.events(chunk)']],
   };
 
+  // Python names of the API rows, keyed like API_JS: [signature, description (optional)]
+  const API_PY = {
+    'demo::Status::decode(bytes)  →  gmp::Result<Status>': ['demo.Status.decode(data)  →  Status', 'Decode one message from the start of the buffer (trailing bytes are allowed). Raises gmsg.GmpError.'],
+    'demo::Status::decode(bytes, extra)': ['demo.Status.decode_with_extra(data)  →  (Status, extra)'],
+    'v.extra_bytes()': ['v.extra_bytes, v.extra_tokens'],
+    'gmp::VoidResult s.read(gmp::ByteReader& r)': ['demo.Status.read(reader)  →  Status', 'Decode from a gmsg.Reader at its current position, e.g. a message embedded in your own format. The reader advances past it.'],
+    'demo::Link::decode(frame)  →  gmp::Result<AnyMessage>': ['demo.Link.decode(frame)  →  Status | …'],
+    'v.to_struct()  →  gmp::Result<Status>': ['v.to_struct()  →  Status'],
+    'demo::StatusView::from(bytes)  →  gmp::Result<StatusView>': ['demo.StatusView.from_bytes(data)  →  StatusView'],
+    'demo::StatusView::unchecked(bytes)': ['demo.StatusView.unchecked(data)'],
+    'v.voltage()': ['v.voltage', 'Read one field (the raw wire value); fields are properties.'],
+    'v.data(), v.wire_size()': ['v.data, v.wire_size', 'The bytes the view covers (a memoryview over the input) and its size on the wire.'],
+    'v.to_struct()': ['v.to_struct()'],
+    's.voltage': ['s.voltage', 'Plain field: a dataclass attribute with the wire value (int, float, bool or str).'],
+    's.voltage_scaled(), s.set_voltage_scaled(12.6)': ['s.voltage_scaled, s.voltage_scaled = 12.6', 'Engineering value of a field with scale / offset; assigning rounds back to the raw value. Views have the property too.'],
+    's.temperature_degf(), s.set_temperature_degf(77)': ['s.temperature_degf, s.temperature_degf = 77', "One property per entry in the field's conversions list."],
+    's.rgb(), s.set_rgb(v)': ['s.rgb, s.rgb = v', 'computed: values derived from other fields (a property on views too).'],
+    's.ext (std::optional), v.ext()  →  std::optional<ExtendedView>': ['s.ext (None when absent), v.ext  →  ExtendedView | None'],
+    's.samples (static_vector), v.samples()  →  size(), [i], range-for': ['s.samples (list), v.samples  →  list', 'Arrays. A length / count taken from another field is filled in on encode; more than max elements is OUT_OF_RANGE.'],
+    's.label (static_string), v.label()  →  std::string_view': ['s.label (str), v.label  →  str', 'Strings hold one character per byte (latin-1); bytes fields are bytes (a memoryview in views).'],
+    's.flags.armed': ['s.flags.armed'],
+    'v.when()  →  gmp::Result<MyTime>': ['v.when', 'A custom type in a view is decoded on access, so reading it can raise.'],
+    's.encode(out)  →  gmp::Result<std::size_t>': ['s.encode()  →  bytes', 'Encode one message. Values that do not fit their type, or containers past max, raise OUT_OF_RANGE.'],
+    'gmp::VoidResult s.write(gmp::ByteWriter& w)': ['demo.Status.write(writer, s)', 'Encode with a gmsg.Writer at its current position (inside your own format).'],
+    'demo::Link::encode(s, out)': ['demo.Link.encode(s)  →  bytes'],
+    'demo::Link::encode(header, s, out)': ["demo.Link.encode(s, {'seq': 7})", 'The same, with header fields you choose (a dict or a Header instance).'],
+    'demo::Link::encode(any_message, out)': [null],
+    'demo::Gga::decode_text(std::string_view)': ['demo.Gga.decode_text(s)'],
+    'demo::Gga::decode(bytes), g.encode(out)': ['demo.Gga.decode(data), g.encode()  →  bytes, g.encode_text()  →  str'],
+    'g.read_text(std::span<const std::string_view> tokens)': ['demo.Gga.read_text(tokens)  →  Gga', 'Build the message from tokens (strings) you split yourself.'],
+    'g.write_text(gmp::text::TextWriter& w)': ['demo.Gga.write_text(text_writer, g)', 'Append the tokens to a gmsg.text.TextWriter.'],
+    'demo::GgaView::from(std::string_view or bytes)': ['demo.GgaView.from_text(str or bytes)'],
+    'v.latitude()  →  gmp::Result<std::optional<double>>': ['v.latitude  →  float | None', 'Parse one token on access (raises GmpError when it does not parse); an empty optional token gives None.'],
+    'g.latitude (std::optional<double>)': ['g.latitude (None when empty)'],
+    'demo_gga_view_token(&v, i), demo_gga_view_present_tokens(&v)': ['v.token(i), v.present_tokens'],
+    'Gga::token_count, Gga::separator': ['demo.Gga.token_count, demo.Gga.separator'],
+    'enum class demo::Mode : std::uint8_t { idle, run, fault }': ['class demo.Mode(gmsg.GmpEnum): idle = 0, run = 1, fault = 2'],
+    'to_string(Mode)  →  std::string_view': ['demo.Mode.name_of(v)  →  str'],
+    'is_known(Mode)': ['demo.Mode.is_known(v), demo.Mode.of(v)'],
+    'Status_flags::unpack(p), f.pack(p)': ['demo.Status_flags.unpack(data, at), demo.Status_flags.pack(f, buf, at)'],
+    'Status_flags::check(p)  →  gmp::VoidResult': ['demo.Status_flags.check(data, at)', 'Validate const bits and strict enums in the group (raises GmpError).'],
+    'demo::Link::parse(frame)  →  gmp::Result<AnyView>': ['demo.Link.parse(frame)  →  StatusView | …', 'A view of whichever message the frame carries (check it with isinstance).'],
+    'demo::Link::decode(frame)  →  gmp::Result<AnyMessage>_': [null],
+    'demo::Link::process(frame, handler)  →  gmp::Error': ['demo.Link.process(frame)  →  gmsg.Received(message, header)', "The frame's message view and header view (what the stream parser calls)."],
+    'demo::Link::open(frame)  →  gmp::Result<Frame>, select_message(f), visit_frame(f, fn)': ['demo.Link.open(frame)  →  gmsg.Opened(body, header), demo.Link.select(f)'],
+    'demo::Link::scan(bytes)  →  gmp::FrameScan': ['demo.Link.scan(buf)  →  gmsg.FrameScan(kind, size, consume, consume_on_error, error)'],
+    'Link::Header, Link::HeaderView, Link::AnyView, Link::AnyMessage': ['demo.Link.Header, demo.Link.HeaderView, demo.Link.views, demo.Link.messages'],
+    'demo::Link::Stream<> parser;': ['parser = demo.Link.stream()', 'A gmsg.StreamParser with a buffer of max_frame bytes (pass capacity= to change it).'],
+    'parser.feed(chunk, handler)  →  frames delivered': ['parser.feed(chunk)  →  frames delivered', 'Push the bytes and call the listeners for every complete frame.'],
+    'parser.push(chunk), parser.next(handler)': ['parser.push(chunk), parser.next()'],
+    'demo::Link::make_stream(handler), feed(chunk)': [null],
+    'demo::Link::CallbackStream<> link;  link.on<&App::on_status>(app)': ['parser.on(demo.Status, lambda view, header: …)  →  off()', 'Listeners per message class (or name); the header view is the second argument. on() returns a function that removes the listener.'],
+    'link.off<StatusView>(), link.has<StatusView>(), link.clear()': [null],
+    'on<&App::on_frame>, on<&App::on_drop>': ["parser.on('frame', fn), parser.on('error', lambda e: …)", 'Every valid frame (after its message listeners), and dropped bytes / rejected frames as a GmpError with .data and .offset.'],
+    'parser.stats()': ['parser.stats', 'Counters: frames, frame_errors, bytes_skipped, overflows, resyncs, flushes, frames_with_extra.'],
+    'parser.resync(handler)': ['parser.resync()', 'Give up on an incomplete frame at the head: reported to the error listeners as TRUNCATED.'],
+    'parser.flush(handler)': ['parser.flush()'],
+    'parser.set_idle_timeout(t), parser.tick(now, handler)': ['parser.set_idle_timeout(t), parser.tick(time.monotonic())'],
+    'parser.last_error(), parser.buffered(), parser.reset()': ['parser.last_error, parser.buffered, parser.position, parser.reset()', 'Reason of the last drop, bytes waiting, stream offset, and start over (clears stats).'],
+    'parser.poll()  →  Polled<AnyView>': ['parser.poll()  →  view | None'],
+    'parser.poll_frame()  →  { header, message, bytes, extra }': ['parser.poll_frame()  →  gmsg.Received(message, header, bytes, offset, extra) | None'],
+    'parser.poll_message()  →  std::optional<AnyMessage>': ['parser.poll_message()  →  Status | … | None'],
+    'parser.poll_event()  →  AnyView or gmp::FrameError': ['parser.poll_event()  →  gmsg.Received | gmsg.GmpError | None'],
+    'link.poll_for<StatusView>()': ['parser.poll_for(demo.Status)  →  StatusView | None'],
+    'uint32_t demo_link_stream_generation(const demo_link_stream* s)': [null],
+    'gmp::print(v, sink, opts), gmp::println(v, sink, opts)  →  gmp::Result<std::size_t>': ['str(v), v.to_text(**opts), gmsg.to_text(v, **opts)  →  str'],
+    'sinks: FILE*, std::ostream, char[N], static_string, std::string, callback': [null],
+    'gmsg_error gmsg_printer_finish(gmsg_printer* p, bool newline, size_t* written)': [null],
+    'gmp::print(Link::parse(frame).value(), sink)': ['print(demo.Link.parse(frame))'],
+    'gmp::PrintOptions{ .style, .indent, .max_items, .max_bytes, .precision }': ["to_text(style='single_line', indent=2, max_items=64, max_bytes=64, precision=9)"],
+    'm.print_to(gmp::Printer& p)': ['m.print_to(printer)', 'What gmsg.to_text calls; use it to print inside your own gmsg.Printer.'],
+    'void gmp_print(gmp::Printer&, const MyTime&)': ['python: { print: print_time }  →  print_time(printer, value)', 'How a custom type prints (otherwise numbers and strings as such, else <?>).'],
+    'Status::min_wire_size, Status::max_wire_size': ['demo.Status.min_wire_size, demo.Status.max_wire_size'],
+    'Status::wire_size': ['demo.Status.wire_size'],
+    'Status::magic_value': ['demo.Status.magic_value'],
+    'Link::max_frame': ['demo.Link.max_frame'],
+    'Link::prefix_size, header_size, trailer_size, suffix_size, prefix': ['demo.Link.prefix_size, header_size, trailer_size, suffix_size, prefix, suffix'],
+    'gmp::Result<T>  (std::expected<T, gmp::Error>)': ['raise gmsg.GmpError(code)', 'Failures raise a gmsg.GmpError; e.code is a gmsg.Err (IntEnum).'],
+    'gmp::to_string(gmp::Error)': ['gmsg.error_text(code), str(e)'],
+    'gmp::FrameError{ error, data }': ["parser.on('error', lambda e: …): e.code, e.data, e.offset"],
+    'gmp::crc32::compute(bytes)': ['gmsg.checksum.crc32.compute(data)'],
+    'init(), update(state, bytes), finish(state)': ['init(), update(state, data), finish(state)'],
+    'gmp::Crc<T, width, poly, init, refin, refout, xorout>': ['gmsg.checksum.crc(width, poly, init, refin, refout, xorout)'],
+  };
+  // rows only Python has: [null, null, description, signature]
+  const API_PY_EXTRA = {
+    poll: [[null, null, 'Iterate over the messages (or events) of a chunk. Views from the parser own their bytes, so they never expire.', 'for v in parser.messages(chunk): …, parser.events(chunk)']],
+    checksums: [[null, null, 'Whether the C accelerator (gmsg._native) is in use, and switching it off (or GMSG_PURE=1). Results are the same either way.', 'gmsg.NATIVE, gmsg.use_native(False)']],
+  };
+  const API_MAP = { js: API_JS, py: API_PY };
+  const API_EXTRA = { js: API_JS_EXTRA, py: API_PY_EXTRA };
+
   function apiRef() {
     const langName = LANGS[lang];
     const groups = API.map((g) => {
-      const all = lang === 'js' ? [...g.rows, ...(API_JS_EXTRA[g.id] || [])] : g.rows;
-      const sigOf = (r) => (lang === 'c' ? r[1] : lang === 'js' ? (r.length > 3 ? r[3] : (API_JS[r[0] != null ? r[0] : r[1]] || [null])[0]) : r[0]);
+      const map = API_MAP[lang];
+      const all = map ? [...g.rows, ...(API_EXTRA[lang][g.id] || [])] : g.rows;
+      const sigOf = (r) => (lang === 'c' ? r[1] : map ? (r.length > 3 ? r[3] : (map[r[0] != null ? r[0] : r[1]] || [null])[0]) : r[0]);
       const rows = all.filter((r) => sigOf(r) != null);
       if (!rows.length) return '';
       const body = rows.map((r) => {
         const sig = sigOf(r);
-        const jsDesc = lang === 'js' && r.length <= 3 ? (API_JS[r[0] != null ? r[0] : r[1]] || [])[1] : null;
-        const desc = jsDesc || (Array.isArray(r[2]) ? ln(r[2][0], r[2][1], r[2][2] || r[2][0]) : r[2]);
+        const ownDesc = map && r.length <= 3 ? (map[r[0] != null ? r[0] : r[1]] || [])[1] : null;
+        const desc = ownDesc || (Array.isArray(r[2]) ? ln(r[2][0], r[2][1], r[2][2] || r[2][0], r[2][3] || r[2][2] || r[2][0]) : r[2]);
         return `<tr data-api-row><td><code class="g-sig">${esc(sig)}</code></td><td>${esc(desc)}</td></tr>`;
       }).join('');
       return `<div class="g-api-group" data-api-group="${g.id}"><h3 id="api-${g.id}">${esc(g.title)}</h3><p>${esc(g.intro)}</p>
@@ -1251,7 +1414,7 @@ stream.on('frame', (v) => log(String(v)));`))}
       <p>Every function the generated code and the runtime give you, grouped by what you want to do. Names follow the
       examples in this guide: <code>namespace: demo</code>, a message <code>Status</code>, an enum <code>Mode</code>, a
       text message <code>Gga</code> and a protocol <code>Link</code>; your schema's names take their place
-      (${ln('<code>demo::Status</code>, <code>demo::Link</code>', '<code>demo_status_…</code>, <code>demo_link_…</code>; the prefix is the namespace, or <code>--opt prefix=</code>', '<code>demo.Status</code>, <code>demo.Link</code>, where <code>demo</code> is the generated module')}).</p>
+      (${ln('<code>demo::Status</code>, <code>demo::Link</code>', '<code>demo_status_…</code>, <code>demo_link_…</code>; the prefix is the namespace, or <code>--opt prefix=</code>', '<code>demo.Status</code>, <code>demo.Link</code>, where <code>demo</code> is the generated module', '<code>demo.Status</code>, <code>demo.Link</code>, where <code>demo</code> is the generated module (<code>import link_gmp as demo</code>)')}).</p>
       <div class="g-api-bar">
         <input id="api-filter" type="search" placeholder="Filter, e.g. encode, poll, print, crc" aria-label="Filter the API reference">
         <div class="g-api-jump">${API.map((g) => `<a class="g-k" href="#api-${g.id}">${esc(g.title.split(':')[0])}</a>`).join('')}</div>

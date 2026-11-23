@@ -57,9 +57,11 @@
       claim(c.name, t, 'Custom type');
       const cb = (c.lang && c.lang.c) || {};
       const jb = (c.lang && c.lang.js) || {};
-      // a binding for at least one language (cpp:, c: or js:); a started binding must be complete
-      if (!c.type && !cb.type && !jb.decode) add('error', t, c.name, 'custom type needs a C++, C or JavaScript binding');
+      const pb = (c.lang && c.lang.python) || {};
+      // a binding for at least one language (cpp:, c:, js: or python:); a started binding must be complete
+      if (!c.type && !cb.type && !jb.decode && !pb.decode) add('error', t, c.name, 'custom type needs a C++, C, JavaScript or Python binding');
       if (jb.decode && !jb.module) add('error', t, c.name, 'custom type needs a JavaScript module');
+      if (pb.decode && !pb.module) add('error', t, c.name, 'custom type needs a Python module');
       if (c.type && !c.decode) add('error', t, c.name, 'custom type needs a C++ decode function');
       if (cb.type && !cb.decode) add('error', t, c.name, 'custom type needs a C decode function');
       if (!c.type && c.decode) add('error', t, c.name, 'custom type needs a C++ type');
@@ -68,15 +70,17 @@
     s.customChecksums.forEach((c) => {
       const t = { kind: 'custom', uid: c.uid };
       if (!G.isIdent(c.name)) add('error', t, c.name || '(unnamed)', 'checksum name is not a valid identifier');
-      if (!c.function && !((c.lang && c.lang.c) || {}).function && !((c.lang && c.lang.js) || {}).function)
-        add('error', t, c.name, 'custom checksum needs a C++, C or JavaScript function');
+      if (!c.function && !((c.lang && c.lang.c) || {}).function && !((c.lang && c.lang.js) || {}).function &&
+          !((c.lang && c.lang.python) || {}).function)
+        add('error', t, c.name, 'custom checksum needs a C++, C, JavaScript or Python function');
       if (!G.isInt(c.size)) add('error', t, c.name, 'custom checksum needs a size in bytes');
     });
     s.customFramers.forEach((c) => {
       const t = { kind: 'custom', uid: c.uid };
       if (!G.isIdent(c.name)) add('error', t, c.name || '(unnamed)', 'framer name is not a valid identifier');
-      if (!c.type && !((c.lang && c.lang.c) || {}).scan && !((c.lang && c.lang.js) || {}).scan)
-        add('error', t, c.name, 'custom framer needs a C++ type or a C or JavaScript scan function');
+      if (!c.type && !((c.lang && c.lang.c) || {}).scan && !((c.lang && c.lang.js) || {}).scan &&
+          !((c.lang && c.lang.python) || {}).scan)
+        add('error', t, c.name, 'custom framer needs a C++ type or a C, JavaScript or Python scan function');
     });
     s.messages.forEach((m) => claim(m.name, { kind: 'message', uid: m.uid }, 'Message'));
     s.protocols.forEach((p) => claim(p.name, { kind: 'protocol', uid: p.uid }, 'Protocol'));

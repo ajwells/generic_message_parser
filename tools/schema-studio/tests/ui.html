@@ -141,7 +141,7 @@
     noErrors('while switching decode targets');
   });
 
-  T.test('gmpc engine: decodes the example like Quick; Code tab shows C++, C and JavaScript', async () => {
+  T.test('gmpc engine: decodes the example like Quick; Code tab shows C++, C, JavaScript and Python', async () => {
     if (!w.GMP_GMPC) T.skip('gmpc/gmpc.js is not built');
     w.confirm = () => true;
     await click(d.querySelector('[data-action=loadExample]'));
@@ -162,7 +162,7 @@
     await click(d.querySelector('#decode-view button[data-view="print"]'));
     T.ok(/Status \{/.test(d.getElementById('decode-results').textContent), 'print view from the generated code');
     await click(d.querySelector('.tab[data-tab="code"]'));
-    for (const [lang, file] of [['cpp', '.gmp.hpp'], ['c', '.gmp.c'], ['js', '.gmp.js']]) {
+    for (const [lang, file] of [['cpp', '.gmp.hpp'], ['c', '.gmp.c'], ['js', '.gmp.js'], ['python', '_gmp.py']]) {
       await click(d.querySelector(`#code-lang button[data-lang="${lang}"]`));
       await T.until(() => d.querySelector('#tab-code .code-file'), 10000, 'generated ' + lang);
       T.ok(d.getElementById('tab-code').textContent.includes(file), `${lang}: ${file} listed`);

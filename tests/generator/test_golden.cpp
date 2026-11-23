@@ -93,6 +93,8 @@ TEST_CASE("generated C matches golden files") { check_goldens("c"); }
 
 TEST_CASE("generated JavaScript matches golden files") { check_goldens("js"); }
 
+TEST_CASE("generated Python matches golden files") { check_goldens("python"); }
+
 TEST_CASE("generation is deterministic") {
     const auto p = fs::path(GMP_SCHEMA_DIR) / "telemetry.yaml";
     for (const auto& b : gmpc::backends()) {

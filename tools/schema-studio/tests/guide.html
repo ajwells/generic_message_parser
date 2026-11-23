@@ -139,6 +139,34 @@
     T.eq(errors.join('\n'), '', 'JavaScript errors');
   });
 
+  T.test('language selector: Python samples, names and API reference', async () => {
+    const btn = (l) => d.querySelector(`#guide-lang button[data-lang="${l}"]`);
+    const codeText = () => Array.from(d.querySelectorAll('.g-code')).map((p) => p.textContent).join('\n');
+    T.ok(btn('py'), 'Python button');
+    btn('py').click();
+    await T.until(() => /Generated Python and errors/.test(d.getElementById('cpp').textContent), 3000, 'Python section title');
+    const c = codeText();
+    for (const want of ['demo.Link.stream()', 'import link_gmp as demo', 'demo.StatusView.from_bytes(data)', '--lang python', 'parser.poll_event()',
+      'parser.on(demo.Status', "status.to_text(style='single_line')", 'pip install ./runtime-py'])
+      T.ok(c.includes(want), `Python sample has ${want}`);
+    T.ok(!/gmp::|std::|gmsg_\w+\(|console\.log|=>/.test(c), 'no C++, C or JavaScript left in the code samples');
+    const gen = d.getElementById('cpp').textContent;
+    T.ok(gen.includes('gmsg.Err.BAD_CHECKSUM') && gen.includes('gmsg.Err.PARSE_ERROR') && gen.includes('gmsg.Err.VALUE_OUT_OF_LIMITS'), 'Python error names');
+    T.ok(gen.includes('@dataclass class M'), 'Python generated-code table');
+    const api = d.getElementById('api').textContent;
+    for (const x of ['demo.Status.decode(data)', 's.encode()', 'demo.Link.parse(frame)', 'parser.poll_event()', 'gmsg.checksum.crc32.compute(data)',
+      'demo.Link.max_frame', 'parser.messages(chunk)', 'gmsg.use_native(False)', 'demo.Mode.name_of(v)'])
+      T.ok(api.includes(x), `Python reference has ${x}`);
+    T.ok(!/gmp::|std::|demo_status_|pollEvent|toStruct/.test(api), 'no C++, C or JavaScript names in the Python reference');
+    T.ok(!/\bnull\b|undefined</.test(api), 'no missing cells (Python)');
+    const demos = () => Array.from(d.querySelectorAll('[data-demo]'));
+    await T.until(() => demos().length && demos().every((el) => el.querySelector('.g-demo-head, .callout')), 10000, 'demos after the switch');
+    T.ok(Array.from(d.querySelectorAll('.g-run-head')).some((h) => h.textContent.includes('print(report)')), 'Python print demo label');
+    btn('cpp').click();
+    await T.until(() => /Generated C\+\+ and errors/.test(d.getElementById('cpp').textContent), 3000, 'back to C++');
+    T.eq(errors.join('\n'), '', 'JavaScript errors');
+  });
+
   T.run();
 })();
 </script>

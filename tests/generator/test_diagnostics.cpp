@@ -704,3 +704,43 @@ TEST_CASE("JavaScript backend: js: entries of custom items, reserved names, modu
     CHECK(files[0].content.find("root.acme_link = factory(root.gmsg)") != std::string::npos);
     CHECK(files[0].content.find("return Object.freeze({ A, AView });") != std::string::npos);
 }
+
+TEST_CASE("Python backend: python: entries of custom items, reserved names, module options") {
+    auto run = [](const std::string& yaml, const gmpc::BackendOptions& opts, std::string& text, const char* file = "test.yaml") {
+        gmpc::Diagnostics d;
+        auto s = gmpc::load_schema_string(yaml, file, d);
+        std::vector<gmpc::OutputFile> files;
+        if (s && gmpc::lower_schema(*s, d)) files = gmpc::find_backend("python")->generate(*s, opts, d);
+        std::ostringstream os;
+        d.print(os);
+        text = os.str();
+        return files;
+    };
+    std::string text;
+    // custom items used by generated code need module + decode (+ encode with a struct), function, scan
+    CHECK(run("custom:\n  types:\n    t: { wire_size: 2, js: { module: './c.js', decode: d, encode: e } }\n"
+              "messages:\n  A: { fields: [ { name: x, type: t } ] }\n", {}, text).empty());
+    CHECK(text.find("custom type 't' needs a 'python: { module: ... }' entry for the Python backend") != std::string::npos);
+    CHECK(run("custom:\n  types:\n    t: { wire_size: 2, python: { module: codecs, decode: d } }\n"
+              "messages:\n  A: { fields: [ { name: x, type: t } ] }\n", {}, text).empty());
+    CHECK(text.find("custom type 't' needs a 'python: { encode: ... }' entry") != std::string::npos);
+    CHECK(run("custom:\n  framers:\n    f: { python: { module: codecs } }\nmessages:\n  A: { fields: [ { name: x, type: u8 } ] }\n"
+              "protocols:\n  P:\n    framing: { type: custom, framer: f, max_frame: 8 }\n    messages: [A]\n", {}, text).empty());
+    CHECK(text.find("custom framer 'f' needs a 'python: { scan: ... }' entry") != std::string::npos);
+    // a message named like a builtin the module relies on, and a Python keyword
+    CHECK(run("messages:\n  range: { fields: [ { name: x, type: u8 } ] }\n", {}, text).empty());
+    CHECK(text.find("message 'range' clashes with a Python name") != std::string::npos);
+    CHECK(run("enums:\n  None: { type: u8, values: { a: 1 } }\nmessages:\n  A: { fields: [ { name: x, type: None } ] }\n", {}, text).empty());
+    CHECK(text.find("enum 'None' clashes with a Python name") != std::string::npos);
+    // module name, runtime option, keyword members, relative extension modules
+    gmpc::BackendOptions opts;
+    opts.values["runtime"] = "vendor.gmsg";
+    auto files = run("custom:\n  types:\n    t: { wire_size: 1, python: { module: .codecs, decode: d, encode: e } }\n"
+                     "messages:\n  A: { fields: [ { name: from, type: u8 }, { name: c, type: t } ] }\n", opts, text, "my-link.yaml");
+    REQUIRE(files.size() == 1);
+    CHECK(files[0].name == "my_link_gmp.py");
+    CHECK(files[0].content.find("import vendor.gmsg as gmsg\n") != std::string::npos);
+    CHECK(files[0].content.find("from . import codecs as _ext0\n") != std::string::npos);
+    CHECK(files[0].content.find("    from_: int = 0\n") != std::string::npos);
+    CHECK(files[0].content.find("__all__ = ['A', 'AView']") != std::string::npos);
+}

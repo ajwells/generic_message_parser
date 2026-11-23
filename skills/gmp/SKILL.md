@@ -118,10 +118,14 @@ CLI: `gmpc --out gen/ link.yaml` · `gmpc --check link.yaml` (validate only) · 
 Requires a C++23 compiler with `<expected>` (GCC 13+, Clang 17+, MSVC 19.36+).
 
 Other languages from the same schema: `--lang c` (C99 or later, `<schema>.gmp.h` + `.gmp.c`, runtime `runtime-c/`,
-names prefixed from the namespace: `acme_link_status_decode(...)`) and `--lang js` (one UMD module `<schema>.gmp.js` on
+names prefixed from the namespace: `acme_link_status_decode(...)`), `--lang js` (one UMD module `<schema>.gmp.js` on
 `runtime-js/gmsg.js`: `Status.decode(bytes)`, `Link.encode(msg)`, `Link.stream().on('Status', fn)`, errors are thrown
-`gmsg.GmpError`). Custom types / checksums / framers then need `c:` or `js:` blocks (see references/schema.md); the
-README sections "C output" and "JavaScript output" (in references/cpp-api.md) list the API.
+`gmsg.GmpError`) and `--lang python` (Python 3.12+, one module `<schema>_gmp.py` of dataclasses on the package
+`runtime-py/gmsg`, `pip install ./runtime-py`: `Status.decode(data)`, `msg.encode()`, `Link.stream().on(Status, fn)`,
+`StatusView.from_bytes(data)`, errors are raised `gmsg.GmpError` with `e.code == Err.BAD_CHECKSUM`; an optional C
+accelerator is built by pip when a compiler is present, same API). Custom types / checksums / framers then need `c:`,
+`js:` or `python:` blocks (see references/schema.md); the README sections "C output", "JavaScript output" and "Python
+output" (in references/cpp-api.md) list the API.
 
 ## Using the generated code
 

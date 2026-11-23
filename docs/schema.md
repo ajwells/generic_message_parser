@@ -270,7 +270,7 @@ uppercase hex (NMEA style).
 
 ## custom extensions
 
-Language-specific settings live in a block named after the backend (`cpp:`, `c:`, `js:`).
+Language-specific settings live in a block named after the backend (`cpp:`, `c:`, `js:`, `python:`).
 
 ```yaml
 custom:
@@ -351,3 +351,20 @@ in a browser page looked up in the global `gmsgExtensions`) and their names. Onl
 | checksum | `fn(covered: Uint8Array) → number or BigInt` |
 | framer | `scan(bytes: Uint8Array) → gmsg.FrameScan.needMore(hint) / .frame(size, consume, consumeOnError) / .skip(n, error)` |
 | printing (optional) | `print(printer: gmsg.Printer, value)`; without it numbers, BigInts and strings print as such, anything else as `<?>` |
+
+For the Python backend (`--lang python`) add a `python:` block: the module to import (a leading `.` imports it relative
+to the generated module's package) and the function names:
+
+```yaml
+    bcd_time: { wire_size: 3, python: { module: my_codecs, decode: decode_bcd_time, encode: encode_bcd_time, print: print_time } }
+    add16: { size: 2, python: { module: my_codecs, function: add16 } }
+    len_byte: { python: { module: my_codecs, scan: len_byte_scan } }
+```
+
+| extension (Python) | signature |
+|--------------------|-----------|
+| binary decoder / encoder | `decode(reader: gmsg.Reader) -> value`, `encode(writer: gmsg.Writer, value)`; raise `gmsg.GmpError` (`gmsg.fail(Err.X)`) on bad input |
+| text decoder / encoder | `decode(token: str) -> value`, `encode(writer: gmsg.text.TextWriter, value)` (write with `writer.raw(text)`) |
+| checksum | `fn(covered: bytes-like) -> int` |
+| framer | `scan(buf: bytes-like) -> gmsg.FrameScan.need_more(hint) / .frame(size, consume, consume_on_error) / .skip(n, error)` |
+| printing (optional) | `print(printer: gmsg.Printer, value)` (write with `printer.raw_text(s)`); without it numbers and strings print as such, anything else as `<?>` |

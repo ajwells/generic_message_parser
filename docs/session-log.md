@@ -4,7 +4,7 @@ Read this first when starting a new working session. It records what exists, why
 known to be rough, and what is planned. Update it at the end of each session (newest entries at the top of
 "Session history").
 
-Last updated: 2026-11-22.
+Last updated: 2026-11-23.
 
 ---
 
@@ -13,7 +13,8 @@ Last updated: 2026-11-22.
 GMP (generic_message_parser) is a C++23 YAML-driven code generator for **existing** binary and text wire protocols.
 `gmpc` reads a schema (`messages`, `enums`, `protocols`, `custom`) and writes one header `<schema>.gmp.hpp` with
 eager structs, zero-copy Views, and Protocol types (`parse`, `decode`, `encode`, `Stream<>`); `--lang c` writes C99
-(`runtime-c/`) and `--lang js` a JavaScript module (`runtime-js/gmsg.js`). The runtime
+(`runtime-c/`), `--lang js` a JavaScript module (`runtime-js/gmsg.js`) and `--lang python` a Python 3.12+ module
+(`runtime-py/gmsg`, optional C accelerator). The runtime
 (`runtime/include/gmp/`) is header-only: no heap, no exceptions, no RTTI, `std::expected` errors. Schema Studio
 (`tools/schema-studio/`) is a static web app for building schemas visually, decoding test bytes and learning
 the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
@@ -23,10 +24,20 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 - Toolchain PATH (Git Bash):
   `export PATH="/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/mingw/bin:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/ninja/win/x64:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin:$PATH"`
   (MinGW GCC 15, Ninja, CMake; yaml-cpp and Catch2 via FetchContent).
-- Debug build + tests: `cmake --build build && ctest --test-dir build` (268 tests, all passing, including `gmp_studio_tests`, the C runtime tests in C11 / C99 / library builds, the generated-C cross-checks, the JS runtime and generated-JS cross-checks and `gmp_studio_gmpc_fresh`). Keep the MinGW `bin` on PATH when running ctest: without it the test executables fail with 0xc0000139.
+- Debug build + tests: `cmake --build build && ctest --test-dir build` (276 tests, all passing, including `gmp_studio_tests`, the C runtime tests in C11 / C99 / library builds, the generated-C cross-checks, the JS runtime and generated-JS cross-checks, the Python runtime / generated / API tests pure and with the accelerator, and `gmp_studio_gmpc_fresh`). Keep the MinGW `bin` on PATH when running ctest: without it the test executables fail with 0xc0000139.
 - Node.js: none on PATH; CMake finds the copy inside emsdk (`~/emsdk/node/24.19.0_64bit/node.exe`, variable `GMP_NODE`). JS tests: `node tests/runtime_js/test_runtime.js build/tests/runtime_js/gmp_js_vectors.exe` and `node tests/roundtrip_js/test_generated.js build/tests/roundtrip_js/gmp_js_crossref.exe build/tests/roundtrip_js/gen`.
 - emsdk is installed in `~/emsdk` (latest). It needs Python 3.10+: a portable Python 3.12 is in `~/tools/python312`, and emsdk brings Python 3.13 and Node. `py tools/schema-studio/gmpc/build.py` (with the CLion CMake + Ninja on PATH) builds `gmpc.wasm` in `build-wasm/` (about 20 s) and writes `tools/schema-studio/gmpc/gmpc.js`, `gmpc.stamp`, `gmpc-info.js`. Rebuild after any change under `generator/` (the freshness test fails otherwise).
 - Release build: `cmake --build build-release` (Release, bench ON, tests and examples OFF; it is a compile check only).
+- Python 3.12+: CMake variable `GMP_PYTHON` (found: emsdk's 3.13, `~/emsdk/python/3.13.3_64bit/python.exe`, which has
+  `include/` and `libs/python3.lib`, so CMake also builds the accelerator into `build/py/gmsg/_native.pyd` with MinGW
+  and copies the package next to it). The portable `~/tools/python312/python.exe` (embeddable 3.12.8, no headers,
+  no pip; its `._pth` isolates sys.path, so scripts insert paths themselves) is the 3.12 check, run by hand:
+  `GMSG_PATH=build/py ~/tools/python312/python.exe tests/runtime_py/test_runtime.py build/tests/runtime_js/gmp_js_vectors.exe --native`,
+  `tests/roundtrip_py/test_generated.py build/tests/roundtrip_js/gmp_js_crossref.exe build/tests/roundtrip_py/gen --native`,
+  `tests/roundtrip_py/test_api.py build/tests/roundtrip_py/gen --native` (`--pure` without the accelerator). The `py`
+  launcher (3.9) is too old for the runtime. `py -m pip` is absent; emsdk's python has pip: `<emsdk python> -m pip wheel
+  ./runtime-py -w <dir> --no-deps` builds the abi3 wheel with MSVC 2022 (setuptools is fetched into the isolated build
+  env); delete `runtime-py/build` and `*.egg-info` afterwards.
 - Regenerate golden files after an intentional generator change:
   `GMP_UPDATE_GOLDEN=1 ctest --test-dir build -R golden`, then check that only the expected files changed.
 - Generator directly: `./build/generator/gmpc.exe --out <dir> schema.yaml` / `--check`.
@@ -57,6 +68,8 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 | `runtime-c/src/`, `runtime-c/tools/` | library build of the C runtime: one `.c` per library header (checksum, framing, stream, float_text, text, print), each defining `GMSG_IMPL_<PART>_`; `tools/crc_tables.py` writes `crc_tables.h` |
 | `runtime-js/gmsg.js` | JavaScript runtime (one UMD file, global `gmsg`): errors (`GmpError`, `Err`), Reader / Writer, bits, checksums (tables; BigInt for 64-bit), escaping, scanners, `StreamParser` (listeners, pull API, iterators, `offset`), exact float text (port of `float_text.h`), text tokens, `Printer` / `print`, `enumType`, helpers for generated code |
 | `generator/src/backend/js/` | JS backend: `js_backend.cpp` (UMD wrapper, enums, `js:` checks, reserved names, options runtime / global), `js_common.cpp` (ident, literals, BigInt int64 expressions, print calls), `emit_binary_message.cpp`, `emit_text_message.cpp`, `emit_protocol.cpp` |
+| `runtime-py/` | Python runtime package `gmsg` (3.12+): `errors.py` (`Err` IntEnum, `GmpError`), `core.py` (Reader / Writer, int checks, C++ conversions, bits, `to_f32`), `checksum.py`, `framing.py` (escape configs, scanners, `_native_cfg` fallback for patterns > 8 bytes), `stream.py` (`StreamParser`, `Received`, `StreamStats`), `floattext.py` (exact float text), `text.py`, `printer.py`, `gen.py` (support of generated code: `GmpEnum`, `Opened`, `FieldRange`, `TextField`, `i64`, `limited`, `build`, ...), `_accel.py` (`native`, `use_native`). `native/_native.c`: the accelerator (limited API 3.12, header-only C runtime; checksums with cached CRC tables, escaping, scanners, int / float parsing, float text). `pyproject.toml` + `setup.py` (optional abi3 extension, `/std:c11` for MSVC), `README.md` |
+| `generator/src/backend/py/` | Python backend: `py_backend.cpp` (module header, enums as `gmsg.GmpEnum` with `__gmp_names__` for renamed members, `python:` checks, reserved names, option runtime, relative imports), `py_common.cpp` (ident / enum_ident, literals, int64 expressions via `gmsg.i64`, `condition()`, print calls), `emit_binary_message.cpp` (bits / message dataclasses with `slots=True`, struct runs, views), `emit_text_message.cpp`, `emit_protocol.cpp` |
 | `generator/src/wasm_main.cpp` | `gmpc_generate(yaml, file, lang, options)` → JSON for the WebAssembly build (target `gmpc_wasm`, only with Emscripten) |
 | `runtime/include/gmp/` | header-only runtime: endian, byte/bit readers and writers, checksums, text codec, containers, framing (`framing/fixed.hpp`, `length_prefixed.hpp`, `delimited.hpp`, `escape.hpp`, `frame.hpp`), `stream_parser.hpp`, `error.hpp`, `print.hpp` |
 | `generator/src/schema/` | `loader.cpp` (YAML → IR, key checks, renamed-key hints), `expr.cpp`, `validator.cpp` |
@@ -68,7 +81,9 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 | `tests/roundtrip_c` | generated C for every supported schema compiled as strict C11 with `-Werror` (`gmp_test_schemas_c`), and the same files as C99 header-only (`gmp_test_schemas_c99`, compile check) and C99 with the library (`gmp_test_schemas_c99_lib`, cross-checked by `gmp_c_generated_tests_lib`), `test_c_generated.cpp` (messages: C vs C++ on valid, truncated, corrupted and random inputs: errors, fields, views, conversions, computed values, re-encoded bytes, print text via `print_compare.hpp`) and `test_c_protocols.cpp` (16 + 4 protocols: whole-buffer parse / decode / process / encode and noisy streams in several chunk sizes: events, header and message bytes, stats) |
 | `tests/runtime_js` | `gmsg.js` tests under Node: `test_runtime.js` (unit checks + vectors from `js_vectors.cpp`: checksums, generic CRCs via the C runtime, bits, float text, int parsing, TextWriter, scanners, escaping, stream, printer), `harness.js` |
 | `tests/roundtrip_js` | generated JS for every test schema (`gmp_generate(LANG js)` into `build/tests/roundtrip_js/gen`, with `test_codecs.js`) cross-checked against generated C++: `js_crossref.cpp` (messages: decode / print / re-encode / view on seeds, mutations, truncations; protocols: parse / decode / encode and noisy streams through the real `Stream<>`) and `test_generated.js` |
-| `tests/runtime`, `tests/generator` (golden + diagnostics), `tests/roundtrip`, `tests/schemas` | test suites; goldens in `tests/generator/golden/<backend>/` (`cpp/`, `c/`, `js/`) |
+| `tests/runtime_py` | `test_runtime.py` (unit checks + the same `js_vectors` reference vectors as the JS runtime), `harness.py` (no pytest); CMake finds `GMP_PYTHON` and builds the accelerator (`gmsg_native`, `gmsg_py_package`) |
+| `tests/roundtrip_py` | generated Python for every test schema + `api.yaml` (`gmp_generate(LANG python)` into `build/tests/roundtrip_py/gen`) cross-checked with `test_generated.py` against the `js_crossref` reference JSON; `test_api.py` (keywords, `&&`/`\|\|`/`!` conditions, f32 computed, encode size checks, enum members, text extra tokens, header dicts, streams, `use_native`); `test_codecs.py` (the `python:` extensions) |
+| `tests/runtime`, `tests/generator` (golden + diagnostics), `tests/roundtrip`, `tests/schemas` | test suites; goldens in `tests/generator/golden/<backend>/` (`cpp/`, `c/`, `js/`, `python/`) |
 | `examples/` | binary_telemetry, nmea_text, bitpacked_can, custom_codec, sensirion_sht4x (two schemas), reserved_sync; C versions (`main.c`, `gmp_add_example(... LANG c)`) of binary_telemetry (callbacks), nmea_text (push + poll_event) and custom_codec (`c:` codecs, print hook) |
 | `docs/schema.md` | compact schema reference (source for the skill's `references/schema.md`) |
 | `tools/schema-studio/` | Studio (`index.html`) and Guide (`guide.html`); JS in `js/` (see its README for the file roles; `exact.js` is the gmpc engine); `gmpc/` (committed `gmpc.js` = gmpc in WebAssembly, `build.py`); tests in `tests/` (`run_tests.py`, pages `unit` / `crosscheck` / `ui` / `guide`, C++ reference generator `crossref.cpp`) |
@@ -182,14 +197,38 @@ JavaScript backend (`gmpc --lang js`): one UMD module `<schema>.gmp.js` on `runt
   (stream position); polled views own a copy of the frame.
 - `gmp_generate(... LANG js)` is a custom target that also copies `gmsg.js` into the output directory.
 
+Python backend (`gmpc --lang python`): one module `<schema>_gmp.py` (stem sanitised) on the package `gmsg`
+(`runtime-py`); option `--opt runtime=<module>` (`import <module> as gmsg`).
+- Same functionality as C++, idiomatic Python: raised `gmsg.GmpError` (`e.code` an `Err` IntEnum, UPPER_SNAKE names),
+  `int` (any width, `check_int` on encode), floats (`gmsg.to_f32` for f32), char = 1-char str, strings latin-1, bytes
+  (views: memoryview), absent = None, enums `gmsg.GmpEnum` (IntEnum; fields hold the member via `E.of(v)`, undeclared
+  values of non-strict enums stay ints; `name_of` / `is_known`; keyword or IntEnum-member names get `_`, mapped back
+  by `__gmp_names__`), messages and bit groups as `@dataclass(slots=True)` (static `read` / `write` / `decode` /
+  `decode_with_extra`, `m.encode()`, `view()`, `print_to`, `to_text`, `__str__`), conversions / computed as properties,
+  views with `__slots__` (`from_bytes` / text `from_text`, `unchecked`, `data`, `wire_size`, `extra_bytes`,
+  `ranges()` → `gmsg.FieldRange`, `to_struct`, `__repr__`), protocols as classes of staticmethods (`scan`, `open` →
+  `gmsg.Opened`, `select`, `process` → `gmsg.Received`, `parse`, `decode`, `encode(m, header=None)` with a dict or a
+  Header instance via `gmsg.build`, `stream(capacity)`).
+- Consecutive plain scalars / enums / padding without checks are read with one precompiled `struct.Struct`
+  (`_st<N>`, Truncated is then the only possible error, so the order of errors is unchanged) and written with one
+  pack (values still go through `check_int` / `to_f32` / `char_code`).
+- Custom items: `python: { module, decode, encode, print }` / `{ module, function }` / `{ module, scan }`; a module
+  starting with `.` is imported relative to the package.
+- Accelerator `gmsg._native` (one abi3 binary for 3.12+): used automatically, `gmsg.NATIVE`, `use_native(False)`,
+  `GMSG_PURE=1`. Measured (3.13): CRC-32 48x, NMEA decode 2.6x, NMEA stream 2x, binary streams 1.1-1.3x (message
+  fields stay Python).
+- `gmp_generate(... LANG python)` is a custom target (properties `GMP_GENERATED_DIR`, `GMP_RUNTIME_DIR`).
+
 Studio engines: the decode tester has **Engine: Quick | gmpc** (`dui.engine`, URL `engine=gmpc`). Quick = `decoder.js`
 on `gmsg.js` (framers / escaping / checksums / text parsing / print from the runtime; the schema walk stays in Studio).
 gmpc = `js/exact.js`: loads `gmpc/gmpc.js` on demand (availability from `gmpc/gmpc-info.js`), generates JS, evaluates it
 with a `require` shim (custom modules are stubs that throw `Custom`), decodes with `StreamParser` / views, builds nodes
 from `ranges()` (escaped frames mapped through an origin map), prints with the generated `printTo`, and compares with
 Quick (warning callout). With gmpc loaded, gmpc diagnostics join the Issues bar. **Code** tab: generated C++ / C / JS.
-Custom item editors have a JavaScript binding section (`js:`); validation accepts any one language. Guide: language
-switch C++ / C / JavaScript (`ln(cpp, c, js)`; API rows get JS signatures from `API_JS`, keyed by the C++ signature).
+Custom item editors have JavaScript (`js:`) and Python (`python:`) binding sections; validation accepts any one
+language. Code tab: C++ / C / JavaScript / Python. Guide: language switch C++ / C / JavaScript / Python
+(`ln(cpp, c, js, py)`, `?lang=py`; API rows get JS / Python signatures from `API_JS` / `API_PY` via `API_MAP`, keyed
+by the C++ signature; extra rows in `API_JS_EXTRA` / `API_PY_EXTRA`).
 
 C backend (`gmpc --lang c`): `<schema>.gmp.h` + `<schema>.gmp.c`, C99 or later, header compiles as C++. The
 `_Generic` signature checks of `c:` functions are behind `#if GMSG_C11`. `gmp_generate(... C_RUNTIME library)` links
@@ -306,7 +345,15 @@ C runtime (`runtime-c/`, for the C backend):
 - C `_poll_message` restores a frame whose struct decode fails after the view decoded, but no test reaches that path
   for an escaped protocol (the C++ encoder cannot build such a frame); a planted bug there is not caught.
 - JS cannot keep the payload of f32 signalling NaNs (they become quiet NaNs), so such values re-encode differently.
-  Accepted by the user (2026-11-22); revisit only if a protocol needs bit-exact NaNs in JS.
+  Accepted by the user (2026-11-22); revisit only if a protocol needs bit-exact NaNs in JS. Python behaves the same
+  (floats), and keeps a rejected escaped frame's bytes as received, like JS.
+- Python: the accelerator helps checksums / text a lot but binary messages little (per-field Python code dominates;
+  profile showed calls spread over check_int / Writer.write / bits). A further step would be generated code that
+  packs more per call, or moving whole message codecs into C.
+- Python: a view over a `bytearray` keeps a memoryview export, so the bytearray cannot be resized while the view
+  lives (BufferError); the stream parser hands views immutable copies, so this only affects user buffers.
+- Python accelerator in CMake builds only when `GMP_PYTHON` has headers (+ `libs/python3.lib` on Windows); the 3.12
+  run is manual (the portable 3.12 has no headers, the same abi3 binary loads there).
 - The gmpc engine cannot run custom codecs (user code); frames using them fail with `Custom` in that engine.
 
 ## 7. Future tasks (planned, not started)
@@ -321,12 +368,36 @@ C runtime (`runtime-c/`, for the C backend):
 | Stream I/O + callbacks | decided: do all four, one at a time. **A** stored handler / callbacks: **done**. **C** ISR-safe ring buffer: design presented, **tabled** (open questions C1–C6 in the memory note). **B** pull API: **done**. Remaining: **C** (when resumed) and **D**, an endpoint with source/sink adapters, `send(msg)` and a blocking `wait_for<V>(timeout)` / `transact`. |
 | `gmp::to_text<N>(msg)` (small, optional) | printing helper returning a fresh `gmp::static_string<N>` instead of appending to a sink |
 | Rename C++ runtime macros/namespace? | The C runtime uses `gmsg_` / `GMSG_` to avoid GNU MP (`gmp_`, `GMP_`). Consider whether the C++ runtime should match: `namespace gmp` and `GMP_ASSERT` don't clash with GNU MP today (its C++ wrapper `gmpxx.h` has no `gmp` namespace), but the names are confusable and a future `GMP_*` macro could clash. Would touch the runtime, generated code, goldens, docs, Studio text and the skill. Ask the user. |
+| MicroPython (separate option) | Decided with the user: add a MicroPython variant separately later, without limiting the CPython API. Memory note `python-backend-todo`. |
+| Python follow-ups (suggested) | A Python example program run as a test, type stubs / `py.typed`, publishing the `gmsg` wheel (abi3) and an sdist that carries the C runtime headers, faster binary messages (see known issues). |
 | JS follow-ups (suggested, not requested yet) | A JS example program (`examples/*/main.js`, run as a test like the C examples), TypeScript declarations (`.d.ts`) for gmsg.js and generated modules (possibly a gmpc output), an npm package layout for the runtime (package.json, ES module entry besides UMD). Memory note `studio-js-runtime-todo`. |
 
 Each planned task has a detailed note (with open questions to ask the user) in the Claude memory directory for this
 project.
 
 ## 8. Session history
+
+### 2026-11-23 (Python support: runtime, `gmpc --lang python`, accelerator)
+- Decisions (user): options A (generator backend + pure-Python runtime) and C (optional accelerator from runtime-c)
+  with the same API; Python 3.12+; generated messages are dataclasses; accelerator on the CPython limited API (abi3);
+  MicroPython later as a separate option that must not limit this API.
+- Runtime `runtime-py/gmsg`: a port of gmsg.js / the C++ runtime (see the inventory). `tests/runtime_py/test_runtime.py`
+  runs the `js_vectors` reference vectors (80k checks) and unit checks.
+- Backend `generator/src/backend/py/` mirrors the JS backend check for check; goldens `tests/generator/golden/python/`;
+  diagnostics test (missing `python:` entries, reserved names, module options). `python:` blocks added to
+  custom.yaml / hdlc.yaml (no change to other goldens). Generated code is cross-checked against generated C++ with the
+  `js_crossref` JSON (66 suites, 84k checks) and `test_api.py` covers what that does not reach.
+- Accelerator `runtime-py/native/_native.c`: built by CMake (MinGW, against emsdk 3.13 `python3.lib`) and by pip
+  (MSVC, `/std:c11` needed); the same binary passes everything on 3.12 and 3.13. Lesson: with the 3.13 headers and
+  `Py_LIMITED_API=3.12`, the `s#` PyArg format fails on 3.12 (SystemError PY_SSIZE_T_CLEAN); strings go through
+  `PyUnicode_AsUTF8AndSize`. Setuptools' `optional=True` hides build failures (the first wheel had no .pyd).
+- Planted bugs: 6 in the runtime (one survivor was a no-op mutant), 9 in the backend; the 4 the cross-check missed
+  (fixed-size encode check, f32 computed, `&&`, text extra tokens) are caught after `test_api.py`.
+- Studio: Code tab Python, `python:` binding sections + tips + validation, Guide language switch with Python
+  (samples, `streamingPy`, `generatedPy`, `API_PY`); gmpc.js rebuilt; UI and Guide tests extended.
+- Docs: README ("Python output", custom `python:` blocks, recovery / extra-data rows, building, CMake, gmpc, layout),
+  docs/schema.md, runtime-py/README.md, SKILL.md + references.
+- End state: 276 ctest pass, Studio 736 checks pass, Release build compiles. Not committed.
 
 ### 2026-11-22 (bad length handling: idle recovery, data after the message, length check by type)
 - Decisions (user): do the per-type size check, the idle flush (app-given idle time) and an exact-size check; header

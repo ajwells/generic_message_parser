@@ -156,6 +156,8 @@
   const cl = (c) => (c.lang && c.lang.c) || {};
   /** The JavaScript binding (`js:` block) of a custom item; empty until edited. */
   const jl = (c) => (c.lang && c.lang.js) || {};
+  /** The Python binding (`python:` block) of a custom item; empty until edited. */
+  const pl = (c) => (c.lang && c.lang.python) || {};
 
   function customEditor(s, uid) {
     let i = s.customTypes.findIndex((c) => c.uid === uid);
@@ -188,7 +190,14 @@
           ${field('Encode function', input(`${b}.lang.js.encode`, jl(c).encode, { placeholder: 'encodeTime', mono: true }))}
           ${field('Print function', input(`${b}.lang.js.print`, jl(c).print, { placeholder: 'optional', mono: true }), 'else numbers / strings print as such', 'span-2')}
         </div>
-        <p class="callout" style="margin:12px 0 0">Only needed for <code>gmpc --lang js</code>; written as a <code>js:</code> block. The functions are exports of the module and throw <code>gmsg.GmpError</code> on bad input.<br>Binary: <code>decode(reader) → value</code>, <code>encode(writer, value)</code>. Text: <code>decode(string) → value</code>, <code>encode(textWriter, value)</code>. Print: <code>print(printer, value)</code>.</p>`);
+        <p class="callout" style="margin:12px 0 0">Only needed for <code>gmpc --lang js</code>; written as a <code>js:</code> block. The functions are exports of the module and throw <code>gmsg.GmpError</code> on bad input.<br>Binary: <code>decode(reader) → value</code>, <code>encode(writer, value)</code>. Text: <code>decode(string) → value</code>, <code>encode(textWriter, value)</code>. Print: <code>print(printer, value)</code>.</p>`) +
+        section('Python binding', `<div class="grid">
+          ${field('Module', input(`${b}.lang.python.module`, pl(c).module, { placeholder: 'my_codecs', mono: true }), 'imported; .name: relative', 'span-2')}
+          ${field('Decode function', input(`${b}.lang.python.decode`, pl(c).decode, { placeholder: 'decode_time', mono: true }))}
+          ${field('Encode function', input(`${b}.lang.python.encode`, pl(c).encode, { placeholder: 'encode_time', mono: true }))}
+          ${field('Print function', input(`${b}.lang.python.print`, pl(c).print, { placeholder: 'optional', mono: true }), 'else numbers / strings print as such', 'span-2')}
+        </div>
+        <p class="callout" style="margin:12px 0 0">Only needed for <code>gmpc --lang python</code>; written as a <code>python:</code> block. The functions raise <code>gmsg.GmpError</code> (<code>gmsg.fail(Err.X)</code>) on bad input.<br>Binary: <code>decode(reader) -&gt; value</code>, <code>encode(writer, value)</code>. Text: <code>decode(token: str) -&gt; value</code>, <code>encode(text_writer, value)</code>. Print: <code>print(printer, value)</code>.</p>`);
     }
     i = s.customChecksums.findIndex((c) => c.uid === uid);
     if (i >= 0) {
@@ -207,6 +216,10 @@
         section('JavaScript binding', `<div class="grid">
           ${field('Module', input(`${b}.lang.js.module`, jl(c).module, { placeholder: './my_codecs.js', mono: true }))}
           ${field('Function', input(`${b}.lang.js.function`, jl(c).function, { placeholder: 'myCrc', mono: true }), 'fn(Uint8Array) → number | BigInt')}
+        </div>`) +
+        section('Python binding', `<div class="grid">
+          ${field('Module', input(`${b}.lang.python.module`, pl(c).module, { placeholder: 'my_codecs', mono: true }))}
+          ${field('Function', input(`${b}.lang.python.function`, pl(c).function, { placeholder: 'my_crc', mono: true }), 'fn(bytes) -> int')}
         </div>`);
     }
     i = s.customFramers.findIndex((c) => c.uid === uid);
@@ -225,6 +238,10 @@
         section('JavaScript binding', `<div class="grid">
           ${field('Module', input(`${b}.lang.js.module`, jl(c).module, { placeholder: './my_codecs.js', mono: true }))}
           ${field('Scan function', input(`${b}.lang.js.scan`, jl(c).scan, { placeholder: 'myScan', mono: true }), 'fn(Uint8Array) → gmsg.FrameScan.*')}
+        </div>`) +
+        section('Python binding', `<div class="grid">
+          ${field('Module', input(`${b}.lang.python.module`, pl(c).module, { placeholder: 'my_codecs', mono: true }))}
+          ${field('Scan function', input(`${b}.lang.python.scan`, pl(c).scan, { placeholder: 'my_scan', mono: true }), 'fn(bytes) -> gmsg.FrameScan.*')}
         </div>`);
     }
     return '';

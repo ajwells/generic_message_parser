@@ -1,0 +1,48 @@
+# Python API test schema (tests/roundtrip_py/test_api.py): names that are Python keywords or enum members, logical
+# conditions, an f32 computed value, fixed-size containers, text extra tokens and a protocol with a header.
+schema_version: 1
+namespace: test::pyapi
+defaults: { endian: little }
+
+enums:
+  Kind: { type: u8, strict: true, values: { None: 0, class: 1, name: 2 } }
+  Loose: { type: u8, values: { a: 1, b: 2 } }
+
+messages:
+  Flags:
+    type_id: 1
+    fields:
+      - { name: a, type: u8 }
+      - { name: b, type: u8 }
+      - { name: both, type: u16, when: "a > 0 && b > 0" }
+      - { name: either, type: u16, when: "a == 1 || !(b < 5)" }
+      - { name: kind, type: Kind }
+      - { name: loose, type: Loose }
+      - { name: from, type: u8 }
+      - { name: blob, type: bytes, length: 3 }
+      - { name: pair, type: array, of: u16, count: 2 }
+      - { name: wide, type: u32 }
+      - { name: tail, type: array, of: u8, count: remaining, max: 3 }
+    computed:
+      wide_f32: { type: f32, value: "wide" }
+  Rec:
+    format: text
+    separator: ","
+    fields:
+      - { name: x, type: i16 }
+      - { name: label, type: string, max: 8 }
+
+protocols:
+  Link:
+    header:
+      - { name: id, type: u8 }
+      - { name: seq, type: u8 }
+      - { name: len, type: u8 }
+    framing:
+      type: length_prefixed
+      sync: [0xA5]
+      length: { field: len, covers: body }
+      max_frame: 64
+    checksum: { algo: crc16_ccitt }
+    message_type: { field: id }
+    messages: [Flags]

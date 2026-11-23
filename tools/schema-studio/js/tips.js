@@ -75,6 +75,14 @@
     'customChecksum.lang.js.function': { t: 'JavaScript function', k: 'js.function', d: 'Export of the module: fn(bytes: Uint8Array) returning the checksum of the covered bytes as a Number or BigInt.' },
     'customFramer.lang.js.module': { t: 'JavaScript module', k: 'js.module', d: 'Module id the generated JavaScript requires for the scan function (JavaScript output only).' },
     'customFramer.lang.js.scan': { t: 'JavaScript scan function', k: 'js.scan', d: 'Export of the module: scan(bytes: Uint8Array) returning gmsg.FrameScan.needMore(hint), .frame(size, consume, consumeOnError) or .skip(n, error).' },
+    'customType.lang.python.module': { t: 'Python module', k: 'python.module', d: 'Module the generated Python imports for the functions below, e.g. my_codecs (Python output only: gmpc --lang python). A name starting with . is imported relative to the generated module\'s package.' },
+    'customType.lang.python.decode': { t: 'Python decode function', k: 'python.decode', d: 'Function of the module: decode(reader) for binary (a gmsg.Reader positioned at the value) or decode(token: str) for text; returns the value and raises gmsg.GmpError on bad input.' },
+    'customType.lang.python.encode': { t: 'Python encode function', k: 'python.encode', d: 'Function of the module: encode(writer, value) writes the value with a gmsg.Writer (binary) or gmsg.text.TextWriter (text). Needed when structs are generated.' },
+    'customType.lang.python.print': { t: 'Python print function', k: 'python.print', d: 'Optional: print(printer, value) for str() / to_text(); write with printer.raw_text(s). Without it numbers and strings print as such, other values as <?>.' },
+    'customChecksum.lang.python.module': { t: 'Python module', k: 'python.module', d: 'Module the generated Python imports for the checksum function (Python output only).' },
+    'customChecksum.lang.python.function': { t: 'Python function', k: 'python.function', d: 'Function of the module: fn(covered: bytes-like) returning the checksum of the covered bytes as an int.' },
+    'customFramer.lang.python.module': { t: 'Python module', k: 'python.module', d: 'Module the generated Python imports for the scan function (Python output only).' },
+    'customFramer.lang.python.scan': { t: 'Python scan function', k: 'python.scan', d: 'Function of the module: scan(buf: bytes-like) returning gmsg.FrameScan.need_more(hint), .frame(size, consume, consume_on_error) or .skip(n, error).' },
     'customFramer.lang.c.scan': { t: 'C scan function', k: 'c.scan', d: 'gmsg_frame_scan fn(const uint8_t* data, size_t size): says where the next frame starts and ends (gmsg_scan_frame / _need_more / _skip).' },
 
     // ---------------------------------------------------------------- messages

@@ -2,6 +2,11 @@ cmake-build-*/
 build/
 build-*/
 .idea/workspace.xml
+__pycache__/
+runtime-py/**/*.pyd
+runtime-py/**/*.so
+runtime-py/build/
+runtime-py/*.egg-info/
 
 # GMP skill eval results (skill-creator workspace)
 skills/gmp-workspace/

@@ -234,7 +234,9 @@ parser.flush(handler);                          // drop everything buffered
   Errors go to `handler` (`resync(handler)`, `flush(handler)`, `tick(now, handler)`) or to the stored handler
   (`StreamWith`, `CallbackStream`). Counted in `stats().resyncs` / `stats().flushes`.
 - C: `<p>_stream_resync`, `_flush`, `_set_idle_timeout`, `_tick` (errors go to `cb.on_error`). JavaScript:
-  `stream.resync()`, `flush()`, `setIdleTimeout(t)`, `tick(now)` (errors go to the `'error'` listeners).
+  `stream.resync()`, `flush()`, `setIdleTimeout(t)`, `tick(now)` (errors go to the `'error'` listeners). Python:
+  `stream.resync()`, `flush()`, `set_idle_timeout(t)`, `tick(now)` (e.g. `time.monotonic()`; errors go to the `'error'`
+  listeners).
 
 ### Data after the message
 
@@ -250,6 +252,7 @@ receivers do not know. It is reported everywhere:
 | protocol | `gmp::extra_of(any_view)`; `Received::extra` (`poll_frame`); `stats().frames_with_extra` |
 | C | `<m>_view_extra_bytes(&v)` / `_view_extra_tokens(&v)`, `<m>_decode_extra(data, size, &out, &extra)`, `received.extra`, `stats.frames_with_extra` |
 | JavaScript | `view.extraBytes` / `extraTokens`, `M.decodeWithExtra(bytes)` → `{ message, extra }`, `frame.extra` (pollFrame / pollEvent), `stats.framesWithExtra` |
+| Python | `view.extra_bytes` / `extra_tokens`, `M.decode_with_extra(data)` → `(message, extra)`, `gmsg.extra_of(view)`, `frame.extra` (poll_frame / poll_event), `stats.frames_with_extra` |
 
 With `exact_size: true` on the protocol, such a frame fails with `BadLength` instead. This catches a corrupted length
 that would otherwise swallow the start of the next frame (a protocol without a checksum over the length), and it
@@ -572,6 +575,75 @@ generator sources).
 
 ---
 
+## Python output
+
+`gmpc --lang python` (or `gmp_generate(... LANG python)`) writes one module per schema, `<schema>_gmp.py`, for Python
+3.12 and later. It imports the runtime package [`gmsg`](runtime-py) (`runtime-py/gmsg`, pure Python, no dependencies):
+install it with `pip install ./runtime-py`, or put `runtime-py` on `sys.path` / `PYTHONPATH`. `--opt runtime=pkg.gmsg`
+imports a vendored copy instead.
+
+```python
+import gmsg
+import telemetry_gmp as tm
+
+s = tm.Status(voltage=12600, samples=[10, -20, 30])   # a dataclass; count is filled in on encode
+s.voltage_scaled = 12.6                       # scale / conversions / computed values are properties
+frame = tm.BinaryLink.encode(s)               # bytes: sync, header, body, CRC
+
+stream = tm.BinaryLink.stream()               # gmsg.StreamParser, buffer of max_frame bytes
+stream.on(tm.Status, lambda view, header: print(view))       # same text as gmp::print
+stream.on('error', lambda e: log.warning('%s %s', e, e.data))  # gmsg.GmpError
+stream.feed(chunk)                            # any chunk size; or push() + poll() / poll_event() / messages()
+for msg in tm.BinaryLink.stream().messages(data): ...
+
+v = tm.StatusView.from_bytes(data)           # zero-copy view over a memoryview: fields are properties
+v.voltage_scaled, v.ranges()                 # ranges(): where each field is in the bytes
+m = tm.Status.decode(data)                   # raises gmsg.GmpError; e.code is a gmsg.Err
+```
+
+The generated code covers everything the other backends generate, written the way Python code usually is:
+
+| | C++ | Python |
+|-|-----|--------|
+| errors | `gmp::Result<T>` | raised `gmsg.GmpError` (`e.code` is a `gmsg.Err` IntEnum, `Err.BAD_CHECKSUM`; `str(e)` the same text) |
+| integers, floats | `std::uint16_t`, `float`, ... | `int` (any width, checked against the wire type on encode), `float` (`f32` values rounded with `gmsg.to_f32`) |
+| bool, char | `bool`, `char` | `bool`, one-character `str` |
+| bytes, strings | `static_vector`, `static_string` (capacity `max`) | `bytes`, `str` with one character per byte (latin-1); more than `max` raises `OutOfRange` on encode |
+| conditional / optional fields | `std::optional` | `None` when absent |
+| struct | `struct M` with `decode` / `encode` | `@dataclass(slots=True) class M`: `M.decode(data)`, `m.encode()`, `M.decode_with_extra(data)`, equality and `repr` from dataclasses |
+| view | `MView::from(bytes)`, accessor functions | `MView.from_bytes(data)` (text: `MView.from_text(s)`), properties over a `memoryview`; `ranges()`; `to_struct()` |
+| enums | `enum class`, `to_string`, `is_known` | `gmsg.GmpEnum` (an `IntEnum`): fields hold the member (`Mode.run`), or the plain int for undeclared values of non-strict enums; `Mode.name_of(v)`, `Mode.is_known(v)`. Names that are Python keywords get a `_` (`Kind.None_`), as do members named like a keyword or a generated method (`from_`) |
+| encode | into your buffer | returns `bytes` |
+| stream callbacks | `Callbacks` / `CallbackStream` | `stream.on('Status' \| tm.Status \| 'frame' \| 'error', fn)` (returns a function that removes it) |
+| pull API | `poll()`, `poll_frame()`, `poll_message()`, `poll_event()`, `poll_for<V>()` | the same names; iterators `messages(data)` / `events(data)`. Frames handed to views are copies, so views never expire |
+| printing | `gmp::print(v, sink, opts)` | `str(v)` / `v.to_text(style='single_line', ...)` / `gmsg.to_text(v, **opts)` |
+
+**Accelerator.** `runtime-py` includes an optional C extension, `gmsg._native`, built from the C runtime with the
+CPython limited API (one abi3 binary for CPython 3.12+). `pip install ./runtime-py` builds it when a C compiler is
+available and silently installs the pure-Python package otherwise (`GMSG_PURE_INSTALL=1` skips it). It is used
+automatically; `gmsg.NATIVE` tells whether it is, `gmsg.use_native(False)` or `GMSG_PURE=1` turns it off. The API and
+every result are the same either way. It takes over checksums, escaping, frame scanning, number parsing and float
+text; message fields stay Python code. Measured with CPython 3.13 (x86-64, Windows):
+
+| | pure Python | accelerator |
+|-|-------------|-------------|
+| CRC-32 of 1 MiB | 65 ms | 1.4 ms |
+| NMEA GGA decode into a dataclass (frame, checksum, 10 fields) | 41 µs | 16 µs |
+| NMEA stream, per frame | 12 µs | 6 µs |
+| HDLC stream (escaping, CRC-16), per frame | 9.5 µs | 7 µs |
+| binary encode + decode with framing (telemetry `Status`) | 32 µs | 28 µs |
+
+Consecutive plain scalar fields are read and written with one precompiled `struct.Struct`.
+
+The runtime is tested against the C++ runtime on the same random vectors as the JavaScript runtime, and the generated
+Python for every test schema is compared with the generated C++ (errors, print text, re-encoded bytes, stream events and
+statistics), each with and without the accelerator. Known differences: signalling `f32` NaNs become quiet NaNs (as in
+JavaScript), and a rejected frame of a byte-stuffed protocol is reported exactly as received (as in JavaScript).
+
+A MicroPython variant is a separate, later option; it does not constrain this API.
+
+---
+
 ## Building
 
 Requires CMake ≥ 3.25 and a C++23 compiler with `<expected>` (GCC 13+, Clang 17+, MSVC 19.36+). The generator pulls in
@@ -591,7 +663,9 @@ ctest --test-dir build
 | `GMP_BUILD_BENCH` | `OFF` | Throughput benchmark `gmp_bench` (build in Release). |
 
 The JavaScript tests run under Node.js, found on `PATH` or in an emsdk install (`EMSDK`, or `~/emsdk`); without Node
-they are not registered.
+they are not registered. The Python tests need Python 3.12+ (`GMP_PYTHON`, else `python3` / `python` on `PATH`, a
+portable copy in `~/tools/python3*` or emsdk's): each runs pure Python and, when that Python has its headers (and on
+Windows `libs/python3.lib`), again with the accelerator built by CMake (`<build>/py/gmsg`).
 
 ## CMake integration
 
@@ -599,7 +673,7 @@ they are not registered.
 gmp_generate(TARGET <name>
              SCHEMAS <file.yaml>...
              [OUT_DIR <dir>]          # default ${CMAKE_CURRENT_BINARY_DIR}/gmp_generated/<name>
-             [LANG <backend>]         # default cpp; c; js
+             [LANG <backend>]         # default cpp; c; js; python
              [C_RUNTIME header|library]  # LANG c: gmp::runtime_c (default) or gmp::runtime_c_lib
              [GENERATOR <path>])      # default: the in-tree gmpc target
 ```
@@ -610,7 +684,9 @@ This creates a library `<name>` (INTERFACE for C++; STATIC for `LANG c`, built f
 - a build dependency that regenerates whenever a schema or `gmpc` changes
 
 With `LANG js` it is a custom target instead: the `.gmp.js` modules and a copy of `runtime-js/gmsg.js` in `OUT_DIR`
-(target property `GMP_GENERATED_DIR`), regenerated when a schema or `gmpc` changes.
+(target property `GMP_GENERATED_DIR`), regenerated when a schema or `gmpc` changes. `LANG python` is a custom target
+too: the `<schema>_gmp.py` modules in `OUT_DIR` (`GMP_GENERATED_DIR`); the runtime package is in `runtime-py`
+(`GMP_RUNTIME_DIR`).
 
 If your custom codec headers live elsewhere, add their directory with
 `target_include_directories(<name> INTERFACE ...)`.
@@ -619,12 +695,13 @@ If your custom codec headers live elsewhere, add their directory with
 
 ```
 gmpc [options] schema.yaml...
-  --lang NAME        output language backend: cpp (default), c (C99 or later, see C output) or js (JavaScript)
+  --lang NAME        output language backend: cpp (default), c (C99 or later, see C output), js (JavaScript)
+                     or python (Python 3.12+)
   --out DIR          output directory (default: current directory)
   --check            validate schemas only, write nothing
   --stdout           print generated code instead of writing files
   --opt KEY=VALUE    backend specific option (c: prefix=NAME_ sets the C name prefix;
-                     js: runtime=MODULE_ID, global=NAME)
+                     js: runtime=MODULE_ID, global=NAME; python: runtime=MODULE)
   --list-backends    list available backends
   -h, --help         show help
 ```

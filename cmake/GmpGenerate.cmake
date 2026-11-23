@@ -13,6 +13,8 @@
 # languages that also emit source files get a STATIC library built from them.
 # LANG js writes <schema-stem>.gmp.js modules and copies the runtime (runtime-js/gmsg.js) next to them, so
 # require('./gmsg.js') resolves; <name> is then a custom target (property GMP_GENERATED_DIR: the output directory).
+# LANG python writes <schema-stem>_gmp.py modules that import the runtime package gmsg (runtime-py; put it on
+# sys.path / PYTHONPATH or install it); <name> is a custom target with properties GMP_GENERATED_DIR and GMP_RUNTIME_DIR.
 
 set(_GMP_SOURCE_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
 
@@ -35,8 +37,13 @@ function(_gmp_language_layout lang)
         set(headers "")
         set(sources ".gmp.js")
         set(runtime "")
+    elseif (lang STREQUAL "python")
+        # Python modules <stem>_gmp.py using the runtime package gmsg (runtime-py); nothing to compile
+        set(headers "")
+        set(sources "_gmp.py")
+        set(runtime "")
     else ()
-        message(FATAL_ERROR "gmp_generate: unsupported LANG '${lang}' (known: cpp, c, js)")
+        message(FATAL_ERROR "gmp_generate: unsupported LANG '${lang}' (known: cpp, c, js, python)")
     endif ()
     set(_GMP_HEADERS "${headers}" PARENT_SCOPE)
     set(_GMP_SOURCES "${sources}" PARENT_SCOPE)
@@ -112,6 +119,13 @@ function(gmp_generate)
         add_custom_target(${GMP_TARGET} ALL DEPENDS ${sources} "${GMP_OUT_DIR}/gmsg.js")
         set_property(TARGET ${GMP_TARGET} PROPERTY GMP_GENERATED_SOURCES "${sources}")
         set_property(TARGET ${GMP_TARGET} PROPERTY GMP_GENERATED_DIR "${GMP_OUT_DIR}")
+        return()
+    endif ()
+    if (GMP_LANG STREQUAL "python")
+        add_custom_target(${GMP_TARGET} ALL DEPENDS ${sources})
+        set_property(TARGET ${GMP_TARGET} PROPERTY GMP_GENERATED_SOURCES "${sources}")
+        set_property(TARGET ${GMP_TARGET} PROPERTY GMP_GENERATED_DIR "${GMP_OUT_DIR}")
+        set_property(TARGET ${GMP_TARGET} PROPERTY GMP_RUNTIME_DIR "${_GMP_SOURCE_ROOT}/runtime-py")
         return()
     endif ()
 

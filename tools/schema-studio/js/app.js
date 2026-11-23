@@ -41,7 +41,7 @@
   }
 
   // ---- code tab: what gmpc generates for the current schema (gmpc compiled to WebAssembly) ------------------
-  const CODE_LANGS = [['cpp', 'C++'], ['c', 'C'], ['js', 'JavaScript']];
+  const CODE_LANGS = [['cpp', 'C++'], ['c', 'C'], ['js', 'JavaScript'], ['python', 'Python']];
   const schemaStem = () => (state.schema.namespace || 'schema').split('::').pop() || 'schema';
   function codeFiles() {
     return G.exact.generate(G.toYaml(state), ui.codeLang || 'cpp', schemaStem() + '.yaml');
