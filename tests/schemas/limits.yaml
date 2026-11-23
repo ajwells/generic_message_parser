@@ -1,0 +1,39 @@
+# Value limits in every position a value can be decoded from (and on encode): min_value / max_value compare the
+# scaled value (raw * scale + offset; the raw value when there is neither), min_raw / max_raw the raw wire value.
+schema_version: 1
+namespace: test::limits
+defaults: { endian: big }
+
+messages:
+  Inner:
+    fields:
+      - { name: pct, type: u8, max_value: 100 }                           # no scale: compares the raw value
+  Sample:
+    fields:
+      - { name: humidity, type: u16, scale: 0.0019073486328125, offset: -6, min_value: 0, max_value: 100, unit: "%RH" }
+      - { name: temp, type: i16, scale: 0.1, min_raw: -400, max_raw: 1250, min_value: -30.5 }  # raw and scaled limits
+      - { name: big, type: u64, min_raw: 0x8000000000000000, max_raw: 0xFFFFFFFFFFFFFFFE }  # exact 64-bit compares
+      - { name: neg, type: i64, max_raw: -1 }
+      - { name: ratio, type: f32, min_value: -1.5, max_value: 1.5 }        # NaN fails
+      - { name: wide, type: f64, max_raw: 1e300 }
+      - name: flags
+        type: bits
+        fields:
+          - { name: level, bits: 3, max_raw: 5 }
+          - { name: trim, bits: 5, type: i8, min_raw: -10 }                 # signed bit field
+          - { name: gain, bits: 8, scale: 0.5, max_value: 100 }
+      - { name: levels, type: array, of: { type: u16, min_raw: 10, max_raw: 1000 }, count: 2 }  # fixed count
+      - { name: inner, type: Inner }                                        # nested message
+      - { name: n, type: u8, max_raw: 3 }                                   # derived from `more` on encode
+      - { name: more, type: array, of: { type: i8, min_value: -50 }, count: "n", max: 4 }
+      - { name: opt, type: u8, when: "n > 1", min_raw: 2 }                  # conditional
+  Tail:
+    fields:
+      - { name: rest, type: array, of: { type: u16, max_value: 500 }, count: remaining, max: 8 }
+  Line:
+    format: text
+    fields:
+      - { name: speed, type: f64, min_value: 0, max_value: 99.5 }
+      - { name: count, type: u16, max_raw: 999 }
+      - { name: opt, type: i32, optional: true, min_raw: -5 }
+      - { name: level, type: u16, scale: 0.1, max_value: 50 }

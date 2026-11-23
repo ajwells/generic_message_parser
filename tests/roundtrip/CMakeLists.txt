@@ -9,6 +9,7 @@ gmp_generate(TARGET gmp_test_schemas
         ${SCHEMA_DIR}/custom.yaml
         ${SCHEMA_DIR}/fieldcrc.yaml
         ${SCHEMA_DIR}/enums.yaml
+        ${SCHEMA_DIR}/limits.yaml
         ${SCHEMA_DIR}/computed.yaml
         ${SCHEMA_DIR}/stuffed.yaml
         ${SCHEMA_DIR}/framing.yaml
@@ -25,6 +26,7 @@ gmp_add_test(gmp_roundtrip_tests
         test_custom.cpp
         test_fieldcrc.cpp
         test_enums.cpp
+        test_limits.cpp
         test_computed.cpp
         test_sht4x.cpp
         test_stuffed.cpp

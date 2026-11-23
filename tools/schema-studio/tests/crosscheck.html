@@ -59,6 +59,18 @@
     });
   });
 
+  // ---- which inputs decode (value limits): the decoder reports errors exactly when C++ fails ------------
+  const outcomeCheck = (decode) => (c) => {
+    const s = state(c.schema);
+    const m = s.messages.find((x) => 'message:' + x.name === c.target);
+    const fr = decode(s, m, bytes(c.hex)).items.find((x) => x.type === 'frame');
+    const errs = fr ? fr.errors : ['no frame'];
+    T.eq(errs.length === 0, c.error === 0, `decodes (C++ error ${c.error}; decoder: ${errs.join('; ') || 'none'})`);
+  };
+  (data.crossref.outcomes || []).forEach((c, i) => {
+    T.test(`outcome ${c.schema} ${c.target} #${i}`, () => { needYaml(); outcomeCheck(D.decodeMessage)(c); });
+  });
+
   // ---- noisy streams: the same valid frames, in order, with the same values --------------------------
   data.crossref.streams.forEach((c, i) => {
     T.test(`stream ${c.schema} ${c.target} #${i}`, () => {
@@ -102,6 +114,9 @@
       T.eq(G.printer.frame(s, fr, 'multi'), c.multi, 'multi-line print');
       T.eq(G.printer.frame(s, fr, 'single'), c.single, 'single-line print');
     });
+  });
+  (data.crossref.outcomes || []).forEach((c, i) => {
+    T.test(`gmpc engine: outcome ${c.schema} ${c.target} #${i}`, () => { needExact(); outcomeCheck(G.exact.decodeMessage)(c); });
   });
   data.crossref.streams.forEach((c, i) => {
     T.test(`gmpc engine: stream ${c.schema} ${c.target} #${i}`, () => {

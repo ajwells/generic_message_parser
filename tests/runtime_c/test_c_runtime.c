@@ -30,7 +30,7 @@ static void test_config(void) {
 
 static void test_error(void) {
     CHECK(GMSG_OK == 0);
-    CHECK(GMSG_ERR_UNKNOWN_ENUM == GMSG_ERROR_COUNT - 1);
+    CHECK(GMSG_ERR_VALUE_OUT_OF_LIMITS == GMSG_ERROR_COUNT - 1);
     CHECK(gmsg_memcmp(gmsg_error_str(GMSG_ERR_BAD_CHECKSUM), "bad checksum", 13) == 0);
     CHECK(gmsg_memcmp(gmsg_error_str((gmsg_error)99), "unknown", 8) == 0);
 }

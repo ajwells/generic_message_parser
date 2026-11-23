@@ -29,8 +29,18 @@ bool strict_enum(const Field& f) { return f.kind == FieldKind::Enum && f.enum_de
 
 bool bits_need_check(const Field& f) {
     for (const auto& b : f.bits)
-        if (b.const_value || (b.enum_def && b.enum_def->strict)) return true;
+        if (b.const_value || (b.enum_def && b.enum_def->strict) || !b.limit_checks.empty()) return true;
     return false;
+}
+
+/// Statement failing with VALUE_OUT_OF_LIMITS when `v` fails the limits (nothing when there are none).
+std::string limit_stmt(const Field& f, const std::string& v) {
+    if (f.limit_checks.empty()) return "";
+    return "if (" + limit_fail(f.limit_checks, v, f.prim, f.scale, f.offset_value) + ") " + fail("VALUE_OUT_OF_LIMITS");
+}
+std::string limit_stmt(const BitField& b, const std::string& v) {
+    if (b.limit_checks.empty()) return "";
+    return "if (" + limit_fail(b.limit_checks, v, b.prim, b.scale, b.offset_value) + ") " + fail("VALUE_OUT_OF_LIMITS");
 }
 
 struct ConvAccessor {
@@ -115,7 +125,7 @@ void emit_bits_type(Ctx& c, const Message& m, const Field& f) {
         }
     }
     h.close();
-    h.line("/* Validate constant and strict-enum bit fields of the raw group bytes. */");
+    h.line("/* Validate constant, strict-enum and limited bit fields of the raw group bytes. */");
     h.open("static inline gmsg_error " + name + "_check(const uint8_t* p) {");
     h.line("(void)p;");
     for (const auto& b : f.bits) {
@@ -125,6 +135,8 @@ void emit_bits_type(Ctx& c, const Message& m, const Field& f) {
         } else if (b.enum_def && b.enum_def->strict) {
             h.line("if (!" + enum_name(c, *b.enum_def) + "_is_known(" + get_bits_expr(c, b, "p", order) + ")) " +
                    fail("UNKNOWN_ENUM"));
+        } else if (!b.pad && !b.limit_checks.empty()) {
+            h.line(limit_stmt(b, get_bits_expr(c, b, "p", order)));
         }
     }
     h.line("return GMSG_OK;");
@@ -402,6 +414,7 @@ private:
                     else s_.line(try_("gmsg_read_" + prim_suffix(f.prim) + "(r, " + endian_expr(f.endian) + ", &" + v + ")"));
                 }
                 if (strict_enum(f)) s_.line("if (!" + enum_name(c_, *f.enum_def) + "_is_known(" + v + ")) " + fail("UNKNOWN_ENUM"));
+                if (!f.limit_checks.empty()) s_.line(limit_stmt(f, v));
                 if (f.const_value) s_.line("if (" + v + " != " + typed_literal(c_, f, *f.const_value) + ") " + fail("BAD_CONST"));
                 else if (!dst.empty()) s_.line(dst + " = " + (f.prim == Prim::Char ? "(char)" : "") + v + ";");
                 s_.close();
@@ -565,6 +578,7 @@ private:
                 } else if (strict_enum(f)) {
                     s_.line("if (!" + enum_name(c_, *f.enum_def) + "_is_known(" + val + ")) " + fail("UNKNOWN_ENUM"));
                 }
+                if (!f.limit_checks.empty()) s_.line(limit_stmt(f, val));
                 if (f.prim == Prim::Bool) s_.line(try_("gmsg_write_bool(w, " + val + ")"));
                 else if (f.prim == Prim::Char) s_.line(try_("gmsg_write_u8(w, " + endian_expr(f.endian) + ", (uint8_t)" + val + ")"));
                 else s_.line(try_("gmsg_write_" + prim_suffix(f.prim) + "(w, " + endian_expr(f.endian) + ", " + val + ")"));
@@ -580,6 +594,8 @@ private:
                     if (!b.pad && !b.const_value && b.enum_def && b.enum_def->strict)
                         s_.line("if (!" + enum_name(c_, *b.enum_def) + "_is_known(" + src + "." + ident(b.name) + ")) " +
                                 fail("UNKNOWN_ENUM"));
+                    else if (!b.pad && !b.const_value && !b.limit_checks.empty())
+                        s_.line(limit_stmt(b, src + "." + ident(b.name)));
                 s_.open("{");
                 s_.line("size_t at" + d + " = 0;");
                 s_.line(try_("gmsg_write_reserve(w, " + sz(f.bits_bytes) + ", &at" + d + ")"));
@@ -908,11 +924,13 @@ private:
         s_.close();
     }
 
+    /// Reject undeclared values (strict enum) or values outside the limits in `count` elements from pointer `p`.
     void enum_array_check(const Field& e, const std::string& p, const std::string& count) {
         const auto es = sz(prim_size(e.prim));
         s_.open("for (size_t k = 0; k < " + count + "; ++k) {");
-        s_.line("if (!" + enum_name(c_, *e.enum_def) + "_is_known(" + load_expr(c_, m_, e, p + " + k * " + es) + ")) " +
-                fail("UNKNOWN_ENUM"));
+        const auto load = load_expr(c_, m_, e, p + " + k * " + es);
+        if (strict_enum(e)) s_.line("if (!" + enum_name(c_, *e.enum_def) + "_is_known(" + load + ")) " + fail("UNKNOWN_ENUM"));
+        else s_.line(limit_stmt(e, load));
         s_.close();
     }
 
@@ -931,6 +949,7 @@ private:
                     s_.line("if (" + load_expr(c_, m_, f, p) + " != " + typed_literal(c_, f, *f.const_value) + ") " + fail("BAD_CONST"));
                 else if (strict_enum(f))
                     s_.line("if (!" + enum_name(c_, *f.enum_def) + "_is_known(" + load_expr(c_, m_, f, p) + ")) " + fail("UNKNOWN_ENUM"));
+                if (!f.limit_checks.empty()) s_.line(limit_stmt(f, load_expr(c_, m_, f, p)));
                 break;
             case FieldKind::Bits:
                 if (bits_need_check(f)) s_.line(try_(bits_name(c_, m_, f) + "_check(" + p + ")"));
@@ -950,7 +969,7 @@ private:
                     s_.line("if (" + load_expr(c_, m_, *f.elem, p + " + k * " + es) + " != " +
                             typed_literal(c_, *f.elem, *f.elem->const_value) + ") " + fail("BAD_CONST"));
                     s_.close();
-                } else if (strict_enum(*f.elem)) {
+                } else if (strict_enum(*f.elem) || !f.elem->limit_checks.empty()) {
                     enum_array_check(*f.elem, p, sz(f.len.fixed));
                 }
                 break;
@@ -1080,7 +1099,7 @@ private:
         if (f.len.kind == LenKind::Remaining) {
             if (es && !validate) {
                 s_.line("if ((size - pos) % " + sz(*es) + " != 0) " + fail("BAD_LENGTH"));
-                if (strict_enum(e)) enum_array_check(e, "data + pos", "(size - pos) / " + sz(*es));
+                if (strict_enum(e) || !e.limit_checks.empty()) enum_array_check(e, "data + pos", "(size - pos) / " + sz(*es));
                 s_.line("pos = size;");
             } else {
                 s_.open("while (pos < size) {");
@@ -1095,7 +1114,7 @@ private:
             s_.line("if (n < 0) " + fail("BAD_LENGTH"));
             if (es && !validate) {
                 s_.line("if ((uint64_t)n * " + sz(*es) + " > (uint64_t)(size - pos)) " + fail("TRUNCATED"));
-                if (strict_enum(e)) enum_array_check(e, "data + pos", "(size_t)n");
+                if (strict_enum(e) || !e.limit_checks.empty()) enum_array_check(e, "data + pos", "(size_t)n");
                 s_.line("pos += (size_t)n * " + sz(*es) + ";");
             } else {
                 s_.open("for (int64_t k = 0; k < n; ++k) {");

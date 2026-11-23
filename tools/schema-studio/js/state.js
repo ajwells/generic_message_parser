@@ -31,11 +31,14 @@ window.GMP = window.GMP || {};
     crc: '', crcParams: { width: '8', poly: '0x31', init: '0xFF', refin: false, refout: false, xorout: '0x00' },
     conversions: [],
     base: '', width: '', precision: '', doc: '', padSize: '1',
+    min_value: '', max_value: '', min_raw: '', max_raw: '',
+    ofLimits: { min_value: '', max_value: '', min_raw: '', max_raw: '' },  // array element limits
     bits: [],
     ...over,
   });
 
-  G.newBit = (over = {}) => ({ uid: G.uid(), name: '', bits: '1', type: '', const: '', scale: '', offset: '', pad: false, doc: '', ...over });
+  G.newBit = (over = {}) => ({ uid: G.uid(), name: '', bits: '1', type: '', const: '', scale: '', offset: '', pad: false, doc: '',
+    min_value: '', max_value: '', min_raw: '', max_raw: '', ...over });
   /** A computed value: `set` is '' (automatic setter when possible) or "field = expr; field = expr". */
   G.newComputed = (over = {}) => ({ uid: G.uid(), name: '', type: 'u32', value: '', set: '', unit: '', doc: '', ...over });
   /** Parse a computed setter list "a = value >> 8; b = value & 255" into [[field, expr], ...] (invalid parts skipped). */
@@ -271,6 +274,55 @@ window.GMP = window.GMP || {};
     return neg ? -n : n;
   };
   G.isIdent = (v) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(v || '');
+
+  // ----------------------------------------------------------------------------------------------
+  // value limits (min_value / max_value: scaled value; min_raw / max_raw: wire value), as lowering.cpp
+  // ----------------------------------------------------------------------------------------------
+  G.LIMIT_KEYS = ['min_value', 'max_value', 'min_raw', 'max_raw'];
+  G.hasLimits = (o) => !!o && G.LIMIT_KEYS.some((k) => String(o[k] ?? '').trim() !== '');
+  /** "100" / "-0x10" / "1.5e3" -> { integer, big (BigInt, integers), value (Number), text }; null when not a number. */
+  G.parseLimit = (text) => {
+    const t = String(text ?? '').trim();
+    if (!t) return null;
+    const m = /^([+-]?)(0x[0-9a-f]+|0b[01]+|\d+)$/i.exec(t);
+    if (m) {
+      const body = m[2].toLowerCase();
+      const mag = body.startsWith('0b') ? BigInt('0b' + body.slice(2)) : BigInt(body);
+      const big = m[1] === '-' ? -mag : mag;
+      return { integer: true, big, value: Number(big), text: t };
+    }
+    if (!/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(t)) return null;
+    const value = Number(t);
+    return Number.isFinite(value) ? { integer: false, value, text: t } : null;
+  };
+  /** Range of a raw integer of `width` bits as BigInts. */
+  G.intRange = (signed, width) => {
+    const w = BigInt(width);
+    return signed ? [-(1n << (w - 1n)), (1n << (w - 1n)) - 1n] : [0n, (1n << w) - 1n];
+  };
+  /**
+   * Why value `v` (BigInt for integer types, Number for floats) fails the limits of `o` (a field or bit field),
+   * or '' when it passes. `prim`: the value type (u8 .. f64); scale / offset from `o`. Same compares as the
+   * generated code: exact integers for raw (and unscaled) integer limits, doubles otherwise (NaN fails).
+   */
+  G.limitError = (o, prim, v) => {
+    if (!G.hasLimits(o)) return '';
+    const integer = G.INT_PRIMS.includes(prim);
+    const scaled = !!(String(o.scale ?? '').trim() || String(o.offset ?? '').trim());
+    const num = typeof v === 'bigint' ? Number(v) : typeof v === 'boolean' ? (v ? 1 : 0) : Number(v);
+    const sv = scaled ? num * parseFloat(o.scale || '1') + parseFloat(o.offset || '0') : num;
+    for (const key of G.LIMIT_KEYS) {
+      const l = G.parseLimit(o[key]);
+      if (!l) continue;
+      const raw = key.endsWith('_raw'), isMin = key.startsWith('min');
+      let fails;
+      if (!raw && scaled) fails = isMin ? !(sv >= l.value) : !(sv <= l.value);
+      else if (integer && l.integer) fails = isMin ? BigInt(v) < l.big : BigInt(v) > l.big;
+      else fails = isMin ? !(num >= l.value) : !(num <= l.value);
+      if (fails) return `${raw ? 'raw value' : 'value'} ${raw || !scaled ? String(v) : +sv.toPrecision(10)} is ${isMin ? 'below' : 'above'} ${key} ${l.text}`;
+    }
+    return '';
+  };
 
   /** "AA 55" / "0xAA,0x55" -> [170, 85] (null on syntax error). */
   G.parseHexBytes = (text) => {

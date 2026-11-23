@@ -109,6 +109,25 @@ std::string string_literal(const std::string& s) {
     return out + "'";
 }
 
+std::string limit_fail(const std::vector<LimitCheck>& checks, const std::string& v, Prim prim, std::optional<double> scale,
+                       std::optional<double> offset) {
+    std::string out;
+    for (const auto& c : checks) {
+        std::string t;
+        if (c.integer) {
+            const auto& l = c.limit;
+            const auto lit = (l.negative ? "-" : "") + std::to_string(l.magnitude) + (is_big(prim) ? "n" : "");
+            t = v + (c.is_min ? " < " : " > ") + lit;
+        } else {
+            std::string d = prim == Prim::F32 ? "Math.fround(" + v + ")" : prim == Prim::F64 ? v : "Number(" + v + ")";
+            if (c.scaled) d += " * " + double_literal(scale.value_or(1.0)) + " + " + double_literal(offset.value_or(0.0));
+            t = "!(" + d + (c.is_min ? " >= " : " <= ") + double_literal(c.limit.value) + ")";  // NaN fails
+        }
+        out += (out.empty() ? "" : " || ") + t;
+    }
+    return out;
+}
+
 std::string double_literal(double v) {
     std::ostringstream os;
     os << std::setprecision(17) << v;

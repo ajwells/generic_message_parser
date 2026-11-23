@@ -34,8 +34,18 @@ bool strict_enum(const Field& f) { return f.kind == FieldKind::Enum && f.enum_de
 /// A bits group whose raw bytes need `check()`: constant bit fields or strict enum bit fields.
 bool bits_need_check(const Field& f) {
     for (const auto& b : f.bits)
-        if (b.const_value || (b.enum_def && b.enum_def->strict)) return true;
+        if (b.const_value || (b.enum_def && b.enum_def->strict) || !b.limit_checks.empty()) return true;
     return false;
+}
+
+/// Statement failing with ValueOutOfLimits when `v` fails the field's limits (nothing when it has none).
+std::string limit_stmt(const Field& f, const std::string& v) {
+    if (f.limit_checks.empty()) return "";
+    return "if (" + limit_fail(f.limit_checks, v, f.prim, f.scale, f.offset_value) + ") " + fail("ValueOutOfLimits");
+}
+std::string limit_stmt(const BitField& b, const std::string& v) {
+    if (b.limit_checks.empty()) return "";
+    return "if (" + limit_fail(b.limit_checks, v, b.prim, b.scale, b.offset_value) + ") " + fail("ValueOutOfLimits");
 }
 
 /// Doc comment for a computed value: its doc, unit and defining expression.
@@ -145,6 +155,11 @@ void emit_bits_type(Ctx& c, const Message& m, const Field& f) {
         } else if (b.enum_def && b.enum_def->strict) {
             w.line("if (!is_known(gmp::get_bits<" + bitfield_type(b) + ">(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " +
                    order + "))) " + fail("UnknownEnum"));
+        } else if (!b.limit_checks.empty()) {
+            w.open("{");
+            w.line("const auto v = gmp::get_bits<" + bitfield_type(b) + ">(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " + order + ");");
+            w.line(limit_stmt(b, "v"));
+            w.close();
         }
     }
     w.line("return {};");
@@ -316,6 +331,7 @@ private:
                 }
                 const auto val = (f.crc ? "v" : "*v") + d;
                 if (strict_enum(f)) w_.line("if (!is_known(" + val + ")) " + fail("UnknownEnum"));
+                if (!f.limit_checks.empty()) w_.line(limit_stmt(f, val));
                 if (f.const_value) w_.line("if (" + val + " != " + typed_literal(f, *f.const_value) + ") " + fail("BadConst"));
                 else if (!dst.empty()) w_.line(dst + " = " + val + ";");
                 w_.close();
@@ -469,6 +485,7 @@ private:
                 } else if (strict_enum(f)) {
                     w_.line("if (!is_known(" + val + ")) " + fail("UnknownEnum"));
                 }
+                if (!f.limit_checks.empty()) w_.line(limit_stmt(f, val));
                 w_.line("if (auto e" + d + " = w.write<" + t + ">(" + val + ", " + endian_expr(f.endian) + "); !e" + d +
                         ") return e" + d + ";");
                 if (f.crc)
@@ -481,6 +498,8 @@ private:
                 for (const auto& b : f.bits)
                     if (!b.pad && !b.const_value && b.enum_def && b.enum_def->strict)
                         w_.line("if (!is_known(" + src + "." + ident(b.name) + ")) " + fail("UnknownEnum"));
+                    else if (!b.pad && !b.const_value && !b.limit_checks.empty())
+                        w_.line(limit_stmt(b, src + "." + ident(b.name)));
                 w_.open("{");
                 w_.line("auto at" + d + " = w.reserve(" + sz(f.bits_bytes) + ");");
                 w_.line("if (!at" + d + ") return gmp::fail(at" + d + ".error());");
@@ -665,6 +684,12 @@ private:
                 else if (strict_enum(f))
                     w_.line("if (!is_known(gmp::load<" + element_type(m_, f) + ">(" + p + ", " + endian_expr(f.endian) +
                             "))) " + fail("UnknownEnum"));
+                if (!f.limit_checks.empty()) {
+                    w_.open("{");
+                    w_.line("const auto v = gmp::load<" + element_type(m_, f) + ">(" + p + ", " + endian_expr(f.endian) + ");");
+                    w_.line(limit_stmt(f, "v"));
+                    w_.close();
+                }
                 break;
             case FieldKind::Bits:
                 if (bits_need_check(f))
@@ -690,7 +715,7 @@ private:
                             endian_expr(f.elem->endian) + ") != " + typed_literal(*f.elem, *f.elem->const_value) + ") " +
                             fail("BadConst"));
                     w_.close();
-                } else if (strict_enum(*f.elem)) {
+                } else if (strict_enum(*f.elem) || !f.elem->limit_checks.empty()) {
                     emit_enum_array_check(*f.elem, p, sz(f.len.fixed));
                 }
                 break;
@@ -698,12 +723,18 @@ private:
         }
     }
 
-    /// Reject undeclared values in `count` strict-enum elements starting at pointer expression `p`.
+    /// Reject undeclared values (strict enum) or values outside the limits in `count` elements starting at pointer
+    /// expression `p`.
     void emit_enum_array_check(const Field& e, const std::string& p, const std::string& count) {
         const auto es = sz(prim_size(e.prim));
         w_.open("for (std::size_t k = 0; k < " + count + "; ++k) {");
-        w_.line("if (!is_known(gmp::load<" + element_type(m_, e) + ">(" + p + " + k * " + es + ", " + endian_expr(e.endian) +
-                "))) " + fail("UnknownEnum"));
+        const auto load = "gmp::load<" + element_type(m_, e) + ">(" + p + " + k * " + es + ", " + endian_expr(e.endian) + ")";
+        if (strict_enum(e)) {
+            w_.line("if (!is_known(" + load + ")) " + fail("UnknownEnum"));
+        } else {
+            w_.line("const auto v = " + load + ";");
+            w_.line(limit_stmt(e, "v"));
+        }
         w_.close();
     }
 
@@ -829,7 +860,8 @@ private:
         if (f.len.kind == LenKind::Remaining) {
             if (es && !validate) {
                 w_.line("if ((data.size() - pos) % " + sz(*es) + " != 0) " + fail("BadLength"));
-                if (strict_enum(e)) emit_enum_array_check(e, "data.data() + pos", "(data.size() - pos) / " + sz(*es));
+                if (strict_enum(e) || !e.limit_checks.empty())
+                    emit_enum_array_check(e, "data.data() + pos", "(data.size() - pos) / " + sz(*es));
                 w_.line("pos = data.size();");
             } else {
                 w_.open("while (pos < data.size()) {");
@@ -844,7 +876,8 @@ private:
             w_.line("if (n < 0) " + fail("BadLength"));
             if (es && !validate) {
                 w_.line("if (static_cast<std::uint64_t>(n) * " + sz(*es) + " > data.size() - pos) " + fail("Truncated"));
-                if (strict_enum(e)) emit_enum_array_check(e, "data.data() + pos", "static_cast<std::size_t>(n)");
+                if (strict_enum(e) || !e.limit_checks.empty())
+                    emit_enum_array_check(e, "data.data() + pos", "static_cast<std::size_t>(n)");
                 w_.line("pos += static_cast<std::size_t>(n) * " + sz(*es) + ";");
             } else {
                 w_.open("for (std::int64_t k = 0; k < n; ++k) {");

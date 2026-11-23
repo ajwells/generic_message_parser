@@ -20,12 +20,14 @@
 // generated C++
 #include "custom.gmp.hpp"
 #include "enums.gmp.hpp"
+#include "limits.gmp.hpp"
 #include "fieldcrc.gmp.hpp"
 #include "nmea.gmp.hpp"
 #include "print_compare.hpp"
 // generated C
 #include "custom.gmp.h"
 #include "enums.gmp.h"
+#include "limits.gmp.h"
 #include "fieldcrc.gmp.h"
 #include "nmea.gmp.h"
 
@@ -231,6 +233,38 @@ TEST_CASE("generated C text messages match C++: NMEA TXT (strings, zero-padded i
             CHECK(a.text() == sv(nav_nmea_txt_view_text(&b)));
         },
         2);
+}
+
+TEST_CASE("generated C text messages match C++: value limits on tokens (struct, view accessors, encode)") {
+    cross_check<test::limits::Line, test::limits::LineView>(
+        {"99.5,999,-5,500", "0,0,,0", "50,5,7,12"},
+        CApi<test_limits_line>{test_limits_line_decode, test_limits_line_encode, test_limits_line_print},
+        CViewApi<test_limits_line_view>{test_limits_line_view_from, test_limits_line_view_print},
+        [](const test::limits::Line& a, const test_limits_line& b) {
+            CHECK(same(a.speed, b.speed));
+            CHECK(a.count == b.count);
+            REQUIRE(a.opt.has_value() == b.has_opt);
+            if (a.opt) CHECK(*a.opt == b.opt);
+            CHECK(a.level == b.level);
+        },
+        [](const test::limits::LineView& a, const test_limits_line_view& b) {
+            same_access(a.speed(), [&](double* o) { return test_limits_line_view_speed(&b, o); });
+            same_access(a.count(), [&](std::uint16_t* o) { return test_limits_line_view_count(&b, o); });
+            same_optional(a.opt(), test_limits_line_view_has_opt(&b), [&](std::int32_t* o) { return test_limits_line_view_opt(&b, o); });
+            same_access(a.level(), [&](std::uint16_t* o) { return test_limits_line_view_level(&b, o); });
+            same_access(a.level_scaled(), [&](double* o) { return test_limits_line_view_level_scaled(&b, o); });
+        },
+        5);
+    // encode: a value outside the limits fails in both languages
+    test::limits::Line a;
+    a.count = 1000;
+    test_limits_line b{};
+    b.count = 1000;
+    std::array<std::uint8_t, 64> buf{};
+    const auto n = a.encode(buf);
+    REQUIRE_FALSE(n);
+    CHECK(n.error() == gmp::Error::ValueOutOfLimits);
+    CHECK(static_cast<int>(test_limits_line_encode(&b, buf.data(), buf.size(), nullptr)) == code(n.error()));
 }
 
 TEST_CASE("generated C text messages match C++: strict enum tokens, conversions, custom text type") {

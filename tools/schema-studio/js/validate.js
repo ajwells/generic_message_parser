@@ -89,6 +89,45 @@
     return issues;
   };
 
+  /** Value limits of a field / bit field / element `o` with value type `prim` (`width` raw bits); mirrors
+   *  resolve_limits() in generator/src/ir/lowering.cpp. */
+  function checkLimits(o, prim, width, scaled, what, add, ft, where) {
+    const integer = G.INT_PRIMS.includes(prim);
+    const range = integer ? G.intRange(prim[0] === 'i', width) : null;
+    const lim = {};
+    for (const k of G.LIMIT_KEYS) {
+      const txt = String(o[k] ?? '').trim();
+      if (!txt) continue;
+      const l = G.parseLimit(txt);
+      if (!l) { add('error', ft, where, `${k} of ${what}: expected a number, got '${txt}'`); continue; }
+      lim[k] = l;
+      const raw = k.endsWith('_raw');
+      if (!integer || (!raw && scaled)) continue;
+      if (!l.integer) {
+        if (raw) add('error', ft, where, `${k} of ${what} must be an integer (the raw value is ${prim})`);
+      } else if (l.big < range[0] || l.big > range[1]) {
+        add('error', ft, where, `${k} ${txt} of ${what} is outside the range of the raw value (${range[0]}..${range[1]})`);
+      }
+    }
+    const less = (a, b) => (a.integer && b.integer ? a.big < b.big : a.value < b.value);
+    for (const [lo, hi] of [['min_value', 'max_value'], ['min_raw', 'max_raw']])
+      if (lim[lo] && lim[hi] && less(lim[hi], lim[lo])) add('error', ft, where, `${lo} ${lim[lo].text} of ${what} is greater than ${hi} ${lim[hi].text}`);
+  }
+
+  /** 'max' only sets the capacity of variable-length bytes / string / array data (mirrors check_max()). */
+  function checkMax(f, kind, text, ft, where, add) {
+    if (!String(f.max || '').trim()) return;
+    const container = ['bytes', 'string', 'array'].includes(kind);
+    if (container && (text || f.lenMode !== 'fixed')) return;
+    if (container) {
+      if (G.parseInt(f.max) !== G.parseInt(f.lenValue))
+        add('error', ft, where, `fixed ${kind === 'array' ? 'count' : 'size'} ${f.lenValue}: 'max: ${f.max}' does not match it ('max' is the capacity of variable-length fields; clear it)`);
+      return;
+    }
+    add('error', ft, where, "'max' is not a value limit: it only sets the capacity of variable-length bytes, string and array fields." +
+      (['int', 'float'].includes(kind) ? ' Use min_value / max_value to limit the value (or min_raw / max_raw for the raw wire value)' : ' Clear it'));
+  }
+
   function checkFields(s, m, target, add) {
     const text = !m.isHeader && G.msgFormat(s, m) === 'text';
     const wantStruct = m.isHeader || G.wantsStruct(s, m);
@@ -129,6 +168,12 @@
           if (b.type && G.PRIM_SIZE[b.type] && b.type !== 'bool' && G.PRIM_SIZE[b.type] * 8 < w)
             add('error', ft, where, `${b.name}: ${b.type} is too small for ${w} bits`);
           if (b.type && !G.PRIM_SIZE[b.type] && !G.findEnum(s, b.type)) add('error', ft, where, `${b.name}: unknown type "${b.type}"`);
+          if (G.hasLimits(b)) {
+            const t = b.type || (w === 1 ? 'bool' : 'u64');
+            if (String(b.const || '').trim() || G.findEnum(s, t) || t === 'bool')
+              add('error', ft, where, `bit field "${b.name}": value limits need a numeric bit field (not ${String(b.const || '').trim() ? 'const' : G.findEnum(s, t) ? 'an enum: use strict' : 'a bool'})`);
+            else if (w >= 1 && w <= 64) checkLimits(b, t, w, !!(b.scale || b.offset), `bit field "${b.name}"`, add, ft, where);
+          }
         });
       }
 
@@ -149,6 +194,17 @@
       if (f.const && !G.isInt(f.const)) add('error', ft, where, 'const must be an integer literal');
       if (f.const && (kind === 'float' || !['int', 'enum', 'bool', 'char'].includes(kind))) add('error', ft, where, "'const' is only valid on integer, enum, bool or char fields");
       if ((f.scale || f.offset) && !['int', 'float'].includes(kind)) add('error', ft, where, "'scale'/'offset' need a numeric field");
+      checkMax(f, kind, text, ft, where, add);
+      if (G.hasLimits(f)) {
+        if (!['int', 'float'].includes(kind)) add('error', ft, where, `value limits need a numeric scalar field${kind === 'enum' ? ' (for enums use strict)' : ''}`);
+        else if (String(f.const || '').trim()) add('error', ft, where, "'const' field: value limits do not apply");
+        else checkLimits(f, f.type, G.PRIM_SIZE[f.type] * 8, !!(f.scale || f.offset), `"${f.name}"`, add, ft, where);
+      }
+      if (kind === 'array' && G.hasLimits(f.ofLimits)) {
+        const ek = G.fieldKind(s, { type: f.of });
+        if (!['int', 'float'].includes(ek)) add('error', ft, where, 'element value limits need a numeric element type');
+        else checkLimits(f.ofLimits, f.of, G.PRIM_SIZE[f.of] * 8, false, 'the array element', add, ft, where);
+      }
       if (f.crc) {
         if (text) add('error', ft, where, "'crc' is not supported in text messages");
         else if (!['int', 'float', 'enum', 'bool', 'char'].includes(kind)) add('error', ft, where, "'crc' is only valid on scalar and enum fields");

@@ -36,6 +36,10 @@ std::string member_type(const ir::Message& m, const ir::Field& f);
 std::string typed_literal(const ir::Field& f, std::int64_t v);
 std::string int_literal(std::int64_t v);
 std::string double_literal(double v);
+/// Condition that is true when value `v` (an expression without side effects) fails one of `checks`; "" when there
+/// are none. `scale` / `offset` give the scaled value, computed exactly as the <name>_scaled() accessor.
+std::string limit_fail(const std::vector<ir::LimitCheck>& checks, const std::string& v, ir::Prim prim,
+                       std::optional<double> scale, std::optional<double> offset);
 std::string string_literal(const std::string& s);
 
 /// Language block value: custom->lang["cpp"][key]; empty if missing.

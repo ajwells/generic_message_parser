@@ -24,8 +24,18 @@ bool strict_enum(const Field& f) { return f.kind == FieldKind::Enum && f.enum_de
 
 bool bits_need_check(const Field& f) {
     for (const auto& b : f.bits)
-        if (b.const_value || (b.enum_def && b.enum_def->strict)) return true;
+        if (b.const_value || (b.enum_def && b.enum_def->strict) || !b.limit_checks.empty()) return true;
     return false;
+}
+
+/// Statement throwing ValueOutOfLimits when `v` fails the limits (nothing when there are none).
+std::string limit_stmt(const Field& f, const std::string& v) {
+    if (f.limit_checks.empty()) return "";
+    return "if (" + limit_fail(f.limit_checks, v, f.prim, f.scale, f.offset_value) + ") " + fail("ValueOutOfLimits");
+}
+std::string limit_stmt(const BitField& b, const std::string& v) {
+    if (b.limit_checks.empty()) return "";
+    return "if (" + limit_fail(b.limit_checks, v, b.prim, b.scale, b.offset_value) + ") " + fail("ValueOutOfLimits");
 }
 
 std::string bit_prim(const BitField& b) { return prim_id(b.enum_def ? b.enum_def->underlying : b.prim); }
@@ -146,6 +156,11 @@ void emit_bits_type(Ctx& c, const Message& m, const Field& f) {
         } else if (b.enum_def && b.enum_def->strict) {
             w.line("if (!" + b.enum_def->name + ".isKnown(gmsg.getBits(p, " + pos + ", " + q(bit_prim(b)) + "))) " +
                    fail("UnknownEnum"));
+        } else if (!b.pad && !b.limit_checks.empty()) {
+            w.open("{");
+            w.line("const v = gmsg.getBits(p, " + pos + ", " + q(bit_prim(b)) + ");");
+            w.line(limit_stmt(b, "v"));
+            w.close();
         }
     }
     w.close();
@@ -316,6 +331,7 @@ private:
                 }
                 const auto val = "v" + d;
                 if (strict_enum(f)) w_.line("if (!" + f.enum_def->name + ".isKnown(" + val + ")) " + fail("UnknownEnum"));
+                if (!f.limit_checks.empty()) w_.line(limit_stmt(f, val));
                 if (f.const_value) w_.line("if (" + val + " !== " + typed_literal(f, *f.const_value) + ") " + fail("BadConst"));
                 else if (!dst.empty()) w_.line(dst + " = " + val + ";");
                 w_.close();
@@ -449,6 +465,7 @@ private:
                 } else if (strict_enum(f)) {
                     w_.line("if (!" + f.enum_def->name + ".isKnown(" + val + ")) " + fail("UnknownEnum"));
                 }
+                if (!f.limit_checks.empty()) w_.line(limit_stmt(f, val));
                 w_.line("w.write(" + t + ", " + val + ", " + endian(f.endian) + ");");
                 if (f.crc) {
                     const auto n = sz(prim_size(p));
@@ -461,6 +478,8 @@ private:
                 for (const auto& b : f.bits)
                     if (!b.pad && !b.const_value && b.enum_def && b.enum_def->strict)
                         w_.line("if (!" + b.enum_def->name + ".isKnown(" + src + "." + ident(b.name) + ")) " + fail("UnknownEnum"));
+                    else if (!b.pad && !b.const_value && !b.limit_checks.empty())
+                        w_.line(limit_stmt(b, src + "." + ident(b.name)));
                 w_.open("{");
                 w_.line("const at" + d + " = w.pos;");
                 w_.line("w.zeros(" + sz(f.bits_bytes) + ");");
@@ -636,6 +655,12 @@ private:
                 else if (strict_enum(f))
                     w_.line("if (!" + f.enum_def->name + ".isKnown(gmsg.load(data, " + o + ", " + t + ", " + endian(f.endian) +
                             "))) " + fail("UnknownEnum"));
+                if (!f.limit_checks.empty()) {
+                    w_.open("{");
+                    w_.line("const v = gmsg.load(data, " + o + ", " + t + ", " + endian(f.endian) + ");");
+                    w_.line(limit_stmt(f, "v"));
+                    w_.close();
+                }
                 break;
             }
             case FieldKind::Bits:
@@ -658,7 +683,7 @@ private:
                     w_.line("if (gmsg.load(data, " + o + " + k * " + es + ", " + q(prim_id(storage_prim(e))) + ", " +
                             endian(e.endian) + ") !== " + typed_literal(e, *e.const_value) + ") " + fail("BadConst"));
                     w_.close();
-                } else if (strict_enum(e)) {
+                } else if (strict_enum(e) || !e.limit_checks.empty()) {
                     emit_enum_array_check(e, o, sz(f.len.fixed));
                 }
                 break;
@@ -667,11 +692,17 @@ private:
         }
     }
 
+    /// Reject undeclared values (strict enum) or values outside the limits in `count` elements from offset `o`.
     void emit_enum_array_check(const Field& e, const std::string& o, const std::string& count) {
         const auto es = sz(prim_size(storage_prim(e)));
         w_.open("for (let k = 0; k < " + count + "; k++) {");
-        w_.line("if (!" + e.enum_def->name + ".isKnown(gmsg.load(data, " + o + " + k * " + es + ", " +
-                q(prim_id(storage_prim(e))) + ", " + endian(e.endian) + "))) " + fail("UnknownEnum"));
+        const auto load = "gmsg.load(data, " + o + " + k * " + es + ", " + q(prim_id(storage_prim(e))) + ", " + endian(e.endian) + ")";
+        if (strict_enum(e)) {
+            w_.line("if (!" + e.enum_def->name + ".isKnown(" + load + ")) " + fail("UnknownEnum"));
+        } else {
+            w_.line("const v = " + load + ";");
+            w_.line(limit_stmt(e, "v"));
+        }
         w_.close();
     }
 
@@ -784,7 +815,7 @@ private:
         if (f.len.kind == LenKind::Remaining) {
             if (es && !validate) {
                 w_.line("if ((data.length - pos) % " + sz(*es) + " !== 0) " + fail("BadLength"));
-                if (strict_enum(e)) emit_enum_array_check(e, "pos", "(data.length - pos) / " + sz(*es));
+                if (strict_enum(e) || !e.limit_checks.empty()) emit_enum_array_check(e, "pos", "(data.length - pos) / " + sz(*es));
                 w_.line("pos = data.length;");
             } else {
                 w_.line("while (pos < data.length) pos += " + view_name(*e.message) + ".from(data.subarray(pos)).wireSize;");
@@ -795,7 +826,7 @@ private:
             w_.line("if (n < 0n) " + fail("BadLength"));
             if (es && !validate) {
                 w_.line("if (n * " + sz(*es) + "n > BigInt(data.length - pos)) " + fail("Truncated"));
-                if (strict_enum(e)) emit_enum_array_check(e, "pos", "Number(n)");
+                if (strict_enum(e) || !e.limit_checks.empty()) emit_enum_array_check(e, "pos", "Number(n)");
                 w_.line("pos += Number(n) * " + sz(*es) + ";");
             } else {
                 w_.line("for (let k = 0n; k < n; k++) pos += " + view_name(*e.message) + ".from(data.subarray(pos)).wireSize;");

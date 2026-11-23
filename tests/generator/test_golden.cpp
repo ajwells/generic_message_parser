@@ -57,7 +57,7 @@ std::vector<SchemaCase> schema_cases() {
     const auto schemas = fs::path(GMP_SCHEMA_DIR), examples = fs::path(GMP_EXAMPLES_DIR);
     return {
         {schemas, "telemetry"}, {schemas, "nmea"}, {schemas, "hdlc"}, {schemas, "can"},
-        {schemas, "custom"}, {schemas, "fieldcrc"}, {schemas, "enums"}, {schemas, "computed"},
+        {schemas, "custom"}, {schemas, "fieldcrc"}, {schemas, "enums"}, {schemas, "limits"}, {schemas, "computed"},
         {schemas, "stuffed"}, {schemas, "framing"}, {examples / "sensirion_sht4x", "sht4x"}, {examples / "sensirion_sht4x", "sht4x_enum"},
         {examples / "reserved_sync", "motor_link"},
     };

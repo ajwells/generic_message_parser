@@ -84,7 +84,7 @@ protocols:
 
 Useful field keys: `const`, `scale` / `offset` / `unit`, `conversions: { degf: { scale, offset, unit } }`,
 `crc: crc8_nrsc5` (checksum stored right after this value), `when: "<expr>"`, `max` (container capacity),
-`doc`. Messages can also declare `computed: { serial: { type: u32, value: "(hi << 16) | lo" } }`.
+`min_value` / `max_value` (limits on the scaled value) and `min_raw` / `max_raw` (on the wire value), `doc`. Messages can also declare `computed: { serial: { type: u32, value: "(hi << 16) | lo" } }`.
 
 ### Framing (protocols)
 
@@ -177,13 +177,16 @@ per message. It never allocates. Bounded sinks keep what fits and return `Buffer
 `void gmp_print(gmp::Printer&, const T&)` next to the type. Details: "Printing" in `references/cpp-api.md`.
 
 Errors are values (`gmp::Result<T>` = `std::expected<T, gmp::Error>`): `Truncated`, `BadSync`, `BadChecksum`,
-`BadLength`, `BadDelimiter`, `BadConst`, `OutOfRange`, `UnknownType`, `UnknownEnum`, `BufferFull`, `ParseError`,
-`MissingField`. Full API and streaming details: `references/cpp-api.md`.
+`BadLength`, `BadDelimiter`, `BadConst`, `OutOfRange`, `UnknownType`, `UnknownEnum`, `ValueOutOfLimits`,
+`BufferFull`, `ParseError`, `MissingField`. Full API and streaming details: `references/cpp-api.md`.
 
 ## Things that trip people up
 
 - **`max` is capacity, not a value limit.** `max: 32` sizes the struct's fixed container; decoding more fails with
-  `OutOfRange`. Every variable-length field in a message with a struct needs `max`.
+  `OutOfRange`. Every variable-length field in a message with a struct needs `max`. gmpc rejects `max` anywhere
+  else. For a valid range use `min_value` / `max_value` (scaled value, e.g. humidity `min_value: 0, max_value: 100`)
+  or `min_raw` / `max_raw` (wire value); values outside fail decode and encode with `ValueOutOfLimits`. They work on
+  numeric fields, bit fields, array elements (`of: { type: u16, max_raw: 1000 }`) and text tokens.
 - **Derived length / count fields:** when `length:` / `count:` is just a field name, that field is written from the
   container size on encode. Don't set it by hand. The protocol's length header field and `message_type` field are
   filled in by `Protocol::encode` too.

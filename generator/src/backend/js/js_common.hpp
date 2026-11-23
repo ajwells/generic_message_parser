@@ -59,6 +59,10 @@ std::string bits_type_name(const ir::Message& m, const ir::Field& f);
 
 std::string string_literal(const std::string& s);
 std::string double_literal(double v);
+/// Condition that is true when value `v` (an expression without side effects) fails one of `checks`; "" when there
+/// are none. 64-bit integers compare as BigInt; the scaled value is computed as the _scaled getter does.
+std::string limit_fail(const std::vector<ir::LimitCheck>& checks, const std::string& v, ir::Prim prim,
+                       std::optional<double> scale, std::optional<double> offset);
 /// Integer literal of type p: Number, or `123n` for 64-bit types (value converted as static_cast<T>).
 std::string int_literal(std::int64_t v, ir::Prim p);
 /// BigInt literal of an int64 value.

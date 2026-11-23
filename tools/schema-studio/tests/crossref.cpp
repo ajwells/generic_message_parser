@@ -5,6 +5,8 @@
 //   streams:  { schema, target, hex, frames: [...] }   a byte stream with noise and corrupted frames; `frames` is
 //                                                      the gmp::print output of every frame the C++ Stream parser
 //                                                      delivered, in order
+//   outcomes: { schema, target, hex, error }           whether a (mutated) message decodes: error 0 or the
+//                                                      gmp::Error code (value limits: which inputs are rejected)
 // The Studio decoder must produce the same text, which compares every decoded value.
 
 #include <array>
@@ -15,6 +17,7 @@
 #include "can.gmp.hpp"
 #include "computed.gmp.hpp"
 #include "enums.gmp.hpp"
+#include "limits.gmp.hpp"
 #include "fieldcrc.gmp.hpp"
 #include "framing.gmp.hpp"
 #include "nmea.gmp.hpp"
@@ -64,7 +67,7 @@ std::string text(const T& v, gmp::PrintStyle style = gmp::PrintStyle::multi_line
     return s;
 }
 
-std::vector<std::string> messages, streams;
+std::vector<std::string> messages, streams, outcomes;
 int failures = 0;
 
 void fail(const char* what, const char* target) {
@@ -83,6 +86,32 @@ void message(const char* schema, const char* target, const M& m) {
     if (!d) return fail("decode", target);
     messages.push_back("{\"schema\":" + js(schema) + ",\"target\":" + js(target) + ",\"hex\":" + js(hex(bytes)) +
                        ",\"multi\":" + js(text(*d)) + ",\"single\":" + js(text(*d, gmp::PrintStyle::single_line)) + "}");
+}
+
+/// Record whether `bytes` decodes as M (0) or the error code.
+template <class M>
+void outcome(const char* schema, const char* target, const Bytes& bytes) {
+    const auto d = M::decode(gmp::bytes_view(bytes.data(), bytes.size()));
+    outcomes.push_back("{\"schema\":" + js(schema) + ",\"target\":" + js(target) + ",\"hex\":" + js(hex(bytes)) +
+                       ",\"error\":" + std::to_string(d ? 0 : static_cast<int>(d.error())) + "}");
+}
+
+/// Outcomes of `m`'s encoding with each byte changed in a few ways (binary) or each character replaced (text).
+template <class M>
+void outcomes_of(const char* schema, const char* target, const M& m, bool text = false) {
+    std::array<std::uint8_t, 512> buf{};
+    auto n = m.encode(buf);
+    if (!n) return fail("encode", target);
+    const Bytes bytes(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(*n));
+    outcome<M>(schema, target, bytes);
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+        for (const std::uint8_t x : text ? std::vector<std::uint8_t>{'9', '-', '.', '0'} : std::vector<std::uint8_t>{0x01, 0x20, 0x80, 0xFF}) {
+            Bytes b = bytes;
+            if (text) b[i] = x;
+            else b[i] ^= x;
+            outcome<M>(schema, target, b);
+        }
+    }
 }
 
 /// Builds a noisy stream for protocol P: frames, garbage and a corrupted copy of a frame.
@@ -239,6 +268,38 @@ int main() {
         t.rest = {e::Color::red, e::Color::green, e::Color::blue};
         message("enums", "message:Tail", t);
     }
+    // ---- value limits: decoded values and which mutated inputs are rejected --------------------------
+    {
+        namespace l = test::limits;
+        l::Sample s;
+        s.humidity = 3146;
+        s.temp = -304;
+        s.big = 0xFFFFFFFFFFFFFFFEull;
+        s.neg = -1;
+        s.ratio = 1.5f;
+        s.wide = 1e300;
+        s.flags.level = 5;
+        s.flags.trim = -10;
+        s.flags.gain = 200;
+        s.levels = {10, 1000};
+        s.inner.pct = 100;
+        s.more = {-50, 0, 127};
+        s.n = 3;
+        s.opt = 2;
+        message("limits", "message:Sample", s);
+        outcomes_of("limits", "message:Sample", s);
+        l::Tail t;
+        t.rest = {500, 0, 499};
+        message("limits", "message:Tail", t);
+        outcomes_of("limits", "message:Tail", t);
+        l::Line ln;
+        ln.speed = 99.5;
+        ln.count = 999;
+        ln.opt = -5;
+        ln.level = 500;
+        message("limits", "message:Line", ln);
+        outcomes_of("limits", "message:Line", ln, true);
+    }
     // ---- sht4x -----------------------------------------------------------------------------------
     {
         sensirion::sht4x::Measurement m;
@@ -362,6 +423,8 @@ int main() {
     for (std::size_t i = 0; i < messages.size(); ++i) std::printf("%s%s\n", messages[i].c_str(), i + 1 < messages.size() ? "," : "");
     std::printf("],\"streams\":[\n");
     for (std::size_t i = 0; i < streams.size(); ++i) std::printf("%s%s\n", streams[i].c_str(), i + 1 < streams.size() ? "," : "");
+    std::printf("],\"outcomes\":[\n");
+    for (std::size_t i = 0; i < outcomes.size(); ++i) std::printf("%s%s\n", outcomes[i].c_str(), i + 1 < outcomes.size() ? "," : "");
     std::printf("]}\n");
     return failures ? 1 : 0;
 }

@@ -132,7 +132,7 @@ static inline void acme_telemetry_status_flags_pack(const acme_telemetry_status_
     gmsg_set_bits(p, 1, 3, (uint64_t)g->mode, GMSG_MSB_FIRST);
     gmsg_set_bits_signed(p, 4, 4, (int64_t)g->level, GMSG_MSB_FIRST);
 }
-/* Validate constant and strict-enum bit fields of the raw group bytes. */
+/* Validate constant, strict-enum and limited bit fields of the raw group bytes. */
 static inline gmsg_error acme_telemetry_status_flags_check(const uint8_t* p) {
     (void)p;
     return GMSG_OK;

@@ -125,6 +125,141 @@ private:
             f.crc->endian = f.endian;  // a multi-byte CRC is stored in the field's byte order
             resolve_algo(*f.crc);
         }
+        check_max(f, text);
+        resolve_field_limits(f);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // `max` (capacity) and value limits
+    // ---------------------------------------------------------------------------------------------
+    static std::string field_what(const Field& f) {
+        return f.name.empty() ? std::string("the array element") : "field '" + f.name + "'";
+    }
+
+    /// `max` only sets the capacity of variable-length bytes / string / array data. Anywhere else it would be
+    /// silently ignored and easily mistaken for a value limit, so it is an error.
+    void check_max(const Field& f, bool text) {
+        if (!f.max) return;
+        const bool container = f.kind == FieldKind::Bytes || f.kind == FieldKind::String || f.kind == FieldKind::Array;
+        if (container && (text || f.len.kind != LenKind::Fixed)) return;  // capacity of variable-length data
+        if (container) {
+            if (*f.max == f.len.fixed) return;
+            d_.error(f.loc, field_what(f) + " has a fixed " + (f.kind == FieldKind::Array ? "count" : "size") + " of " +
+                                std::to_string(f.len.fixed) + "; 'max: " + std::to_string(*f.max) +
+                                "' does not match it ('max' is the capacity of variable-length fields; remove it)");
+            return;
+        }
+        std::string msg = "'max' on " + field_what(f) +
+                          " is not a value limit: it only sets the capacity of variable-length bytes, string and array fields.";
+        if (f.kind == FieldKind::Scalar && f.prim != Prim::Bool && f.prim != Prim::Char)
+            msg += " Use min_value / max_value to limit the value (or min_raw / max_raw for the raw wire value)";
+        else
+            msg += " Remove it";
+        d_.error(f.loc, msg);
+    }
+
+    /// Exact compare of two integer limits; -1, 0, 1.
+    static int compare_int(const Limit& a, const Limit& b) {
+        if (a.negative != b.negative) return a.negative ? -1 : 1;
+        if (a.magnitude == b.magnitude) return 0;
+        const bool less = a.magnitude < b.magnitude;
+        return (less != a.negative) ? -1 : 1;
+    }
+
+    static bool limit_less(const Limit& a, const Limit& b) {
+        if (a.integer && b.integer) return compare_int(a, b) < 0;
+        return a.value < b.value;
+    }
+
+    /// Range of a raw integer value of `width` bits: [-2^(w-1), 2^(w-1) - 1] or [0, 2^w - 1], as limits.
+    static std::pair<Limit, Limit> int_range(bool is_signed, unsigned width) {
+        Limit lo, hi;
+        lo.integer = hi.integer = true;
+        if (is_signed) {
+            lo.negative = true;
+            lo.magnitude = std::uint64_t{1} << (width - 1);
+            hi.magnitude = lo.magnitude - 1;
+        } else {
+            hi.magnitude = width >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << width) - 1;
+        }
+        lo.value = lo.negative ? -static_cast<double>(lo.magnitude) : static_cast<double>(lo.magnitude);
+        hi.value = static_cast<double>(hi.magnitude);
+        return {lo, hi};
+    }
+
+    static std::string range_text(const std::pair<Limit, Limit>& r) {
+        return (r.first.negative ? "-" : "") + std::to_string(r.first.magnitude) + ".." + std::to_string(r.second.magnitude);
+    }
+
+    /// Validate `lim` for a value of type `prim` (`width` raw bits, `scaled`: has scale / offset) and derive the
+    /// checks. Limits every value meets (the type's own minimum / maximum) need no check.
+    void resolve_limits(const Limits& lim, Prim prim, unsigned width, bool scaled, const std::string& what, const std::string& type,
+                        std::vector<LimitCheck>& out) {
+        out.clear();
+        const bool integer = prim_is_integer(prim);
+        const auto range = integer ? int_range(prim_is_signed(prim), width) : std::pair<Limit, Limit>{};
+        auto add = [&](const std::optional<Limit>& l, const char* key, bool is_min, bool raw) {
+            if (!l) return;
+            LimitCheck c;
+            c.is_min = is_min;
+            c.limit = *l;
+            c.scaled = !raw && scaled;
+            if (!c.scaled && integer) {
+                if (!l->integer) {
+                    if (raw) {
+                        d_.error(l->loc, std::string(key) + " of " + what + " must be an integer (the raw value is " + type + ")");
+                        return;
+                    }
+                } else {
+                    if (compare_int(*l, range.first) < 0 || compare_int(*l, range.second) > 0) {
+                        d_.error(l->loc, std::string(key) + " " + l->text + " of " + what + " is outside the range of " + type +
+                                             " (" + range_text(range) + ")");
+                        return;
+                    }
+                    c.integer = true;
+                    if (compare_int(*l, is_min ? range.first : range.second) == 0) return;  // every value passes
+                }
+            }
+            out.push_back(c);
+        };
+        add(lim.min_value, "min_value", true, false);
+        add(lim.max_value, "max_value", false, false);
+        add(lim.min_raw, "min_raw", true, true);
+        add(lim.max_raw, "max_raw", false, true);
+        auto order = [&](const std::optional<Limit>& lo, const std::optional<Limit>& hi, const char* a, const char* b) {
+            if (lo && hi && limit_less(*hi, *lo))
+                d_.error(hi->loc, std::string(a) + " " + lo->text + " of " + what + " is greater than " + b + " " + hi->text);
+        };
+        order(lim.min_value, lim.max_value, "min_value", "max_value");
+        order(lim.min_raw, lim.max_raw, "min_raw", "max_raw");
+    }
+
+    void resolve_field_limits(Field& f) {
+        if (!f.limits.any()) return;
+        const auto what = field_what(f);
+        if (f.kind != FieldKind::Scalar || f.prim == Prim::Bool || f.prim == Prim::Char) {
+            d_.error(f.loc, "min_value / max_value / min_raw / max_raw need a numeric scalar field; " + what + " is '" +
+                                f.type_name + "'" + (f.kind == FieldKind::Enum ? " (for enums use strict: true)" : ""));
+            return;
+        }
+        if (f.const_value) {
+            d_.error(f.loc, what + " is 'const': value limits do not apply");
+            return;
+        }
+        resolve_limits(f.limits, f.prim, static_cast<unsigned>(prim_size(f.prim) * 8), f.scale || f.offset_value, what,
+                       prim_name(f.prim), f.limit_checks);
+    }
+
+    void resolve_bit_limits(BitField& b) {
+        if (!b.limits.any()) return;
+        const auto what = "bit field '" + b.name + "'";
+        if (b.pad || b.const_value || b.enum_def || b.prim == Prim::Bool) {
+            d_.error(b.loc, "min_value / max_value / min_raw / max_raw need a numeric bit field; " + what + " is " +
+                                (b.const_value ? "'const'" : b.enum_def ? "an enum (use strict: true)" : "a bool"));
+            return;
+        }
+        resolve_limits(b.limits, b.prim, b.bits, b.scale || b.offset_value, what,
+                       std::to_string(b.bits) + (prim_is_signed(b.prim) ? " signed" : "") + " bits", b.limit_checks);
     }
 
     void resolve_bits(Field& f) {
@@ -150,6 +285,7 @@ private:
             } else {
                 d_.error(b.loc, "unknown bit field type '" + b.type_name + "'");
             }
+            if (b.bits >= 1 && b.bits <= 64) resolve_bit_limits(b);
         }
         if (off % 8 != 0)
             d_.error(f.loc, "bits group '" + f.name + "' spans " + std::to_string(off) +
@@ -414,14 +550,16 @@ private:
         if (f.crc) return true;
         if (f.const_value) return true;
         if (f.kind == FieldKind::Enum && f.enum_def && f.enum_def->strict) return true;
+        if (!f.limit_checks.empty()) return true;
         if (f.kind == FieldKind::Bits)
             for (const auto& b : f.bits)
-                if (b.const_value || (b.enum_def && b.enum_def->strict)) return true;
+                if (b.const_value || (b.enum_def && b.enum_def->strict) || !b.limit_checks.empty()) return true;
         if (f.kind == FieldKind::Message && f.message->needs_validation) return true;
         if (f.kind == FieldKind::Array && f.elem) {
             if (f.elem->kind == FieldKind::Message && f.elem->message->needs_validation) return true;
             if (f.elem->const_value) return true;
             if (f.elem->kind == FieldKind::Enum && f.elem->enum_def && f.elem->enum_def->strict) return true;
+            if (!f.elem->limit_checks.empty()) return true;
         }
         return !f.static_size.has_value();
     }

@@ -30,7 +30,11 @@
     const failed = demos().filter((el) => el.querySelector('.callout.bad'));
     if (failed.length && failed.every((el) => /YAML parser|internet/i.test(el.textContent))) T.skip('js-yaml could not be loaded from cdnjs (offline?)');
     T.eq(failed.map((el) => `${el.dataset.demo}: ${el.textContent.trim().slice(0, 120)}`).join('\n'), '', 'demos that failed');
-    T.ok(demos().length >= 10, `${demos().length} demos`);
+    T.ok(demos().length >= 11, `${demos().length} demos`);
+    const lim = d.querySelector('[data-demo="limits"]');
+    T.ok(lim, 'value limits demo');
+    T.ok(lim && lim.querySelectorAll('.frame-card').length === 3, 'value limits: 3 decoded examples');
+    T.ok(lim && lim.querySelectorAll('.frame-card .bad, .frame-card.bad, .frame-card .err').length > 0, 'value limits: rejected examples are marked');
     T.ok(d.querySelectorAll('.frame-card').length >= 10, 'decoded frames');
     T.ok(d.querySelectorAll('.print-out').length >= 2, 'printing demo output');
     T.eq(errors.join('\n'), '', 'JavaScript errors');

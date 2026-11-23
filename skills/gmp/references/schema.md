@@ -93,14 +93,16 @@ The same type names are used in text messages, which parse them from tokens inst
 | `const` | integer / enum | magic value. It is checked on decode (`Error::BadConst`), written automatically on encode, and has no struct member |
 | `scale`, `offset` | numeric | engineering value = raw * scale + offset. Generates `<name>_scaled()` and (struct) `set_<name>_scaled()` |
 | `conversions` | numeric | extra named conversions `{ name: { scale, offset, unit } }`. Each generates `<name>_<conversion>()` and (struct) `set_<name>_<conversion>()` |
+| `min_value`, `max_value` | numeric (also in `of`) | inclusive limits on the scaled value (`raw * scale + offset`), or the value when there is no scale/offset. Decode (struct and view) and encode fail with `Error::ValueOutOfLimits`; NaN fails |
+| `min_raw`, `max_raw` | numeric (also in `of`) | inclusive limits on the raw wire value (integers compare exactly); combinable with `min_value`/`max_value` |
 | `crc` | binary scalar / enum | checksum of the value bytes, stored right after them (`crc: crc8_nrsc5`, a custom checksum, or `{ crc: {...} }`). Verified on decode (`BadChecksum`), written on encode |
 | `unit`, `doc` | all | documentation, copied into comments |
 | `length` / `size` | `bytes`, `string`, `pad` | number, expression, or `remaining` |
 | `count` | `array` | number, expression, or `remaining` |
 | `terminator` | `bytes`, `string` | delimiter byte, e.g. `0` for C strings |
-| `max` | variable length | capacity of the generated struct container (required when the message has a struct) |
+| `max` | variable length | capacity of the generated struct container (required when the message has a struct). Not a value limit: an error on any other field, and on a fixed size it does not match |
 | `padding` | fixed `string` | pad character, stripped on decode and filled on encode (default `\0`) |
-| `of` | `array` | element type name, or a mapping like `{ type: u16, endian: little }` |
+| `of` | `array` | element type name, or a mapping like `{ type: u16, endian: little, max_raw: 1000 }` |
 | `when` | binary | expression; the field is present only when it evaluates to true (`std::optional`) |
 | `optional` | text | an empty token is allowed (`std::optional`) |
 | `fields` | `bits` | list of bit fields (see below) |
@@ -130,6 +132,11 @@ The same type names are used in text messages, which parse them from tokens inst
     - { name: ver,   bits: 4, const: 1 }        # validated, no member
     - { pad: 4 }
 ```
+
+Numeric bit fields also take `min_value` / `max_value` / `min_raw` / `max_raw` (a raw limit must fit the bit width).
+
+Value limits are rejected by gmpc on enums (use `strict`), bools, chars and `const` fields, when a raw limit for an
+integer type is not an integer or is outside the type's range, and when a minimum is greater than its maximum.
 
 The group must add up to a whole number of bytes. Bit offset 0 is the first bit of the group:
 - `msb_first`: the MSB of byte 0, with values read most significant bit first (network / Motorola order).

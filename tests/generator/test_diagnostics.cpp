@@ -114,6 +114,102 @@ messages:
     expect_error("messages:\n  A:\n    fields:\n      - { name: x, type: u8, when: 'x +' }\n", "invalid expression");
 }
 
+TEST_CASE("'max' is only the capacity of variable-length data") {
+    const std::string head = "messages:\n  A:\n    fields:\n";
+    // scalars: not a value limit, and the message points to the limit keys
+    expect_error(head + "      - { name: h, type: u16, max: 10000 }\n", "'max' on field 'h' is not a value limit");
+    expect_error(head + "      - { name: h, type: u16, max: 10000 }\n", "Use min_value / max_value");
+    expect_error(head + "      - { name: f, type: f32, max: 1 }\n", "min_raw / max_raw");
+    // other kinds that have no capacity
+    expect_error("enums:\n  E: { type: u8, values: { a: 1 } }\n" + head + "      - { name: e, type: E, max: 1 }\n",
+                 "'max' on field 'e' is not a value limit");
+    expect_error("messages:\n  I:\n    fields: [ { name: x, type: u8 } ]\n  A:\n    fields:\n      - { name: i, type: I, max: 2 }\n",
+                 "Remove it");
+    expect_error(head + "      - { name: g, type: bits, max: 1, fields: [ { name: x, bits: 8 } ] }\n", "is not a value limit");
+    expect_error(head + "      - name: g\n        type: bits\n        fields: [ { name: x, bits: 8, max: 3 } ]\n",
+                 "'max' on bit field 'x' is not a value limit: use min_value / max_value");
+    expect_error(head + "      - { name: a, type: array, of: { type: u8, max: 5 }, count: 2 }\n",
+                 "'max' on the array element is not a value limit");
+    expect_error("messages:\n  T:\n    format: text\n    fields:\n      - { name: n, type: u16, max: 9 }\n",
+                 "'max' on field 'n' is not a value limit");
+    // fixed-size containers: max must match the size
+    expect_error(head + "      - { name: b, type: bytes, length: 4, max: 8 }\n", "has a fixed size of 4; 'max: 8' does not match");
+    expect_error(head + "      - { name: s, type: string, length: 4, max: 2 }\n", "has a fixed size of 4");
+    expect_error(head + "      - { name: a, type: array, of: u8, count: 3, max: 4 }\n", "has a fixed count of 3");
+    // allowed: capacity of variable data, a matching fixed size, text strings
+    for (const char* ok : {"      - { name: n, type: u8 }\n      - { name: b, type: bytes, length: n, max: 8 }\n",
+                           "      - { name: b, type: bytes, length: 4, max: 4 }\n",
+                           "      - { name: a, type: array, of: u8, count: remaining, max: 4 }\n"}) {
+        const auto r = compile(head + ok);
+        INFO(r.text);
+        CHECK(r.ok);
+    }
+    CHECK(compile("messages:\n  T:\n    format: text\n    fields:\n      - { name: s, type: string, max: 9 }\n").ok);
+}
+
+TEST_CASE("value limits: where they apply and what they accept") {
+    const std::string head = "messages:\n  A:\n    fields:\n";
+    expect_error("enums:\n  E: { type: u8, values: { a: 1 } }\n" + head + "      - { name: e, type: E, min_value: 1 }\n",
+                 "need a numeric scalar field; field 'e' is 'E' (for enums use strict: true)");
+    expect_error(head + "      - { name: b, type: bool, max_raw: 1 }\n", "need a numeric scalar field");
+    expect_error(head + "      - { name: s, type: string, length: 2, min_value: 1 }\n", "need a numeric scalar field");
+    expect_error(head + "      - { name: c, type: u8, const: 5, max_raw: 9 }\n", "is 'const': value limits do not apply");
+    expect_error(head + "      - name: g\n        type: bits\n        fields: [ { name: x, bits: 8, const: 1, max_raw: 3 } ]\n",
+                 "need a numeric bit field; bit field 'x' is 'const'");
+    expect_error(head + "      - name: g\n        type: bits\n        fields: [ { name: x, bits: 1, min_raw: 0 }, { pad: 7 } ]\n",
+                 "is a bool");
+    expect_error(head + "      - { name: r, type: u8, min_raw: -1 }\n", "min_raw -1 of field 'r' is outside the range of u8 (0..255)");
+    expect_error(head + "      - { name: r, type: i8, max_raw: 128 }\n", "outside the range of i8 (-128..127)");
+    expect_error(head + "      - name: g\n        type: bits\n        fields: [ { name: x, bits: 3, max_raw: 8 }, { pad: 5 } ]\n",
+                 "max_raw 8 of bit field 'x' is outside the range of 3 bits (0..7)");
+    expect_error(head + "      - name: g\n        type: bits\n        fields: [ { name: x, bits: 4, type: i8, min_raw: -9 }, { pad: 4 } ]\n",
+                 "outside the range of 4 signed bits (-8..7)");
+    expect_error(head + "      - { name: r, type: u8, min_raw: 1.5 }\n", "min_raw of field 'r' must be an integer");
+    expect_error(head + "      - { name: r, type: u8, max_value: 300 }\n", "outside the range of u8");  // unscaled: raw
+    expect_error(head + "      - { name: r, type: u8, scale: 0.5, min_value: 5, max_value: 3 }\n",
+                 "min_value 5 of field 'r' is greater than max_value 3");
+    expect_error(head + "      - { name: r, type: i32, min_raw: 0x10, max_raw: 15 }\n", "min_raw 0x10 of field 'r' is greater than max_raw 15");
+    expect_error(head + "      - { name: r, type: u8, min_value: abc }\n", "expected a number, got 'abc'");
+    // accepted: scaled limits beyond the raw range, floats, non-integer limits on unscaled integers, u64 / i64 extremes
+    for (const char* ok : {"      - { name: r, type: u8, scale: 10, max_value: 5000 }\n",
+                           "      - { name: f, type: f64, min_raw: -1e300, max_value: 2.5 }\n",
+                           "      - { name: r, type: u8, max_value: 99.5 }\n",
+                           "      - { name: r, type: u64, max_raw: 0xFFFFFFFFFFFFFFFF }\n",
+                           "      - { name: r, type: i64, min_raw: -0x8000000000000000 }\n",
+                           "      - { name: r, type: u8, min_value: 3, max_value: 3 }\n"}) {
+        const auto r = compile(head + ok);
+        INFO(ok << r.text);
+        CHECK(r.ok);
+    }
+}
+
+TEST_CASE("value limits: lowering derives exact checks and drops only limits every value meets") {
+    gmpc::Diagnostics d;
+    auto s = gmpc::load_schema_string(R"(
+messages:
+  A:
+    fields:
+      - { name: a, type: u8, min_raw: 0, max_raw: 255 }    # both at the type's extremes: no check
+      - { name: b, type: u8, min_raw: 255, max_raw: 0 }     # error: min > max (each would need a check)
+      - { name: c, type: u8, min_raw: 255 }                 # a minimum at the type's maximum: one check
+      - { name: e, type: i8, max_raw: -128 }                # a maximum at the type's minimum: one check
+      - { name: f, type: u16, scale: 2, min_value: 0 }      # scaled: kept (double compare)
+)", "test.yaml", d);
+    REQUIRE(s);
+    (void)gmpc::lower_schema(*s, d);
+    const auto& m = *s->messages.front();
+    CHECK(m.fields[0]->limit_checks.empty());
+    CHECK(m.fields[1]->limit_checks.size() == 2);
+    REQUIRE(m.fields[2]->limit_checks.size() == 1);
+    CHECK(m.fields[2]->limit_checks[0].is_min);
+    CHECK(m.fields[2]->limit_checks[0].integer);
+    REQUIRE(m.fields[3]->limit_checks.size() == 1);
+    CHECK_FALSE(m.fields[3]->limit_checks[0].is_min);
+    REQUIRE(m.fields[4]->limit_checks.size() == 1);
+    CHECK(m.fields[4]->limit_checks[0].scaled);
+    CHECK_FALSE(m.fields[4]->limit_checks[0].integer);
+}
+
 TEST_CASE("text message restrictions") {
     expect_error("messages:\n  T:\n    format: text\n    fields:\n      - { name: b, type: bytes, length: 2 }\n",
                  "not supported in text messages");

@@ -129,6 +129,33 @@ struct Conversion {
     std::string unit;
 };
 
+/// A min_value / max_value / min_raw / max_raw number as written in the schema.
+struct Limit {
+    SourceLoc loc;
+    std::string text;             // as written (diagnostics)
+    double value = 0;             // the number
+    bool integer = false;         // an integer literal: exactly `negative` / `magnitude`
+    bool negative = false;
+    std::uint64_t magnitude = 0;
+};
+
+/// Value limits of a numeric field: `min_value` / `max_value` compare the scaled value (raw * scale + offset, or the
+/// raw value when the field has neither), `min_raw` / `max_raw` the raw wire value.
+struct Limits {
+    std::optional<Limit> min_value, max_value, min_raw, max_raw;
+    [[nodiscard]] bool any() const { return min_value || max_value || min_raw || max_raw; }
+};
+
+/// One check derived from Limits by lowering; the value fails it when it is below (`is_min`) / above the limit.
+/// `integer`: exact integer compare of the raw value; otherwise a double compare of the raw value (`scaled` false)
+/// or of raw * scale + offset (`scaled` true), where NaN always fails.
+struct LimitCheck {
+    bool is_min = true;
+    bool scaled = false;
+    bool integer = false;
+    Limit limit;
+};
+
 struct BitField {
     std::string name;  // empty for padding
     SourceLoc loc;
@@ -141,6 +168,8 @@ struct BitField {
     std::optional<double> scale, offset_value;
     std::optional<std::int64_t> const_value;
     std::string doc;
+    Limits limits;
+    std::vector<LimitCheck> limit_checks;  // derived by lowering
 };
 
 struct Field {
@@ -172,6 +201,7 @@ struct Field {
     std::shared_ptr<ChecksumSpec> crc;        // checksum of the value's bytes, stored right after them (Scalar/Enum)
     std::optional<std::int64_t> const_value;  // constant / magic value (Scalar/Enum)
     char pad_char = '\0';                     // String with fixed length: trailing pad character
+    Limits limits;                            // value limits (numeric Scalar)
 
     // text formatting
     int base = 10;
@@ -187,6 +217,7 @@ struct Field {
     const Field* derived_from = nullptr;     // this field's encoded value is the length/count of that field
     std::size_t token_index = 0;             // text: first token index
     std::size_t token_count = 1;             // text: number of tokens consumed
+    std::vector<LimitCheck> limit_checks;    // from `limits`; checks every value passes are left out
 
     [[nodiscard]] bool has_member() const {
         return kind != FieldKind::Pad && !const_value.has_value();

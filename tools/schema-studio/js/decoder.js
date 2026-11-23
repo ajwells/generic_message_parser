@@ -260,6 +260,7 @@
     nd.value = D.scalarText(s, f, kind, typeName, v);
     if (kind === 'enum') nd.error = strictEnumError(s, typeName, v);
     if (f.const && G.isInt(f.const) && toNum(v) !== G.parseInt(f.const)) nd.error = `expected const ${f.const}`;
+    if (!nd.error && (kind === 'int' || kind === 'float')) nd.error = G.limitError(f, t, v);  // ValueOutOfLimits
     return { nd, v, n };
   }
 
@@ -356,6 +357,7 @@
             if (sc !== null) child.value += `  →  ${sc}`;
           }
           if (b.const && G.isInt(b.const) && toNum(v) !== G.parseInt(b.const)) child.error = `expected const ${b.const}`;
+          if (!b.pad && !child.error && t !== 'bool' && !G.findEnum(s, t)) child.error = G.limitError(b, t || 'u64', val);
           if (!b.pad) members[b.name] = toNum(val);
           child.bit = b;
           child.bitType = t;
@@ -403,10 +405,14 @@
           if ((limit - pos) % esz) throw new Stop(`${f.name}: ${limit - pos} remaining bytes is not a multiple of the ${esz}-byte element`);
           count = (limit - pos) / esz;
         }
-        const elemField = { ...G.newField({ type: f.of, endian: f.ofEndian || f.endian }), name: '' };
+        const elemField = { ...G.newField({ type: f.of, endian: f.ofEndian || f.endian, ...(f.ofLimits || {}) }), name: '' };
         let i = 0;
+        // bounds check at the element's own position (`need` checks the position of the enclosing message walk)
+        const needElem = (k) => {
+          if (limit - pos < k) throw new Stop(`truncated: ${f.name}[${i}] needs ${k} byte${k === 1 ? '' : 's'}, ${Math.max(0, limit - pos)} left`);
+        };
         while (count === null ? pos < limit : i < count) {
-          const sub = decodeField(s, m, elemField, ek, `[${i}]`, buf, () => pos, (p) => { pos = p; }, limit, new Map(), lookup, f.ofEndian || endian, bitOrder, need, depth + 1);
+          const sub = decodeField(s, m, elemField, ek, `[${i}]`, buf, () => pos, (p) => { pos = p; }, limit, new Map(), lookup, f.ofEndian || endian, bitOrder, needElem, depth + 1);
           sub.field = elemField;
           nd.children.push(sub);
           if (sub.fatal) { nd.error = sub.error; nd.fatal = true; break; }
@@ -496,6 +502,7 @@
           if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`;
           if (kind === 'int') nd.value += conversionsText(f, v);
           if (f.const && G.isInt(f.const) && Number(v) !== G.parseInt(f.const)) nd.error = `expected const ${f.const}`;
+          if (kind === 'int' && !nd.error) nd.error = G.limitError(f, prim, v);
         }
       } else if (kind === 'float') {
         const isF32 = f.type === 'f32';
@@ -508,6 +515,7 @@
           const sc = scaled(f, v);
           if (sc !== null) nd.value += `  →  ${sc}${f.unit ? ' ' + f.unit : ''}`;
           nd.value += conversionsText(f, v);
+          nd.error = G.limitError(f, f.type, v);
         }
       } else if (kind === 'char') {
         const [code] = attempt(() => gmsg.text.parseChar(tok.raw));

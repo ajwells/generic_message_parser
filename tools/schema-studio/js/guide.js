@@ -48,6 +48,15 @@ messages:
           - { name: level, bits: 4 }
           - { pad: 1 }
 `,
+    limits: `schema_version: 1
+namespace: guide
+messages:
+  Climate:
+    fields:
+      # SHT4x humidity: RH = -6 + 125 * raw / 65535, only 0..100 %RH is physical
+      - { name: humidity, type: u16, scale: 0.0019073486328125, offset: -6, unit: "%RH", min_value: 0, max_value: 100 }
+      - { name: fan, type: u8, max_raw: 3 }               # raw wire value: speed steps 0..3
+`,
     containers: `schema_version: 1
 namespace: guide
 messages:
@@ -293,6 +302,14 @@ protocols:
         { target: 'message:Status', label: 'mode 5 is not declared and Mode is strict → UnknownEnum', input: '05 EA' },
       ],
     },
+    limits: {
+      title: 'Value limits', yaml: Y.limits, cards: ['message:Climate'],
+      decode: [
+        { target: 'message:Climate', label: 'humidity 30000 → 51.22 %RH, fan 2', input: '75 30 02' },
+        { target: 'message:Climate', label: 'humidity 0xFFFF → 119 %RH is above max_value 100 → ValueOutOfLimits', input: 'FF FF 02' },
+        { target: 'message:Climate', label: 'fan 4 is above max_raw 3 → ValueOutOfLimits', input: '75 30 04' },
+      ],
+    },
     containers: {
       title: 'Strings, bytes and arrays', yaml: Y.containers, cards: ['message:Packet'],
       decode: [{ target: 'message:Packet', label: '"GMP1", name "probe", 3 samples, note "ok", 4 bytes left over', input: '47 4D 50 31  05 70 72 6F 62 65  03 00 64 FF 9C 01 F4  6F 6B 00  DE AD BE EF' }],
@@ -486,9 +503,18 @@ stream.feed(chunk);`))}</div>
       <code>defaults.strict_enums</code>) undeclared values fail with <code>UnknownEnum</code>, on decode and on encode.
       A <code>bits</code> group packs bit fields into whole bytes; each bit field can be a bool, an integer, an enum, a const or scaled.</p>
       ${demo('enums')}
+      <h3 id="g-limits">Value limits</h3>
+      <p>A CRC only proves the bytes arrived intact, not that the value makes sense. <code>min_value</code> / <code>max_value</code>
+      limit the value as your code sees it: the scaled value (raw × scale + offset) when the field has a scale or offset,
+      else the value itself. <code>min_raw</code> / <code>max_raw</code> limit the raw wire value. Limits are inclusive and can be
+      combined. Outside them, decoding (struct and view) and encoding fail with <code>${ln('ValueOutOfLimits', 'GMSG_ERR_VALUE_OUT_OF_LIMITS', 'gmsg.Err.ValueOutOfLimits')}</code>;
+      a NaN always fails. They apply to numeric fields, bit fields, array elements and text tokens.</p>
+      ${note('<code>max</code> is not a value limit: it is only the capacity of a variable-length bytes, string or array field. gmpc reports <code>max</code> anywhere else (and a <code>max</code> that does not match a fixed size) as an error.')}
+      ${demo('limits')}
       <h3 id="g-containers">Strings, bytes and arrays</h3>
       <p>Variable-size fields get their length from a number, an earlier field or expression (<code>length: n * 2</code>),
-      <code>remaining</code>, or a <code>terminator</code>. <code>max</code> is the capacity of the fixed-size container in the struct, so nothing allocates.
+      <code>remaining</code>, or a <code>terminator</code>. <code>max</code> is the capacity of the fixed-size container in the struct, so nothing allocates
+      (it is not a value limit: see <a href="#g-limits">Value limits</a>).
       On encode, a plain length field is filled in from the container size.</p>
       ${segBar([
         { label: 'length: 4', sub: 'fixed', kind: 'string' },
@@ -857,6 +883,7 @@ stream.on('frame', (v) => log(String(v)));`))}
     ['OutOfRange', 'OUT_OF_RANGE', 'More data than a container\'s max, or a value that does not fit.'],
     ['UnknownType', 'UNKNOWN_TYPE', 'No message has the frame\'s type id.'],
     ['UnknownEnum', 'UNKNOWN_ENUM', 'A strict enum field holds an undeclared value.'],
+    ['ValueOutOfLimits', 'VALUE_OUT_OF_LIMITS', 'A value is outside its min_value / max_value / min_raw / max_raw.'],
     ['BufferFull', 'BUFFER_FULL', 'Output buffer too small, or stream buffer full without a frame.'],
     ['ParseError / MissingField', 'PARSE / MISSING_FIELD', 'A text token is invalid / a required token is empty.'],
     ['InvalidValue / Custom', 'INVALID_VALUE / CUSTOM', 'For custom codecs (also: an unknown escape code).'],

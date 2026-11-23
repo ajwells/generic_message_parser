@@ -18,15 +18,24 @@ std::string sep_literal(char c) {
     return std::string("'") + c + "'";
 }
 
+/// `.and_then(...)` failing with ValueOutOfLimits for a parsed value outside the field's limits ("" without limits).
+std::string limit_then(const Field& f) {
+    if (f.limit_checks.empty()) return "";
+    const auto t = prim_type(f.prim);
+    return ".and_then([](" + t + " v) -> gmp::Result<" + t + "> { if (" +
+           limit_fail(f.limit_checks, "v", f.prim, f.scale, f.offset_value) +
+           ") return gmp::fail(gmp::Error::ValueOutOfLimits); return v; })";
+}
+
 /// Expression parsing token `t` into the field's value type (returns gmp::Result<T>).
 std::string parse_call(const Message& m, const Field& f, const std::string& t) {
     switch (f.kind) {
         case FieldKind::Scalar:
-            if (prim_is_float(f.prim)) return "gmp::text::parse_float<" + prim_type(f.prim) + ">(" + t + ")";
+            if (prim_is_float(f.prim)) return "gmp::text::parse_float<" + prim_type(f.prim) + ">(" + t + ")" + limit_then(f);
             if (f.prim == Prim::Char) return "gmp::text::parse_char(" + t + ")";
             if (f.prim == Prim::Bool)
                 return "gmp::text::parse_int<int>(" + t + ").transform([](int x) { return x != 0; })";
-            return "gmp::text::parse_int<" + prim_type(f.prim) + ">(" + t + ", " + std::to_string(f.base) + ")";
+            return "gmp::text::parse_int<" + prim_type(f.prim) + ">(" + t + ", " + std::to_string(f.base) + ")" + limit_then(f);
         case FieldKind::Enum: {
             const auto& e = f.enum_def->name;
             std::string s = "gmp::text::parse_int<" + prim_type(f.enum_def->underlying) + ">(" + t + ", " +
@@ -153,6 +162,9 @@ void emit_struct(Ctx& c, const Message& m) {
         } else {
             if (f.kind == FieldKind::Enum && f.enum_def->strict && !f.const_value)
                 w.line("if (!is_known(" + value + ")) return gmp::fail(gmp::Error::UnknownEnum);");
+            if (!f.limit_checks.empty())
+                w.line("if (" + limit_fail(f.limit_checks, value, f.prim, f.scale, f.offset_value) +
+                       ") return gmp::fail(gmp::Error::ValueOutOfLimits);");
             w.line("if (auto e = " + write_call(f, value) + "; !e) return e;");
         }
         if (f.optional) w.close();

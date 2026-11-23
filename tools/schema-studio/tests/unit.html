@@ -70,6 +70,70 @@ T.test('example schema validates and decodes its example input', () => {
   T.ok(frames.some((f) => f.errors.length), 'the example contains a corrupted frame');
   T.ok(r.items.some((i) => i.type === 'garbage'), 'the example contains noise');
 });
+// ---- value limits and `max` (mirrors gmpc: generator/src/ir/lowering.cpp) ------------------------------------
+const oneMessage = (fields) => {
+  const s = G.emptyState();
+  s.messages.push(G.newMessage({ name: 'M', fields: fields.map((f) => G.newField(f)) }));
+  return s;
+};
+const errorsOf = (s) => G.validate(s).filter((i) => i.level === 'error').map((e) => e.msg);
+const expectError = (fields, re, label) => {
+  const errs = errorsOf(oneMessage(fields));
+  T.ok(errs.some((m) => re.test(m)), `${label}: expected ${re}, got: ${errs.join(' | ') || 'no errors'}`);
+};
+const expectValid = (fields, label) => T.eq(errorsOf(oneMessage(fields)).join(' | '), '', label);
+
+T.test('validation: max is only the capacity of variable-length data', () => {
+  expectError([{ name: 'h', type: 'u16', max: '100' }], /not a value limit.*Use min_value \/ max_value/, 'scalar');
+  expectError([{ name: 'b', type: 'bytes', lenMode: 'fixed', lenValue: '4', max: '8' }], /fixed size 4: 'max: 8' does not match/, 'fixed bytes');
+  expectError([{ name: 'a', type: 'array', of: 'u8', lenMode: 'fixed', lenValue: '3', max: '4' }], /fixed count 3/, 'fixed array');
+  expectValid([{ name: 'b', type: 'bytes', lenMode: 'fixed', lenValue: '4', max: '4' }], 'matching fixed size');
+  expectValid([{ name: 'n', type: 'u8' }, { name: 'b', type: 'bytes', lenMode: 'expr', lenValue: 'n', max: '8' }], 'variable capacity');
+});
+T.test('validation: value limits', () => {
+  expectError([{ name: 'r', type: 'u8', min_raw: '-1' }], /min_raw -1 .* outside the range of the raw value \(0\.\.255\)/, 'raw range');
+  expectError([{ name: 'r', type: 'i8', max_value: '128' }], /outside the range/, 'unscaled value range');
+  expectValid([{ name: 'r', type: 'u8', scale: '10', max_value: '5000' }], 'scaled limit beyond the raw range');
+  expectError([{ name: 'r', type: 'u8', min_raw: '1.5' }], /must be an integer/, 'non-integer raw');
+  expectError([{ name: 'r', type: 'u16', scale: '0.5', min_value: '5', max_value: '3' }], /min_value 5 .* greater than max_value 3/, 'order');
+  expectError([{ name: 'r', type: 'u8', min_value: 'abc' }], /expected a number/, 'not a number');
+  expectError([{ name: 's', type: 'bytes', lenMode: 'fixed', lenValue: '2', min_value: '1' }], /need a numeric scalar field/, 'bytes');
+  expectError([{ name: 'c', type: 'u8', const: '5', max_raw: '9' }], /'const' field/, 'const');
+  expectValid([{ name: 'r', type: 'u64', min_raw: '0x8000000000000000', max_raw: '0xFFFFFFFFFFFFFFFF' }], 'u64 extremes');
+  const bits = (b) => [{ name: 'g', type: 'bits', bits: [G.newBit({ name: 'x', bits: '3', ...b }), G.newBit({ pad: true, bits: '5' })] }];
+  expectError(bits({ max_raw: '8' }), /outside the range of the raw value \(0\.\.7\)/, 'bit width');
+  expectError(bits({ type: 'i8', min_raw: '-5' }), /\(-4\.\.3\)/, 'signed bits');
+  expectValid(bits({ max_raw: '7', scale: '0.5', max_value: '3' }), 'bit limits');
+  expectError([{ name: 'a', type: 'array', of: 'u8', lenMode: 'fixed', lenValue: '2', ofLimits: { min_value: '', max_value: '', min_raw: '', max_raw: '300' } }],
+    /the array element is outside the range/, 'element range');
+});
+T.test('limitError: inclusive bounds, exact 64-bit integers, scaled doubles, NaN', () => {
+  const f = G.newField({ type: 'u16', scale: '0.0019073486328125', offset: '-6', min_value: '0', max_value: '100' });
+  T.ok(G.limitError(f, 'u16', 3145n) !== '', '3145 scales below 0');
+  T.eq(G.limitError(f, 'u16', 3146n), '', '3146');
+  T.eq(G.limitError(f, 'u16', 55574n), '', '55574');
+  T.ok(G.limitError(f, 'u16', 55575n) !== '', '55575 scales above 100');
+  const big = G.newField({ type: 'u64', min_raw: '0x8000000000000000' });
+  T.eq(G.limitError(big, 'u64', 0x8000000000000000n), '', '2^63');
+  T.ok(G.limitError(big, 'u64', 0x7FFFFFFFFFFFFFFFn) !== '', '2^63 - 1 (not representable as a double)');
+  const fl = G.newField({ type: 'f32', min_value: '-1.5', max_value: '1.5' });
+  T.eq(G.limitError(fl, 'f32', 1.5), '', '1.5');
+  T.ok(G.limitError(fl, 'f32', NaN) !== '', 'NaN');
+  T.ok(/above max_value 1\.5/.test(G.limitError(fl, 'f32', 2)), 'message');
+});
+T.test('yaml export: limits on fields, bit fields and array elements; max kept where set', () => {
+  const s = oneMessage([
+    { name: 'h', type: 'u16', scale: '0.5', min_value: '0', max_value: '100', min_raw: '0x10' },
+    { name: 'a', type: 'array', of: 'i8', lenMode: 'fixed', lenValue: '2', ofLimits: { min_value: '-50', max_value: '', min_raw: '', max_raw: '' } },
+    { name: 'g', type: 'bits', bits: [G.newBit({ name: 'x', bits: '8', max_raw: '5' })] },
+    { name: 'k', type: 'u8', max: '10' },
+  ]);
+  const y = G.toYaml(s);
+  T.ok(/name: h, type: u16, scale: 0\.5, min_value: 0, max_value: 100, min_raw: 0x10/.test(y), 'field limits:\n' + y);
+  T.ok(/of: \{ type: i8, min_value: -50 \}/.test(y), 'element limits:\n' + y);
+  T.ok(/name: x, bits: 8, max_raw: 5/.test(y), 'bit limits:\n' + y);
+  T.ok(/name: k, type: u8, max: 10/.test(y), 'max kept on a scalar (gmpc reports it):\n' + y);
+});
 T.run();
 </script>
 </body></html>

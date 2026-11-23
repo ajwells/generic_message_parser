@@ -73,6 +73,8 @@ void parse_into(const Ctx& c, CodeWriter& w, const Field& f, const std::string& 
                 w.line(dst + " = (" + prim_type(f.prim) + ")x;");
                 w.close();
             }
+            if (!f.limit_checks.empty())
+                w.line("if (" + limit_fail(f.limit_checks, dst, f.prim, f.scale, f.offset_value) + ") " + fail("VALUE_OUT_OF_LIMITS"));
             break;
         case FieldKind::Enum: {
             const auto u = f.enum_def->underlying;
@@ -262,6 +264,9 @@ private:
             } else {
                 if (f.kind == FieldKind::Enum && f.enum_def->strict && !f.const_value)
                     s_.line("if (!" + enum_name(c_, *f.enum_def) + "_is_known(" + value + ")) " + fail("UNKNOWN_ENUM"));
+                if (!f.limit_checks.empty())
+                    s_.line("if (" + limit_fail(f.limit_checks, value, f.prim, f.scale, f.offset_value) + ") " +
+                            fail("VALUE_OUT_OF_LIMITS"));
                 s_.line(write_call(c_, f, value));
             }
             if (f.optional) s_.close();

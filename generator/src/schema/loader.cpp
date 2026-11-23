@@ -3,6 +3,8 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <initializer_list>
 #include <set>
@@ -113,6 +115,52 @@ private:
             return 0;
         }
         return static_cast<std::size_t>(v);
+    }
+
+    /// A min_value / max_value / min_raw / max_raw number: integers (decimal, 0x, 0b, negative) are kept exactly.
+    ir::Limit to_limit(const YAML::Node& n) {
+        ir::Limit l;
+        l.loc = loc(n);
+        l.text = to_str(n);
+        std::string s = l.text;
+        const bool neg = !s.empty() && s[0] == '-';
+        if (neg || (!s.empty() && s[0] == '+')) s = s.substr(1);
+        try {
+            int base = 10;
+            std::string digits = s;
+            if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) { base = 16; digits = s.substr(2); }
+            else if (s.size() > 2 && s[0] == '0' && (s[1] == 'b' || s[1] == 'B')) { base = 2; digits = s.substr(2); }
+            std::size_t used = 0;
+            if (!digits.empty() && std::isalnum(static_cast<unsigned char>(digits[0]))) {
+                const auto m = std::stoull(digits, &used, base);
+                if (used == digits.size()) {
+                    l.integer = true;
+                    l.magnitude = m;
+                    l.negative = neg && m != 0;
+                    l.value = neg ? -static_cast<double>(m) : static_cast<double>(m);
+                    return l;
+                }
+            }
+        } catch (...) {
+        }
+        try {
+            std::size_t used = 0;
+            const double d = std::stod(l.text, &used);
+            if (used == l.text.size() && std::isfinite(d)) {
+                l.value = d;
+                return l;
+            }
+        } catch (...) {
+        }
+        diag_.error(l.loc, "expected a number, got '" + l.text + "'");
+        return l;
+    }
+
+    void load_limits(const YAML::Node& n, ir::Limits& lim) {
+        if (auto v = n["min_value"]) lim.min_value = to_limit(v);
+        if (auto v = n["max_value"]) lim.max_value = to_limit(v);
+        if (auto v = n["min_raw"]) lim.min_raw = to_limit(v);
+        if (auto v = n["max_raw"]) lim.max_raw = to_limit(v);
     }
 
     double to_double(const YAML::Node& n) {
@@ -319,7 +367,12 @@ private:
             b.bits = static_cast<unsigned>(to_size(p));
             return b;
         }
-        check_keys(n, {"name", "bits", "type", "enum", "scale", "offset", "const", "doc"}, "bit field");
+        if (auto v = n["max"])
+            diag_.error(loc(v), "'max' on bit field '" + (n["name"] ? to_str(n["name"]) : std::string()) +
+                                    "' is not a value limit: use min_value / max_value (or min_raw / max_raw for the raw bits)");
+        check_keys(n, {"name", "bits", "type", "enum", "scale", "offset", "const", "doc", "min_value", "max_value",
+                       "min_raw", "max_raw", "max"},
+                   "bit field");
         if (auto v = n["name"]) b.name = to_str(v);
         else diag_.error(b.loc, "bit field needs a 'name'");
         if (auto v = n["bits"]) b.bits = static_cast<unsigned>(to_size(v));
@@ -330,6 +383,7 @@ private:
         if (auto v = n["offset"]) b.offset_value = to_double(v);
         if (auto v = n["const"]) b.const_value = to_int(v);
         if (auto v = n["doc"]) b.doc = to_str(v);
+        load_limits(n, b.limits);
         return b;
     }
 
@@ -355,7 +409,8 @@ private:
 
         check_keys(n, {"name", "type", "endian", "bit_order", "fields", "count", "length", "size", "max", "of",
                        "when", "optional", "scale", "offset", "unit", "conversions", "crc", "doc", "const",
-                       "terminator", "padding", "base", "width", "precision"},
+                       "terminator", "padding", "base", "width", "precision", "min_value", "max_value", "min_raw",
+                       "max_raw"},
                    element ? "array element" : "field");
         if (auto v = n["name"]) f->name = to_str(v);
         else if (!element) diag_.error(f->loc, "field needs a 'name'");
@@ -419,6 +474,7 @@ private:
         if (auto v = n["base"]) f->base = static_cast<int>(to_int(v));
         if (auto v = n["width"]) f->width = static_cast<int>(to_int(v));
         if (auto v = n["precision"]) f->precision = static_cast<int>(to_int(v));
+        load_limits(n, f->limits);
         return f;
     }
 

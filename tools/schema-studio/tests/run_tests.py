@@ -40,6 +40,7 @@ CROSSREF_SCHEMAS = {
     "fieldcrc": "tests/schemas/fieldcrc.yaml",
     "framing": "tests/schemas/framing.yaml",
     "enums": "tests/schemas/enums.yaml",
+    "limits": "tests/schemas/limits.yaml",
     "stuffed": "tests/schemas/stuffed.yaml",
     "nmea": "tests/schemas/nmea.yaml",
     "sht4x": "examples/sensirion_sht4x/sht4x.yaml",

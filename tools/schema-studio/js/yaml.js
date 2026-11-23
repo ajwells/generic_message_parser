@@ -95,9 +95,16 @@
       else if (f.lenMode === 'terminator') o.terminator = raw(G.isInt(f.terminator) ? f.terminator : '0');
     }
     if (kind === 'array') {
-      o.of = has(f.ofEndian) && !text ? flow({ type: f.of, endian: f.ofEndian }) : f.of;
+      const el = f.ofLimits || {};
+      if ((has(f.ofEndian) && !text) || G.hasLimits(el)) {
+        const eo = { type: f.of };
+        if (has(f.ofEndian) && !text) eo.endian = f.ofEndian;
+        for (const k of G.LIMIT_KEYS) if (has(el[k])) eo[k] = raw(String(el[k]).trim());
+        o.of = flow(eo);
+      } else o.of = f.of;
     }
-    if (['bytes', 'string', 'array'].includes(kind) && has(f.max)) o.max = raw(f.max.trim());
+    // `max` is exported wherever it is set: gmpc (and validation) report it where it has no effect
+    if (has(f.max)) o.max = raw(f.max.trim());
     if (kind === 'string' && f.lenMode === 'fixed' && f.padding !== '' && f.padding != null && !text) o.padding = f.padding;
     if (has(f.const)) o.const = raw(f.const.trim());
     if (!text && has(f.crc) && ['int', 'float', 'bool', 'char', 'enum'].includes(kind)) {
@@ -114,6 +121,7 @@
     if (has(f.scale)) o.scale = numOrStr(f.scale);
     if (has(f.offset)) o.offset = numOrStr(f.offset);
     if (has(f.unit)) o.unit = f.unit;
+    for (const k of G.LIMIT_KEYS) if (has(f[k])) o[k] = raw(String(f[k]).trim());
     const convs = (f.conversions || []).filter((c) => has(c.name));
     if (convs.length && ['int', 'float'].includes(kind)) {
       const map = {};
@@ -146,6 +154,7 @@
         if (has(b.const)) bo.const = raw(b.const);
         if (has(b.scale)) bo.scale = numOrStr(b.scale);
         if (has(b.offset)) bo.offset = numOrStr(b.offset);
+        for (const k of G.LIMIT_KEYS) if (has(b[k])) bo[k] = raw(String(b[k]).trim());
         if (has(b.doc)) bo.doc = b.doc;
         return flow(bo);
       });
@@ -374,6 +383,35 @@
 
   const str = (v) => (v === undefined || v === null ? '' : String(v));
   const hexOrDec = (v) => (typeof v === 'number' && v > 9 ? '0x' + v.toString(16).toUpperCase() : str(v));
+  const limitsFrom = (y) => Object.fromEntries(G.LIMIT_KEYS.map((k) => [k, str(y ? y[k] : undefined)]));
+
+  /** js-yaml's default schema, except that integers beyond 2^53 load as exact BigInts instead of rounded Numbers
+   *  (u64 limits, consts and CRC parameters). */
+  let exactSchema = null;
+  function yamlSchema() {
+    if (exactSchema) return exactSchema;
+    const J = window.jsyaml, base = J.types.int;
+    const int = new J.Type('tag:yaml.org,2002:int', {
+      kind: 'scalar',
+      resolve: base.resolve,
+      construct: (data) => {
+        const v = base.construct(data);
+        if (Number.isSafeInteger(v)) return v;
+        let t = String(data).replace(/_/g, '');
+        const neg = t[0] === '-';
+        if (t[0] === '-' || t[0] === '+') t = t.slice(1);
+        const big = BigInt(t);  // decimal, 0x, 0o and 0b
+        return neg ? -big : big;
+      },
+      predicate: (o) => typeof o === 'bigint' || base.predicate(o),
+    });  // load only: no represent / style options
+    const T = J.types;
+    exactSchema = J.FAILSAFE_SCHEMA.extend({
+      implicit: [T.null, T.bool, int, T.float, T.timestamp, T.merge],
+      explicit: [T.binary, T.omap, T.pairs, T.set],
+    });
+    return exactSchema;
+  }
 
   function patternFromYaml(v) {
     if (v === undefined || v === null) return { mode: 'hex', text: '' };
@@ -403,6 +441,7 @@
       const: y.const === undefined ? '' : hexOrDec(y.const), when: str(y.when), optional: !!y.optional,
       base: str(y.base), width: str(y.width), precision: str(y.precision),
       padding: y.padding === undefined ? '' : str(y.padding),
+      ...limitsFrom(y),
     });
     const len = y.length ?? y.size ?? y.count;
     if (len !== undefined) lenFromYaml(f, len);
@@ -410,7 +449,7 @@
     if (f.type === 'pad') f.padSize = str(len ?? 1);
     if (y.of !== undefined) {
       if (typeof y.of === 'string') f.of = y.of;
-      else { f.of = str(y.of.type); f.ofEndian = str(y.of.endian); }
+      else { f.of = str(y.of.type); f.ofEndian = str(y.of.endian); f.ofLimits = limitsFrom(y.of); }
     }
     if (y.crc !== undefined) {
       if (y.crc && typeof y.crc === 'object' && y.crc.crc) {
@@ -426,7 +465,7 @@
     if (Array.isArray(y.fields)) {
       f.bits = y.fields.map((b) => (b.pad !== undefined
         ? G.newBit({ pad: true, bits: str(b.pad) })
-        : G.newBit({ name: str(b.name), bits: str(b.bits), type: str(b.enum || b.type), const: b.const === undefined ? '' : hexOrDec(b.const), scale: str(b.scale), offset: str(b.offset), doc: str(b.doc) })));
+        : G.newBit({ name: str(b.name), bits: str(b.bits), type: str(b.enum || b.type), const: b.const === undefined ? '' : hexOrDec(b.const), scale: str(b.scale), offset: str(b.offset), doc: str(b.doc), ...limitsFrom(b) })));
     }
     return f;
   }
@@ -439,7 +478,7 @@
   };
 
   G.fromYaml = (text) => {
-    const y = window.jsyaml.load(text) || {};
+    const y = window.jsyaml.load(text, { schema: yamlSchema() }) || {};
     if (typeof y !== 'object') throw new Error('The YAML root must be a mapping');
     const s = G.emptyState();
     s.schema.namespace = str(y.namespace);

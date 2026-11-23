@@ -159,7 +159,7 @@ static inline void test_enums_sample_flags_pack(const test_enums_sample_flags* g
     gmsg_set_bits(p, 0, 2, (uint64_t)g->mode, GMSG_MSB_FIRST);
     gmsg_set_bits(p, 2, 6, 0, GMSG_MSB_FIRST);
 }
-/* Validate constant and strict-enum bit fields of the raw group bytes. */
+/* Validate constant, strict-enum and limited bit fields of the raw group bytes. */
 static inline gmsg_error test_enums_sample_flags_check(const uint8_t* p) {
     (void)p;
     if (!test_enums_mode_is_known((test_enums_mode)gmsg_get_bits(p, 0, 2, GMSG_MSB_FIRST))) return GMSG_ERR_UNKNOWN_ENUM;

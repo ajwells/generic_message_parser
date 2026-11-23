@@ -76,7 +76,7 @@ static inline void vehicle_can_engine_data_signals_pack(const vehicle_can_engine
     gmsg_set_bits(p, 44, 4, (uint64_t)INT64_C(1), GMSG_LSB_FIRST);
     gmsg_set_bits(p, 48, 16, (uint64_t)g->flags, GMSG_LSB_FIRST);
 }
-/* Validate constant and strict-enum bit fields of the raw group bytes. */
+/* Validate constant, strict-enum and limited bit fields of the raw group bytes. */
 static inline gmsg_error vehicle_can_engine_data_signals_check(const uint8_t* p) {
     (void)p;
     if (gmsg_get_bits(p, 44, 4, GMSG_LSB_FIRST) != (uint64_t)INT64_C(1)) return GMSG_ERR_BAD_CONST;

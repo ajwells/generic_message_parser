@@ -252,15 +252,17 @@ Array views:
 | `const` | integer / enum / bool / char | Fixed (magic) value. Decode fails with `BadConst` on mismatch. Encode writes it automatically. There is no struct member or view accessor; the struct gets a `static constexpr <name>_value`. |
 | `scale`, `offset` | numeric scalars | Engineering conversion: `value = raw * scale + offset`. The raw value is stored and transmitted. Adds `<name>_scaled()` to struct and view, and `set_<name>_scaled(double)` to the struct (rounds to nearest for integers). |
 | `conversions` | numeric scalars | Additional named conversions next to `scale`/`offset`, e.g. a temperature in both °C and °F. A mapping of name → `{ scale, offset, unit }`. Each adds `<name>_<conversion>()` to struct and view, and `set_<name>_<conversion>(double)` to the struct. See [field checksums and conversions](#field-checksums-and-conversions). |
+| `min_value`, `max_value` | numeric scalars, array elements (in `of`) | Inclusive limits on the value: the scaled value (`raw * scale + offset`) when the field has `scale`/`offset`, else the value itself. Decode (struct read and view `from()`) and encode fail with `ValueOutOfLimits` outside them; NaN always fails. See [value limits](#value-limits). |
+| `min_raw`, `max_raw` | numeric scalars, array elements (in `of`) | Inclusive limits on the raw wire value (an integer for integer types, checked exactly). Same errors as `min_value`/`max_value`; both pairs can be combined. |
 | `crc` | binary scalars and enums | A checksum of this field's value bytes, stored right after them, e.g. `crc: crc8_nrsc5` for Sensirion sensors. Takes the same values as a protocol checksum's `algo`. See [field checksums and conversions](#field-checksums-and-conversions). |
 | `unit` | all | Documentation only; appears in generated comments. |
 | `doc` | all | Documentation comment. |
 | `length` (alias `size`) | `bytes`, `string`, `pad` | Number of bytes: a number, an expression, or `remaining`. See [lengths and counts](#lengths-and-counts). |
 | `count` | `array` | Number of elements: a number, an expression, or `remaining`. |
 | `terminator` | `bytes`, `string` | End marker byte (e.g. `0` for C strings). Read up to and including it; written after the data. Cannot be combined with `length`. |
-| `max` | variable-length `bytes`/`string`/`array`; text `string` | Capacity of the struct container. Required when the message has a struct. Decode fails with `OutOfRange` if the wire data is longer. |
+| `max` | variable-length `bytes`/`string`/`array`; text `string` | Capacity of the struct container. Required when the message has a struct. Decode fails with `OutOfRange` if the wire data is longer. It is **not** a value limit (use `min_value`/`max_value`): gmpc reports `max` on any other field, and on a fixed-size field whose size it does not match, as an error. |
 | `padding` | fixed-length `string` | Pad character: a character such as `" "`, or a byte value. Default `\0`. Stripped on decode; fills the remainder on encode. |
-| `of` | `array` | Element type: a type name (`of: i16`) or a mapping (`of: { type: u16, endian: little }`). Elements may be scalars, enums, messages, or custom types (custom only with `access: struct`). Nested arrays are not supported; wrap the inner array in a message. |
+| `of` | `array` | Element type: a type name (`of: i16`) or a mapping (`of: { type: u16, endian: little, max_value: 1000 }`, which can also carry value limits). Elements may be scalars, enums, messages, or custom types (custom only with `access: struct`). Nested arrays are not supported; wrap the inner array in a message. |
 | `when` | binary fields | Condition [expression](#expressions). The field is on the wire only when it is true, and becomes `std::optional` in struct and view. On encode it is written when the condition holds, and fails with `MissingField` if the optional is empty. |
 | `optional` | text fields | An empty token is accepted and maps to `std::nullopt`. Without it, an empty token is a `MissingField` error. |
 | `fields` | `bits` | The bit fields of the group. |
@@ -268,6 +270,35 @@ Array views:
 | `base` | text integers / enums | Number base for parsing and writing (`10` default, `16` for hex). |
 | `width` | text numbers | Minimum digits when encoding, zero padded (`width: 2` gives `08`). Ignored on decode. |
 | `precision` | text floats | Decimal places when encoding (`precision: 3` gives `4807.038`). The default `-1` gives the shortest exact representation. |
+
+#### value limits
+
+A checksum proves that bytes arrived intact, not that the value makes sense: a humidity sensor can still report
+119 %RH. Value limits reject such values in the generated code:
+
+```yaml
+- { name: humidity, type: u16, scale: 0.0019073486328125, offset: -6, unit: "%RH", min_value: 0, max_value: 100 }
+- { name: fan, type: u8, max_raw: 3 }                       # the raw wire value
+- { name: levels, type: array, of: { type: u16, min_raw: 10, max_raw: 1000 }, count: 2 }
+```
+
+- `min_value` / `max_value` compare the scaled value, computed exactly as `<name>_scaled()` does, or the value itself
+  when the field has no `scale`/`offset`. `min_raw` / `max_raw` compare the raw wire value. Integer limits on raw
+  integers compare exactly, also for `u64`/`i64`.
+- Limits are inclusive, and both pairs can be combined. A NaN fails any limit.
+- On decode, the struct read and the view's `from()` fail with `ValueOutOfLimits`. On encode, `write`/`encode` (and
+  protocol `encode`) fail with it before writing. Text messages check when a token is parsed (struct decode, view
+  accessors) and on encode.
+- They apply to numeric scalars, numeric bit fields (see [bit fields](#bit-fields)), array elements (in `of`) and
+  text tokens. Optional and conditional fields are checked only when present; a derived length field is checked
+  with the value it gets on encode.
+- gmpc rejects limits that cannot work:
+  - limits on enums (use `strict`), bools, chars, `const` fields and non-numeric fields
+  - a raw limit that is not an integer for an integer type
+  - an integer limit outside the raw type's range (or the bit field's width)
+  - a minimum greater than its maximum
+
+`max` is not a value limit: it is the capacity of a variable-length container.
 
 #### field checksums and conversions
 
@@ -369,6 +400,7 @@ generated accessor such as `<field>_scaled`.
 | `type` | Storage type: `bool` or an integer type (`u8`…`u64`, `i8`…`i64`). Defaults to `bool` for 1 bit, otherwise the smallest unsigned type that fits. Signed types sign-extend. |
 | `enum` | Store as this enum (alternative to `type`). |
 | `scale`, `offset` | Adds `<name>_scaled()` to the bits struct. |
+| `min_value`, `max_value`, `min_raw`, `max_raw` | [Value limits](#value-limits) (numeric bit fields): the scaled value / the raw bits. A raw limit must fit the bit width. Checked on decode and encode. |
 | `const` | Required value; checked on decode, written on encode, no member. |
 | `{ pad: N }` | N unused bits. |
 
@@ -975,6 +1007,7 @@ readable name.
 | `ParseError` | A text token is not a valid number/character. |
 | `MissingField` | A required text token is empty, or a conditional field's optional is empty on encode. |
 | `UnknownEnum` | A field of a `strict` enum holds a value that is not declared (on decode, or in a struct being encoded). |
+| `ValueOutOfLimits` | A value is outside its `min_value`/`max_value`/`min_raw`/`max_raw` (on decode, or in a struct being encoded). |
 | `InvalidValue`, `Custom` | For use by custom codecs. |
 
 ## C output

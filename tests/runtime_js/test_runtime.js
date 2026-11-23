@@ -29,6 +29,8 @@ const attempt = (fn) => {
 // ==================================================================================================================
 T.test('error codes and texts match gmp::Error', () => {
   T.eq(Err.UnknownEnum, 14);
+  T.eq(Err.ValueOutOfLimits, 15);
+  T.eq(gmsg.errorText(Err.ValueOutOfLimits), 'value out of limits');
   T.eq(gmsg.errorText(Err.BadChecksum), 'bad checksum');
   T.eq(gmsg.errorText(Err.UnknownType), 'unknown message type');
   const e = new gmsg.GmpError(Err.Truncated);

@@ -18,6 +18,7 @@
 #include "computed.gmp.hpp"
 #include "custom.gmp.hpp"
 #include "enums.gmp.hpp"
+#include "limits.gmp.hpp"
 #include "fieldcrc.gmp.hpp"
 #include "framing.gmp.hpp"
 #include "hdlc.gmp.hpp"
@@ -340,6 +341,54 @@ int main() {
     GMP_MSG("enums", en, Sample, sa);
     GMP_MSG("enums", en, Tail, tl);
     GMP_MSG("enums", en, Line);
+
+    // ---- value limits ----------------------------------------------------------------------------------
+    namespace li = test::limits;
+    auto limits_sample = [](bool edge) {
+        li::Sample s;
+        s.humidity = edge ? 3146 : 30000;
+        s.temp = edge ? -304 : 1250;
+        s.big = edge ? 0x8000000000000000ull : 0xFFFFFFFFFFFFFFFEull;
+        s.neg = edge ? -1 : INT64_MIN;
+        s.ratio = edge ? 1.5f : -1.5f;
+        s.wide = edge ? 1e300 : -1e300;
+        s.flags.level = edge ? 5 : 0;
+        s.flags.trim = edge ? -10 : 15;
+        s.flags.gain = edge ? 200 : 0;
+        s.levels = {static_cast<std::uint16_t>(edge ? 10 : 1000), static_cast<std::uint16_t>(edge ? 1000 : 10)};
+        s.inner.pct = edge ? 100 : 0;
+        for (int k = 0; k < (edge ? 3 : 1); ++k) (void)s.more.push_back(static_cast<std::int8_t>(edge ? -50 : 127));
+        s.n = static_cast<std::uint8_t>(s.more.size());
+        if (edge) s.opt = 2;
+        return s;
+    };
+    li::Tail lt;
+    lt.rest = {500, 0, 499};
+    li::Line ll;
+    ll.speed = 99.5;
+    ll.count = 999;
+    ll.opt = -5;
+    ll.level = 500;
+    GMP_MSG("limits", li, Inner);
+    {
+        // every byte of both samples changed (one at a time): reaches each limit, including bit fields
+        std::vector<Bytes> seeds{encode(limits_sample(true)), encode(limits_sample(false))};
+        for (const auto& base : std::vector<Bytes>(seeds))
+            for (std::size_t i = 0; i < base.size(); ++i)
+                for (const std::uint8_t x : {std::uint8_t{0x01}, std::uint8_t{0x80}, std::uint8_t{0xFF}}) {
+                    Bytes b = base;
+                    b[i] ^= x;
+                    seeds.push_back(b);
+                }
+        message<li::Sample, li::SampleView>("limits", "Sample", seeds);
+    }
+    GMP_MSG("limits", li, Tail, lt);
+    {
+        std::vector<Bytes> seeds{encode(ll)};
+        for (const char* t : {"99.6,1,,1", "-0.5,1,,1", "nan,1,,1", "inf,1,,1", "1,1000,,1", "1,1,-6,1", "1,1,,501", "0,0,,0"})
+            seeds.emplace_back(t, t + std::char_traits<char>::length(t));
+        message<li::Line, li::LineView>("limits", "Line", seeds);
+    }
 
     // ---- framing ---------------------------------------------------------------------------------------
     namespace fr = test::framing;

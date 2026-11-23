@@ -14,6 +14,7 @@ gmp_generate(TARGET gmp_test_schemas_c LANG c
         ${SCHEMA_DIR}/custom.yaml
         ${SCHEMA_DIR}/fieldcrc.yaml
         ${SCHEMA_DIR}/enums.yaml
+        ${SCHEMA_DIR}/limits.yaml
         ${SCHEMA_DIR}/computed.yaml
         ${SCHEMA_DIR}/stuffed.yaml
         ${SCHEMA_DIR}/framing.yaml

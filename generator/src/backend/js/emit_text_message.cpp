@@ -14,15 +14,22 @@ std::string fail(const char* err) { return std::string("gmsg.fail(Err.") + err +
 std::string q(const std::string& s) { return "'" + s + "'"; }
 
 
+/// `s` (an expression parsing a token) wrapped so values outside the field's limits throw ValueOutOfLimits.
+std::string with_limits(const Field& f, const std::string& s) {
+    if (f.limit_checks.empty()) return s;
+    return "((v) => { if (" + limit_fail(f.limit_checks, "v", f.prim, f.scale, f.offset_value) + ") " +
+           "gmsg.fail(Err.ValueOutOfLimits); return v; })(" + s + ")";
+}
+
 /// Expression parsing token `t` into the field's value (throws GmpError).
 std::string parse_call(Ctx& c, const Field& f, const std::string& t) {
     switch (f.kind) {
         case FieldKind::Scalar:
-            if (f.prim == Prim::F32) return "gmsg.text.parseFloat(" + t + ", true)";
-            if (f.prim == Prim::F64) return "gmsg.text.parseFloat(" + t + ")";
+            if (f.prim == Prim::F32) return with_limits(f, "gmsg.text.parseFloat(" + t + ", true)");
+            if (f.prim == Prim::F64) return with_limits(f, "gmsg.text.parseFloat(" + t + ")");
             if (f.prim == Prim::Char) return "gmsg.text.parseChar(" + t + ")";
             if (f.prim == Prim::Bool) return "(gmsg.text.parseInt(" + t + ", 'i32') !== 0)";
-            return "gmsg.text.parseInt(" + t + ", " + q(prim_id(f.prim)) + ", " + std::to_string(f.base) + ")";
+            return with_limits(f, "gmsg.text.parseInt(" + t + ", " + q(prim_id(f.prim)) + ", " + std::to_string(f.base) + ")");
         case FieldKind::Enum: {
             const auto s = "gmsg.text.parseInt(" + t + ", " + q(prim_id(f.enum_def->underlying)) + ", " + std::to_string(f.base) + ")";
             if (f.enum_def->strict) return "gmsg.knownEnum(" + f.enum_def->name + ", " + s + ")";
@@ -151,6 +158,8 @@ void emit_struct(Ctx& c, const Message& m) {
             w.line("if (" + value + ".length > " + sz(f.max.value_or(0)) + ") " + fail("OutOfRange"));
         if (f.kind == FieldKind::Enum && f.enum_def->strict && !f.const_value)
             w.line("if (!" + f.enum_def->name + ".isKnown(" + value + ")) " + fail("UnknownEnum"));
+        if (!f.limit_checks.empty())
+            w.line("if (" + limit_fail(f.limit_checks, value, f.prim, f.scale, f.offset_value) + ") " + fail("ValueOutOfLimits"));
         w.line(write_call(c, f, value));
         if (f.optional) w.close();
     }

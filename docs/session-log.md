@@ -23,7 +23,7 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 - Toolchain PATH (Git Bash):
   `export PATH="/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/mingw/bin:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/ninja/win/x64:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin:$PATH"`
   (MinGW GCC 15, Ninja, CMake; yaml-cpp and Catch2 via FetchContent).
-- Debug build + tests: `cmake --build build && ctest --test-dir build` (238 tests, all passing, including `gmp_studio_tests`, the C runtime tests in C11 / C99 / library builds, the generated-C cross-checks, the JS runtime and generated-JS cross-checks and `gmp_studio_gmpc_fresh`). Keep the MinGW `bin` on PATH when running ctest: without it the test executables fail with 0xc0000139.
+- Debug build + tests: `cmake --build build && ctest --test-dir build` (254 tests, all passing, including `gmp_studio_tests`, the C runtime tests in C11 / C99 / library builds, the generated-C cross-checks, the JS runtime and generated-JS cross-checks and `gmp_studio_gmpc_fresh`). Keep the MinGW `bin` on PATH when running ctest: without it the test executables fail with 0xc0000139.
 - Node.js: none on PATH; CMake finds the copy inside emsdk (`~/emsdk/node/24.19.0_64bit/node.exe`, variable `GMP_NODE`). JS tests: `node tests/runtime_js/test_runtime.js build/tests/runtime_js/gmp_js_vectors.exe` and `node tests/roundtrip_js/test_generated.js build/tests/roundtrip_js/gmp_js_crossref.exe build/tests/roundtrip_js/gen`.
 - emsdk is installed in `~/emsdk` (latest). It needs Python 3.10+: a portable Python 3.12 is in `~/tools/python312`, and emsdk brings Python 3.13 and Node. `py tools/schema-studio/gmpc/build.py` (with the CLion CMake + Ninja on PATH) builds `gmpc.wasm` in `build-wasm/` (about 20 s) and writes `tools/schema-studio/gmpc/gmpc.js`, `gmpc.stamp`, `gmpc-info.js`. Rebuild after any change under `generator/` (the freshness test fails otherwise).
 - Release build: `cmake --build build-release` (Release, bench ON, tests and examples OFF; it is a compile check only).
@@ -95,6 +95,12 @@ Schema / generator:
   up to 16 reserved bytes, `checksum.over: wire`, `length.counts: wire` (only with `covers: body | body_checksum`, and
   `body_checksum` then needs `checksum.covers: body`).
 - Strict schema loading: unknown keys are errors, renamed keys report their new name.
+- Value limits: `min_value` / `max_value` (scaled value, or the value without scale/offset) and `min_raw` / `max_raw`
+  (wire value, exact integers) on numeric scalars, numeric bit fields, array elements (`of: { type, max_raw }`) and
+  text tokens. Decode (struct read, view `from()`, text token parse) and encode fail with `ValueOutOfLimits` (15);
+  inclusive; NaN fails. IR `Limits` / `LimitCheck` (lowering derives the checks, drops no-op extremes, validates
+  ranges); each backend renders them with `limit_fail()` in its common file. `max` where it has no effect (and a
+  `max` that does not match a fixed size) is an error pointing to min_value / max_value.
 - `print_to(gmp::Printer&)` on every struct, view and bits group (binary and text). Same text from a struct and its view.
 
 Runtime:
@@ -294,9 +300,8 @@ C runtime (`runtime-c/`, for the C backend):
 | task | notes |
 |------|-------|
 | GMP skill evals, iteration 2 | Run all 7 cases in `skills/gmp/evals/` (4 new, harder ones), with the skill and with a baseline; runs must not read `skills/gmp/evals`. See memory note `skill-eval-todo`. |
-| Warn on `max` for scalars | `gmpc` silently ignores `max:` on a scalar field (users mistake it for a value limit). Make it a warning or error; part of the value-range work. |
 | ASCII numeric fields in binary messages | `{ type: u16, encoding: ascii, size: 4 }`, usable as length/count sources |
-| Field value ranges | min/max *value* limits (not `max`, which is capacity): reject or clamp, raw or scaled, encode too |
+| Value limits: clamping (not requested) | Value limits reject; an opt-in clamp (e.g. SHT4x humidity, where slightly out-of-range values are normal) was offered and deferred. Memory note `field-value-range-todo`. |
 | Bad length handling | per-message size check from the type id; `flush_partial()` for idle links; optional header checksum. Also: a frame whose length field is *longer* than its message is accepted and the extra bytes are ignored (found by a skill-eval run). Decide whether to offer an exact-size check. |
 | Stream I/O + callbacks | decided: do all four, one at a time. **A** stored handler / callbacks: **done**. **C** ISR-safe ring buffer: design presented, **tabled** (open questions C1–C6 in the memory note). **B** pull API: **done**. Remaining: **C** (when resumed) and **D**, an endpoint with source/sink adapters, `send(msg)` and a blocking `wait_for<V>(timeout)` / `transact`. |
 | `gmp::to_text<N>(msg)` (small, optional) | printing helper returning a fresh `gmp::static_string<N>` instead of appending to a sink |
@@ -307,6 +312,35 @@ Each planned task has a detailed note (with open questions to ask the user) in t
 project.
 
 ## 8. Session history
+
+### 2026-11-22 (value limits; `max` misuse is an error)
+- Decisions (user): `max` where it has no effect is an error (also on fixed-size containers when it does not match
+  the size), and the error points to the new keys; add `min_value` / `max_value` (scaled) and `min_raw` / `max_raw`
+  (wire) as separate keys; reject on decode; check on encode; a new error code.
+- Runtimes: `Error::ValueOutOfLimits` = 15 (C `GMSG_ERR_VALUE_OUT_OF_LIMITS`, `GMSG_ERROR_COUNT` 16, JS
+  `Err.ValueOutOfLimits`, text "value out of limits").
+- Generator: loader keys (fields, bit fields, `of` mappings; `max` on a bit field is a targeted loader error);
+  lowering `check_max` / `resolve_limits` (exact integer limits, range checks per type or bit width, min <= max,
+  no-op extremes dropped, `field_needs_validation` true with limits). C++ / C / JS: struct read and write, bits
+  `check()` and write, view validation (scalars, fixed / counted / remaining arrays), text parse and write.
+- Tests: new `tests/schemas/limits.yaml` (in goldens, roundtrip, roundtrip_c, roundtrip_js, Studio crossref);
+  `tests/roundtrip/test_limits.cpp`; diagnostics cases; C cross-checks (binary, text, encode errors); JS cross-check
+  messages; Studio crossref now also writes `outcomes` (mutated inputs: decodes or not) checked for both Studio
+  engines. Planted bugs in every backend and in lowering were caught (see the mutant list in this entry's session).
+- Studio: model keys (`ofLimits` for elements), YAML import/export (`max` is exported wherever
+  set so gmpc / validation report it, and the editor shows a leftover Max so it can be cleared), editor inputs
+  (4-column grid, bit table columns), tooltips, validation (mirrors lowering), Quick decoder (`G.limitError`), unit
+  tests, Guide "Value limits" subsection with a live demo, error table row. Found and fixed a Quick decoder bug:
+  array elements checked bounds at the enclosing message position, so a large count read past the end and threw.
+  Also fixed: YAML import read integers beyond 2^53 as rounded Numbers (u64 limits, consts, CRC parameters); it now
+  loads with a js-yaml schema whose int type returns exact BigInts (`yamlSchema()` in `js/yaml.js`).
+- Docs: README (field keys, "value limits" section, bit fields, errors), docs/schema.md, SKILL.md + references; the
+  skill eval case `humidity-range-check` was rewritten for the new behaviour (prompt, expected outcome, graders).
+- Planted bugs: 12 (C++ / C / JS backends, lowering); 4 were missed at first (JS 64-bit compares, JS bits, JS text
+  floats, lowering no-op dropping) and caught after adding a u64 max_raw near 2^64, exhaustive byte mutations in the
+  JS cross-check, out-of-limits text seeds and a lowering test.
+- Not changed: the SHT4x example keeps "clamp if needed" (limits reject; slightly out-of-range humidity is normal).
+- End state: 254 ctest pass, Studio 731 checks pass, Release build compiles. Not committed.
 
 ### 2026-11-22 (JS findings decided: checksum-first unescape, unbounded float tokens, f32 NaN accepted)
 - Decisions (user): 1. C++ / C unescape only after the checksum passes; 2. enlarge the C++ float token buffer as

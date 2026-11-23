@@ -26,10 +26,11 @@
   const Err = Object.freeze({
     None: 0, Truncated: 1, BadSync: 2, BadChecksum: 3, BadLength: 4, BadDelimiter: 5, BadConst: 6, OutOfRange: 7,
     UnknownType: 8, BufferFull: 9, ParseError: 10, MissingField: 11, InvalidValue: 12, Custom: 13, UnknownEnum: 14,
+    ValueOutOfLimits: 15,
   });
   const ERR_TEXT = ['none', 'truncated', 'bad sync', 'bad checksum', 'bad length', 'bad delimiter', 'bad constant',
     'out of range', 'unknown message type', 'buffer full', 'parse error', 'missing field', 'invalid value',
-    'custom error', 'unknown enum value'];
+    'custom error', 'unknown enum value', 'value out of limits'];
   const ERR_NAME = Object.keys(Err);
 
   /** Text of an error code (gmp::to_string(Error)). */

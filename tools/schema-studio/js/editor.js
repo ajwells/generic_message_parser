@@ -275,9 +275,12 @@
     else if (f.lenMode === 'terminator') valueCtl = field('Terminator', input(`${path}.terminator`, f.terminator, { placeholder: '0', mono: true }), 'byte value');
     else valueCtl = `<div class="callout" style="align-self:end">Consumes the rest of the message (last field only).</div>`;
     const variable = f.lenMode !== 'fixed';
+    // fixed size: no capacity of its own; a leftover max stays visible (and editable) until it matches or is cleared
+    const maxCtl = variable ? field('Max', input(`${path}.max`, f.max, { placeholder: 'capacity', mono: true }), 'struct capacity')
+      : String(f.max || '').trim() ? field('Max', input(`${path}.max`, f.max, { mono: true }), 'must equal the fixed size, or clear it') : '';
     return `${field(isArr ? 'Count mode' : 'Length mode', select(`${path}.lenMode`, f.lenMode, modes))}
       ${valueCtl}
-      ${variable ? field('Max', input(`${path}.max`, f.max, { placeholder: 'capacity', mono: true }), 'struct capacity') : ''}`;
+      ${maxCtl}`;
   }
 
   function fieldBody(s, owner, f, path, text) {
@@ -304,7 +307,10 @@
       parts.push(field('Element type', select(`${path}.of`, f.of, elemOptions(s, owner))));
       const ek = G.fieldKind(s, { type: f.of });
       if (['int', 'float', 'enum'].includes(ek)) parts.push(field('Element endian', select(`${path}.ofEndian`, f.ofEndian, inherit(['big', 'little'], 'field'))));
+      if (['int', 'float'].includes(ek)) parts.push(limitControls(`${path}.ofLimits`, f.ofLimits || {}, false, 'Element '));
     }
+    if (!['bytes', 'string', 'array'].includes(kind) && String(f.max || '').trim())
+      parts.push(field('Max', input(`${path}.max`, f.max, { mono: true }), 'not a value limit: clear it'));
     if (kind === 'string' && text) parts.push(field('Max length', input(`${path}.max`, f.max, { placeholder: '32', mono: true }), 'struct capacity'));
     if (kind === 'string' && !text && f.lenMode === 'fixed') parts.push(field('Padding char', input(`${path}.padding`, f.padding, { placeholder: '\\0', mono: true }), 'stripped on decode'));
     if (['int', 'enum', 'bool', 'char'].includes(kind)) parts.push(field('Const', input(`${path}.const`, f.const, { placeholder: 'none', mono: true }), 'magic value'));
@@ -330,6 +336,7 @@
       parts.push(field('Scale', input(`${path}.scale`, f.scale, { placeholder: '1', mono: true }), 'value = raw × scale + offset'));
       parts.push(field('Offset', input(`${path}.offset`, f.offset, { placeholder: '0', mono: true })));
     }
+    if (['int', 'float'].includes(kind)) parts.push(limitControls(path, f, !!(f.scale || f.offset)));
     if (text && ['int', 'enum'].includes(kind)) parts.push(field('Base', select(`${path}.base`, f.base, [['', '10 (default)'], ['16', '16 (hex)']])));
     if (text && ['int', 'float', 'enum'].includes(kind)) parts.push(field('Width', input(`${path}.width`, f.width, { placeholder: '0', mono: true }), 'zero padded on encode'));
     if (text && kind === 'float') parts.push(field('Precision', input(`${path}.precision`, f.precision, { placeholder: 'shortest', mono: true }), 'decimals on encode'));
@@ -341,6 +348,17 @@
     if (kind === 'bits') html += bitsEditor(s, f, path);
     if (['int', 'float'].includes(kind)) html += conversionsEditor(f, path);
     return html;
+  }
+
+  /** min_value / max_value (scaled value when the field is scaled) and min_raw / max_raw (wire value). */
+  function limitControls(path, o, scaled, prefix = '') {
+    const ph = (k) => (k.startsWith('min') ? 'no minimum' : 'no maximum');
+    return `<div class="span-2"><div class="grid four">
+      ${field(prefix + 'Min value', input(`${path}.min_value`, o.min_value, { placeholder: ph('min'), mono: true }), scaled ? 'scaled value' : 'value')}
+      ${field(prefix + 'Max value', input(`${path}.max_value`, o.max_value, { placeholder: ph('max'), mono: true }), scaled ? 'scaled value' : 'value')}
+      ${field(prefix + 'Min raw', input(`${path}.min_raw`, o.min_raw, { placeholder: ph('min'), mono: true }), 'wire value')}
+      ${field(prefix + 'Max raw', input(`${path}.max_raw`, o.max_raw, { placeholder: ph('max'), mono: true }), 'wire value')}
+    </div></div>`;
   }
 
   /** Extra named conversions: each becomes a <field>_<name>() accessor. */
@@ -371,7 +389,7 @@
     const rows = f.bits.map((b, k) => {
       const bp = `${path}.bits.${k}`;
       if (b.pad) {
-        return `<tr><td><span class="badge">padding</span></td><td class="narrow">${input(`${bp}.bits`, b.bits, { mono: true })}</td><td colspan="3"></td>
+        return `<tr><td><span class="badge">padding</span></td><td class="narrow">${input(`${bp}.bits`, b.bits, { mono: true })}</td><td colspan="7"></td>
           <td style="width:84px">${iconBtn('up', 'move', `data-path="${bp}" data-dir="-1"`, 'Up')}${iconBtn('down', 'move', `data-path="${bp}" data-dir="1"`, 'Down')}${iconBtn('trash', 'delete', `data-path="${bp}"`, 'Remove', true)}</td></tr>`;
       }
       return `<tr>
@@ -380,6 +398,10 @@
         <td>${select(`${bp}.type`, b.type, bitTypeOptions(s))}</td>
         <td class="narrow">${input(`${bp}.const`, b.const, { placeholder: 'const', mono: true })}</td>
         <td class="narrow">${input(`${bp}.scale`, b.scale, { placeholder: 'scale', mono: true })}</td>
+        <td class="narrow">${input(`${bp}.min_value`, b.min_value, { placeholder: 'min', mono: true })}</td>
+        <td class="narrow">${input(`${bp}.max_value`, b.max_value, { placeholder: 'max', mono: true })}</td>
+        <td class="narrow">${input(`${bp}.min_raw`, b.min_raw, { placeholder: 'min raw', mono: true })}</td>
+        <td class="narrow">${input(`${bp}.max_raw`, b.max_raw, { placeholder: 'max raw', mono: true })}</td>
         <td style="width:84px">${iconBtn('up', 'move', `data-path="${bp}" data-dir="-1"`, 'Up')}${iconBtn('down', 'move', `data-path="${bp}" data-dir="1"`, 'Down')}${iconBtn('trash', 'delete', `data-path="${bp}"`, 'Remove', true)}</td>
       </tr>`;
     }).join('');
@@ -389,7 +411,7 @@
         <span class="outline-title">Bit fields · ${total} bits${rem ? ` <span style="color:var(--danger)">(${rem} short of a byte)</span>` : ` = ${total / 8} byte${total / 8 === 1 ? '' : 's'}`}</span>
         <span class="inline"><button class="btn small" data-action="addBit" data-path="${path}.bits">+ Bit field</button><button class="btn small" data-action="addBit" data-path="${path}.bits" data-pad="1">+ Pad</button>${rem ? `<button class="btn small" data-action="addBit" data-path="${path}.bits" data-pad="${rem}">Fill ${rem}</button>` : ''}</span>
       </div>
-      <table class="subtable"><thead><tr><th>Name</th><th>Bits</th><th>Type</th><th>Const</th><th>Scale</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      <table class="subtable"><thead><tr><th>Name</th><th>Bits</th><th>Type</th><th>Const</th><th>Scale</th><th>Min value</th><th>Max value</th><th>Min raw</th><th>Max raw</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
   }
 

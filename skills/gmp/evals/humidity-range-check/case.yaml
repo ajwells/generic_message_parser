@@ -1,8 +1,8 @@
 schema_version: "1.1"
 name: humidity-range-check
 expected_outcome: |
-  Explains that `max` is a container capacity (for strings, bytes and arrays), not a value limit, so on a scalar it
-  has no effect, and that GMP schemas currently have no min/max value-range check. Recommends removing `max` from
-  the field and checking the range in application code after decoding (e.g. reject when humidity_scaled() is
-  outside 0..100, or the raw value is above 10000), or wrapping the decode in a helper that does so. Does not
-  invent unsupported schema keys.
+  Explains that `max` is a container capacity (for variable-length strings, bytes and arrays), not a value limit,
+  which is why gmpc rejects it on a scalar field. Recommends replacing it with value limits in the schema:
+  `min_value: 0, max_value: 100` (compared with the scaled value, %RH) or `max_raw: 10000` (the raw wire value), and
+  says that decoding (struct and view) and encoding then fail with `ValueOutOfLimits` for 0xFFFF. Any schema it
+  shows passes `gmpc --check`, and it does not invent other schema keys.

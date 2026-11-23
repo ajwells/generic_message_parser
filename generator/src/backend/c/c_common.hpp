@@ -61,6 +61,10 @@ std::string count_type(std::size_t n);
 std::string int_literal(std::int64_t v);
 std::string typed_literal(const Ctx& c, const ir::Field& f, std::int64_t v);
 std::string double_literal(double v);
+/// Condition that is true when value `v` (an expression without side effects) fails one of `checks`; "" when there
+/// are none. The scaled value is computed exactly as the _scaled() accessor.
+std::string limit_fail(const std::vector<ir::LimitCheck>& checks, const std::string& v, ir::Prim prim,
+                       std::optional<double> scale, std::optional<double> offset);
 std::string string_literal(const std::string& s);
 
 /// Emits a reference to a field (and optional bit field) in some context.

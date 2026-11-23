@@ -53,7 +53,7 @@ static inline void test_computed_packed_flags_pack(const test_computed_packed_fl
     gmsg_set_bits(p, 0, 1, g->ready ? 1u : 0u, GMSG_MSB_FIRST);
     gmsg_set_bits(p, 1, 7, (uint64_t)g->level, GMSG_MSB_FIRST);
 }
-/* Validate constant and strict-enum bit fields of the raw group bytes. */
+/* Validate constant, strict-enum and limited bit fields of the raw group bytes. */
 static inline gmsg_error test_computed_packed_flags_check(const uint8_t* p) {
     (void)p;
     return GMSG_OK;

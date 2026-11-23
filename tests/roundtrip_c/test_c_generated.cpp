@@ -8,6 +8,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <random>
@@ -18,6 +20,7 @@
 // generated C++
 #include "computed.gmp.hpp"
 #include "enums.gmp.hpp"
+#include "limits.gmp.hpp"
 #include "fieldcrc.gmp.hpp"
 #include "hdlc.gmp.hpp"
 #include "telemetry.gmp.hpp"
@@ -25,6 +28,7 @@
 // generated C
 #include "computed.gmp.h"
 #include "enums.gmp.h"
+#include "limits.gmp.h"
 #include "fieldcrc.gmp.h"
 #include "hdlc.gmp.h"
 #include "telemetry.gmp.h"
@@ -412,6 +416,118 @@ TEST_CASE("generated C: encoding an undeclared strict enum value fails like C++"
     const auto n = a.encode(buf);
     REQUIRE_FALSE(n);
     CHECK(static_cast<int>(test_enums_inner_encode(&b, buf.data(), buf.size(), nullptr)) == code(n.error()));
+}
+
+// ---- value limits everywhere (scaled, raw, 64-bit, floats, bits, arrays, nested, derived, conditional) ----------
+namespace tl = test::limits;
+
+namespace {
+tl::Sample limits_sample(bool edge) {
+    tl::Sample s;
+    s.humidity = edge ? 3146 : 30000;  // scaled 0.0002 / 51.2
+    s.temp = edge ? -304 : 1250;
+    s.big = edge ? 0x8000000000000000ull : 0xFFFFFFFFFFFFFFFEull;
+    s.neg = edge ? -1 : INT64_MIN;
+    s.ratio = edge ? 1.5f : -1.5f;
+    s.wide = edge ? 1e300 : -1e300;
+    s.flags.level = edge ? 5 : 0;
+    s.flags.trim = edge ? -10 : 15;
+    s.flags.gain = edge ? 200 : 0;
+    s.levels = {static_cast<std::uint16_t>(edge ? 10 : 1000), static_cast<std::uint16_t>(edge ? 1000 : 10)};
+    s.inner.pct = edge ? 100 : 0;
+    for (int k = 0; k < (edge ? 3 : 1); ++k) (void)s.more.push_back(static_cast<std::int8_t>(edge ? -50 : 127));
+    if (edge) s.opt = 2;
+    return s;
+}
+} // namespace
+
+TEST_CASE("generated C matches generated C++: value limits") {
+    cross_check<tl::Sample, tl::SampleView>(
+        {enc(limits_sample(true)), enc(limits_sample(false))},
+        CApi<test_limits_sample>{test_limits_sample_decode, test_limits_sample_encode, test_limits_sample_print},
+        CViewApi<test_limits_sample_view>{test_limits_sample_view_from, test_limits_sample_view_print},
+        [](const tl::Sample& a, const test_limits_sample& b) {
+            CHECK(a.humidity == b.humidity);
+            CHECK(a.temp == b.temp);
+            CHECK(a.big == b.big);
+            CHECK(a.neg == b.neg);
+            CHECK(std::bit_cast<std::uint32_t>(a.ratio) == std::bit_cast<std::uint32_t>(b.ratio));
+            CHECK(std::bit_cast<std::uint64_t>(a.wide) == std::bit_cast<std::uint64_t>(b.wide));
+            CHECK(a.flags.level == b.flags.level);
+            CHECK(a.flags.trim == b.flags.trim);
+            CHECK(a.flags.gain == b.flags.gain);
+            for (std::size_t i = 0; i < 2; ++i) CHECK(a.levels[i] == b.levels[i]);
+            CHECK(a.inner.pct == b.inner.pct);
+            REQUIRE(a.more.size() == b.n);
+            for (std::size_t i = 0; i < a.more.size(); ++i) CHECK(a.more[i] == b.more[i]);
+            REQUIRE(a.opt.has_value() == b.has_opt);
+            if (a.opt) CHECK(*a.opt == b.opt);
+        },
+        [](const tl::SampleView& a, const test_limits_sample_view& b) {
+            CHECK(a.humidity() == test_limits_sample_view_humidity(&b));
+            CHECK(a.humidity_scaled() == test_limits_sample_view_humidity_scaled(&b));
+            CHECK(a.temp() == test_limits_sample_view_temp(&b));
+            CHECK(a.big() == test_limits_sample_view_big(&b));
+            CHECK(a.neg() == test_limits_sample_view_neg(&b));
+            CHECK(a.flags().gain == test_limits_sample_view_flags(&b).gain);
+            for (std::size_t i = 0; i < 2; ++i) CHECK(a.levels()[i] == test_limits_sample_view_levels_at(&b, i));
+            REQUIRE(a.more().size() == test_limits_sample_view_more_count(&b));
+            for (std::size_t i = 0; i < a.more().size(); ++i) CHECK(a.more()[i] == test_limits_sample_view_more_at(&b, i));
+            REQUIRE(a.opt().has_value() == test_limits_sample_view_has_opt(&b));
+            if (a.opt()) CHECK(*a.opt() == test_limits_sample_view_opt(&b));
+        },
+        7);
+
+    tl::Tail t;
+    for (const std::uint16_t v : std::array<std::uint16_t, 3>{500, 0, 499}) (void)t.rest.push_back(v);
+    cross_check<tl::Tail, tl::TailView>(
+        {enc(t), enc(tl::Tail{})}, CApi<test_limits_tail>{test_limits_tail_decode, test_limits_tail_encode, test_limits_tail_print},
+        CViewApi<test_limits_tail_view>{test_limits_tail_view_from, test_limits_tail_view_print},
+        [](const tl::Tail& a, const test_limits_tail& b) {
+            REQUIRE(a.rest.size() == b.rest_count);
+            for (std::size_t i = 0; i < a.rest.size(); ++i) CHECK(a.rest[i] == b.rest[i]);
+        },
+        [](const tl::TailView& a, const test_limits_tail_view& b) {
+            REQUIRE(a.rest().size() == test_limits_tail_view_rest_count(&b));
+            for (std::size_t i = 0; i < a.rest().size(); ++i) CHECK(a.rest()[i] == test_limits_tail_view_rest_at(&b, i));
+        },
+        8);
+}
+
+TEST_CASE("generated C: encoding values outside the limits fails like C++") {
+    const auto bytes = enc(limits_sample(true));
+    const auto cpp0 = tl::Sample::decode(gmp::bytes_view(bytes.data(), bytes.size()));
+    REQUIRE(cpp0);
+    test_limits_sample c0;
+    REQUIRE(test_limits_sample_decode(bytes.data(), bytes.size(), &c0) == GMSG_OK);
+    // the same change on both structs, then both encoders must agree
+    auto check = [&](auto change_cpp, auto change_c) {
+        auto a = *cpp0;
+        auto b = c0;
+        change_cpp(a);
+        change_c(b);
+        std::array<std::uint8_t, 128> buf{};
+        const auto n = a.encode(buf);
+        std::size_t cn = 0;
+        CHECK(static_cast<int>(test_limits_sample_encode(&b, buf.data(), buf.size(), &cn)) == (n ? 0 : code(n.error())));
+        return n ? gmp::Error::None : n.error();
+    };
+    CHECK(check([](tl::Sample&) {}, [](test_limits_sample&) {}) == gmp::Error::None);
+    CHECK(check([](tl::Sample& s) { s.humidity = 3145; }, [](test_limits_sample& s) { s.humidity = 3145; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.temp = -305 - 1; }, [](test_limits_sample& s) { s.temp = -306; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.big = 5; }, [](test_limits_sample& s) { s.big = 5; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.neg = 0; }, [](test_limits_sample& s) { s.neg = 0; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.ratio = NAN; }, [](test_limits_sample& s) { s.ratio = NAN; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.wide = INFINITY; }, [](test_limits_sample& s) { s.wide = INFINITY; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.flags.level = 6; }, [](test_limits_sample& s) { s.flags.level = 6; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.flags.trim = -11; }, [](test_limits_sample& s) { s.flags.trim = -11; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.flags.gain = 201; }, [](test_limits_sample& s) { s.flags.gain = 201; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.levels[1] = 1001; }, [](test_limits_sample& s) { s.levels[1] = 1001; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.inner.pct = 101; }, [](test_limits_sample& s) { s.inner.pct = 101; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.more[0] = -51; }, [](test_limits_sample& s) { s.more[0] = -51; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.opt = 1; }, [](test_limits_sample& s) { s.opt = 1; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { (void)s.more.push_back(0); },
+                [](test_limits_sample& s) { s.more[s.n++] = 0; }) == gmp::Error::ValueOutOfLimits);  // n = 4 > 3
 }
 
 // ---- field CRCs (preset and inline), conversions, conditional with CRC, const with CRC ------------------------

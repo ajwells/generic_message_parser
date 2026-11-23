@@ -118,6 +118,31 @@ std::string double_literal(double v) {
     return s;
 }
 
+std::string limit_fail(const std::vector<LimitCheck>& checks, const std::string& v, Prim prim, std::optional<double> scale,
+                       std::optional<double> offset) {
+    std::string out;
+    for (const auto& c : checks) {
+        std::string t;
+        if (c.integer) {
+            // exact: compare as 64-bit integers of the value's signedness
+            const auto& l = c.limit;
+            const std::string lit = prim_is_signed(prim)
+                                        ? (l.negative ? (l.magnitude == (std::uint64_t{1} << 63) ? std::string("INT64_MIN")
+                                                                                                  : "-" + std::to_string(l.magnitude) + "ll")
+                                                      : std::to_string(l.magnitude) + "ll")
+                                        : std::to_string(l.magnitude) + "ull";
+            t = std::string(prim_is_signed(prim) ? "static_cast<std::int64_t>(" : "static_cast<std::uint64_t>(") + v + ") " +
+                (c.is_min ? "<" : ">") + " " + lit;
+        } else {
+            std::string d = "static_cast<double>(" + v + ")";
+            if (c.scaled) d += " * " + double_literal(scale.value_or(1.0)) + " + " + double_literal(offset.value_or(0.0));
+            t = "!(" + d + (c.is_min ? " >= " : " <= ") + double_literal(c.limit.value) + ")";  // NaN fails
+        }
+        out += (out.empty() ? "" : " || ") + t;
+    }
+    return out;
+}
+
 std::string string_literal(const std::string& s) {
     std::string out = "\"";
     for (unsigned char c : s) {

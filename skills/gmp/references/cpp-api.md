@@ -294,6 +294,7 @@ readable name.
 | `ParseError` | A text token is not a valid number/character. |
 | `MissingField` | A required text token is empty, or a conditional field's optional is empty on encode. |
 | `UnknownEnum` | A field of a `strict` enum holds a value that is not declared (on decode, or in a struct being encoded). |
+| `ValueOutOfLimits` | A value is outside its `min_value`/`max_value`/`min_raw`/`max_raw` (on decode, or in a struct being encoded). |
 | `InvalidValue`, `Custom` | For use by custom codecs. |
 
 ## C output
