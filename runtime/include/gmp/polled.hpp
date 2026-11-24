@@ -3,19 +3,20 @@
 //
 // Behaves like std::optional<T>. A polled view points into the parser's buffer and is valid until the next
 // push / poll / feed / next / reset on that parser. In Debug builds (NDEBUG not defined) every access through
-// operator* / operator-> / value() checks that, and GMP_ASSERT fires if the view has expired.
-// Define GMP_ASSERT(cond, msg) before including gmp headers to route the failure elsewhere.
+// operator* / operator-> / value() checks that, and GMSG_ASSERT fires if the view has expired.
+// Define GMSG_ASSERT(x) before including gmp headers to route the failure elsewhere (the same macro as the C
+// runtime's: one argument, the condition joined with a message by &&).
 
 #include <cstdint>
 #include <optional>
 #include <utility>
 
-#ifndef GMP_ASSERT
+#ifndef GMSG_ASSERT
 #include <cassert>
-#define GMP_ASSERT(cond, msg) assert((cond) && (msg))
+#define GMSG_ASSERT(x) assert(x)
 #endif
 
-namespace gmp {
+namespace gmsg {
 
 template <class T>
 class Polled {
@@ -43,8 +44,8 @@ public:
 
 private:
     void check() const noexcept {
-        GMP_ASSERT(value_.has_value(), "gmp::Polled: no value (check it before use)");
-        GMP_ASSERT(valid(), "gmp::Polled: the polled view expired (the parser buffer changed: push/poll/feed/next/reset)");
+        GMSG_ASSERT(value_.has_value() && "gmsg::Polled: no value (check it before use)");
+        GMSG_ASSERT(valid() && "gmsg::Polled: the polled view expired (the parser buffer changed: push/poll/feed/next/reset)");
     }
 
     std::optional<T> value_{};
@@ -52,4 +53,4 @@ private:
     std::uint32_t at_ = 0;
 };
 
-} // namespace gmp
+} // namespace gmsg

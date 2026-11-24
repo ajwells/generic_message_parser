@@ -1,7 +1,7 @@
 // js_crossref: reference results of the generated C++ for the generated-JavaScript cross-check
 // (tests/roundtrip_js/test_generated.js). For every message (protocol headers included) and every protocol of the
 // test schemas it records what C++ does with valid encodings, mutated and truncated copies and random bytes:
-//   messages   struct decode (error, or gmp::print text and the re-encoded bytes) and view from() (error or text)
+//   messages   struct decode (error, or gmsg::print text and the re-encoded bytes) and view from() (error or text)
 //   protocols  parse / decode / re-encode of single frames, and the events and statistics of noisy streams
 // Valid encodings come from default-constructed structs (always encodable) and hand-picked sample values.
 
@@ -58,12 +58,12 @@ std::string hex(const Bytes& b) {
 template <class T>
 std::string text(const T& v, bool single = false) {
     std::string s;
-    gmp::PrintOptions o;
-    if (single) o.style = gmp::PrintStyle::single_line;
-    (void)gmp::print(v, s, o);
+    gmsg::PrintOptions o;
+    if (single) o.style = gmsg::PrintStyle::single_line;
+    (void)gmsg::print(v, s, o);
     return s;
 }
-std::string err(gmp::Error e) { return "{\"err\":" + std::to_string(static_cast<int>(e)) + "}"; }
+std::string err(gmsg::Error e) { return "{\"err\":" + std::to_string(static_cast<int>(e)) + "}"; }
 
 template <class M>
 Bytes encode(const M& m) {
@@ -112,7 +112,7 @@ template <class M, class V>
 void message(const char* schema, const char* name, const std::vector<Bytes>& seeds) {
     std::string cases;
     for (const auto& b : variants(seeds)) {
-        const gmp::bytes_view bv(b.data(), b.size());
+        const gmsg::bytes_view bv(b.data(), b.size());
         std::string c = "{\"hex\":" + hex(b);
         if constexpr (!std::is_void_v<M>) {
             auto d = M::decode(bv);
@@ -157,7 +157,7 @@ struct ProtocolCase {
     template <class M>
     ProtocolCase& add(const M& m) {
         std::array<std::uint8_t, 4096> buf{};
-        auto n = P::encode(m, gmp::mut_bytes(buf.data(), buf.size()));
+        auto n = P::encode(m, gmsg::mut_bytes(buf.data(), buf.size()));
         if (n) frames.emplace_back(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(*n));
         else std::fprintf(stderr, "js_crossref: encode failed for %s\n", name);
         return *this;
@@ -168,16 +168,16 @@ struct ProtocolCase {
         for (const auto& f : variants(frames)) {
             auto b = f;  // parse may unescape in place
             std::string c = "{\"hex\":" + hex(f);
-            auto v = P::parse(gmp::mut_bytes(b.data(), b.size()));
+            auto v = P::parse(gmsg::mut_bytes(b.data(), b.size()));
             if (!v) c += ",\"parse\":" + err(v.error());
             else c += ",\"parse\":{\"single\":" + js(text(*v, true)) + "}";
             if constexpr (requires { typename P::AnyMessage; }) {
                 auto b2 = f;
-                auto m = P::decode(gmp::mut_bytes(b2.data(), b2.size()));
+                auto m = P::decode(gmsg::mut_bytes(b2.data(), b2.size()));
                 if (!m) c += ",\"decode\":" + err(m.error());
                 else {
                     std::array<std::uint8_t, 4096> buf{};
-                    auto n = P::encode(*m, gmp::mut_bytes(buf.data(), buf.size()));
+                    auto n = P::encode(*m, gmsg::mut_bytes(buf.data(), buf.size()));
                     c += ",\"decode\":{\"single\":" + js(text(*m, true));
                     if (n) c += ",\"encode\":" + hex(Bytes(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(*n)));
                     else c += ",\"encodeErr\":" + std::to_string(static_cast<int>(n.error()));
@@ -213,8 +213,8 @@ struct ProtocolCase {
                     std::string ev, ops;
                     typename P::template Stream<> parser;  // the real C++ stream: resyncs over the bytes as received
                     auto on_view = [&](const auto& v) { ev += "M:" + text(v, true) + "\n"; };
-                    auto handler = gmp::overloaded{
-                        [&](const gmp::FrameError& e) {
+                    auto handler = gmsg::overloaded{
+                        [&](const gmsg::FrameError& e) {
                             ev += "E" + std::to_string(static_cast<int>(e.error)) + ":" + std::to_string(e.data.size()) + "\n";
                         },
                         [&](const auto&... a) {
@@ -229,7 +229,7 @@ struct ProtocolCase {
                     };
                     if (chunk) {
                         for (std::size_t pos = 0; pos < wire.size(); pos += chunk)
-                            (void)parser.feed(gmp::bytes_view(wire.data() + pos, std::min(chunk, wire.size() - pos)), handler);
+                            (void)parser.feed(gmsg::bytes_view(wire.data() + pos, std::min(chunk, wire.size() - pos)), handler);
                     } else {
                         parser.set_idle_timeout(2);
                         std::uint32_t now = 0;
@@ -242,7 +242,7 @@ struct ProtocolCase {
                             while (parser.next(handler)) {}
                         };
                         for (std::size_t pos = 0; pos < wire.size(); pos += 3) {
-                            (void)parser.feed(gmp::bytes_view(wire.data() + pos, std::min<std::size_t>(3, wire.size() - pos)), handler);
+                            (void)parser.feed(gmsg::bytes_view(wire.data() + pos, std::min<std::size_t>(3, wire.size() - pos)), handler);
                             const auto k = rng() % 12;
                             op(k == 0 ? 'r' : k == 1 ? 'f' : k < 8 ? 't' : '.');
                         }

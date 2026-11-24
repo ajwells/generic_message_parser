@@ -13,42 +13,42 @@
 #include "gmp/result.hpp"
 #include "gmp/text.hpp"
 
-namespace gmp {
+namespace gmsg {
 
-/// Binary decoder:  gmp::Result<T> fn(gmp::ByteReader&)
+/// Binary decoder:  gmsg::Result<T> fn(gmsg::ByteReader&)
 template <class F, class T>
 concept BinaryDecoder = requires(F f, ByteReader& r) {
     { f(r) } -> std::same_as<Result<T>>;
 };
 
-/// Binary encoder:  gmp::VoidResult fn(gmp::ByteWriter&, const T&)
+/// Binary encoder:  gmsg::VoidResult fn(gmsg::ByteWriter&, const T&)
 template <class F, class T>
 concept BinaryEncoder = requires(F f, ByteWriter& w, const T& v) {
     { f(w, v) } -> std::same_as<VoidResult>;
 };
 
-/// Text decoder:    gmp::Result<T> fn(std::string_view token)
+/// Text decoder:    gmsg::Result<T> fn(std::string_view token)
 template <class F, class T>
 concept TextDecoder = requires(F f, std::string_view s) {
     { f(s) } -> std::same_as<Result<T>>;
 };
 
-/// Text encoder:    gmp::VoidResult fn(gmp::text::TextWriter&, const T&)   (must call begin_token())
+/// Text encoder:    gmsg::VoidResult fn(gmsg::text::TextWriter&, const T&)   (must call begin_token())
 template <class F, class T>
 concept TextEncoder = requires(F f, text::TextWriter& w, const T& v) {
     { f(w, v) } -> std::same_as<VoidResult>;
 };
 
-/// Checksum function: <unsigned> fn(gmp::bytes_view)
+/// Checksum function: <unsigned> fn(gmsg::bytes_view)
 template <class F>
 concept ChecksumFunction = requires(F f, bytes_view d) {
     { f(d) } -> std::unsigned_integral;
 };
 
-/// Custom framer: a type with  static gmp::FrameScan scan(gmp::bytes_view)
+/// Custom framer: a type with  static gmsg::FrameScan scan(gmsg::bytes_view)
 template <class T>
 concept Framer = requires(bytes_view b) {
     { T::scan(b) } -> std::same_as<FrameScan>;
 };
 
-} // namespace gmp
+} // namespace gmsg

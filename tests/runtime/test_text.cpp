@@ -5,8 +5,8 @@
 
 #include "gmp/text.hpp"
 
-using namespace gmp;
-using namespace gmp::text;
+using namespace gmsg;
+using namespace gmsg::text;
 
 TEST_CASE("tokenizer keeps empty tokens") {
     Tokenizer t("a,,b,", ',');

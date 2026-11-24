@@ -22,7 +22,7 @@ and the headers of your custom extensions.
 | `static Result<M> decode(bytes_view)` | Decode from the start of a buffer. Trailing bytes are ignored. |
 | `Result<size_t> encode(mut_bytes out) const` | Encode into `out`. Returns bytes written, or `BufferFull`. |
 | `read(ByteReader&)` / `write(ByteWriter&)` | Lower-level building blocks (used for nesting). |
-| `print_to(gmp::Printer&) const` | Used by [`gmp::print`](#printing). |
+| `print_to(gmsg::Printer&) const` | Used by [`gmsg::print`](#printing). |
 | `operator==` | Member-wise comparison. |
 
 ### `class MView` (binary message)
@@ -35,7 +35,7 @@ and the headers of your custom extensions.
 | `<name>_scaled()`, `<name>_<conversion>()` | Engineering values. |
 | `<computed>()` | [Computed values](schema.md) (read only). |
 | `data()`, `wire_size()` | The exact bytes of this message. |
-| `print_to(gmp::Printer&) const` | Used by [`gmp::print`](#printing); prints the same text as the struct. |
+| `print_to(gmsg::Printer&) const` | Used by [`gmsg::print`](#printing); prints the same text as the struct. |
 | `to_struct()` | Eager decode (when the struct is generated). |
 
 Fixed-layout messages use compile-time offsets. Messages with variable fields compute their field offsets once in
@@ -70,7 +70,7 @@ Bits groups are small structs with one member per bit field, `unpack`/`pack`/`ch
 | `static Result<size_t> encode(const AnyMessage&, mut_bytes)` | Encode whichever message the variant holds. |
 | `template <size_t Cap = max_frame> using Stream` | The stream parser for this protocol; the handler is passed on each call (see [Streaming](#streaming)). |
 | `StreamWith<H, Cap>`, `make_stream(handler)` | Stream parser that stores a handler: `feed(bytes)` / `next()` take no handler ([Storing the handler](#storing-the-handler)). |
-| `Callbacks`, `CallbackStream<Cap>` | Runtime callbacks: `on<&App::fn>(app)` per message, for every frame (`AnyView`) and for `gmp::FrameError`. |
+| `Callbacks`, `CallbackStream<Cap>` | Runtime callbacks: `on<&App::fn>(app)` per message, for every frame (`AnyView`) and for `gmsg::FrameError`. |
 | `Received` | What `Stream::poll_frame()` returns: `header` (protocols with a header), `message` (`AnyView`), the frame `bytes` and `extra` (data after the message) ([Pulling messages](#pulling-messages-poll)). |
 | `scan`, `open`, `visit_frame`, `select_message`, `process` | Building blocks. `scan` finds a frame boundary. `open` validates a frame and splits it into `Frame{header, body}` (binary) or `Frame{type_id, body}` (text, where `type_id` is the first token). `visit_frame`/`select_message` pick the message type. `process` is the hook used by the stream parser. |
 
@@ -80,10 +80,10 @@ Bits groups are small structs with one member per bit field, `unpack`/`pack`/`ch
 
 ```cpp
 demo::Link::Stream<> parser;                    // fixed internal buffer of max_frame bytes
-parser.feed(chunk, gmp::overloaded{
+parser.feed(chunk, gmsg::overloaded{
     [](const demo::Link::HeaderView& h, const demo::StatusView& v) { /* header + message */ },
     [](const demo::CommandView& v) { /* message only */ },
-    [](const gmp::FrameError& e) { /* optional: e.error, e.data */ },
+    [](const gmsg::FrameError& e) { /* optional: e.error, e.data */ },
 });
 ```
 
@@ -92,7 +92,7 @@ parser.feed(chunk, gmp::overloaded{
 - **`push(bytes)` / `next(handler)`** is the pull-style alternative. `push` buffers as much as fits; `next` processes
   at most one frame and returns `false` when it needs more input.
 - **Handler overloads** can take `(HeaderView, MView)` or `(MView)`. Message types without an overload are ignored. A
-  `const gmp::FrameError&` overload receives dropped data: garbage before a sync, bad checksums, unknown ids, oversize
+  `const gmsg::FrameError&` overload receives dropped data: garbage before a sync, bad checksums, unknown ids, oversize
   frames. Without that overload, errors are silently skipped.
 - **Resynchronisation**:
   - After a bad frame the parser rescans from the next byte (length-prefixed and fixed framing with sync) or after the
@@ -117,7 +117,7 @@ request/response exchange:
 ```cpp
 parser.push(bytes);
 while (auto m = parser.poll()) {                 // next valid message; empty = more input needed
-    std::visit(gmp::overloaded{
+    std::visit(gmsg::overloaded{
         [](const demo::StatusView& v) { ... },
         [](const demo::CommandView& v) { ... },
     }, *m);
@@ -129,7 +129,7 @@ while (auto m = parser.poll()) {                 // next valid message; empty = 
 | `poll()` | `Polled<AnyView>`: the next valid message. |
 | `poll_frame()` | `Polled<Received>`: `{ header, message, bytes }`. `header` exists only on protocols with a header; `bytes` is the frame. For protocols with escaping, it has been unescaped in place, so only the header and body are meaningful (frames that fail are left as received). |
 | `poll_message()` | `std::optional<AnyMessage>`: the decoded struct, a copy that stays valid. A frame whose struct decode fails (e.g. more than `max` elements) is dropped like any bad frame. |
-| `poll_event()` | `Polled<std::variant<AnyView, gmp::FrameError>>`: messages and errors inline, in stream order. |
+| `poll_event()` | `Polled<std::variant<AnyView, gmsg::FrameError>>`: messages and errors inline, in stream order. |
 | `poll_for<V>()` | `Polled<V>`: wait (without blocking) for one message type, e.g. a reply. Only on parsers with a stored handler (`CallbackStream`, `make_stream`): other messages that arrive meanwhile go to that handler. |
 
 - **Errors:**
@@ -140,9 +140,9 @@ while (auto m = parser.poll()) {                 // next valid message; empty = 
   - `poll` never calls message listeners. `poll_for` calls them only for the other message types.
 - **View lifetime:** a polled view points into the parser buffer. It is valid until the next `push`, `poll*`,
   `feed`, `next` or `reset` on that parser.
-  - `gmp::Polled<T>` works like `std::optional` and has `valid()`.
+  - `gmsg::Polled<T>` works like `std::optional` and has `valid()`.
   - In Debug builds, `*`, `->` and `value()` assert that the view hasn't expired. Define
-    `GMP_ASSERT(cond, msg)` to route that check elsewhere.
+    `GMSG_ASSERT(x)` (one argument, as in the C runtime) to route that check elsewhere.
   - Copy what you need, or use `poll_message()`.
 - `push` and `poll` can be mixed freely with `feed` and `next`. Each frame is consumed by whichever call reaches it
   first.
@@ -155,9 +155,9 @@ The handler can also live in the parser, so the code that receives bytes only ca
 **Compile-time handler** (`make_stream`, `StreamWith<H>`): no runtime cost, with the same overload rules as above.
 
 ```cpp
-auto parser = demo::Link::make_stream(gmp::overloaded{
+auto parser = demo::Link::make_stream(gmsg::overloaded{
     [&](const demo::StatusView& v) { ... },
-    [](const gmp::FrameError& e) { ... },
+    [](const gmsg::FrameError& e) { ... },
 });
 parser.feed(chunk);
 
@@ -174,14 +174,14 @@ demo::Link::CallbackStream<> parser;
 parser.on<&App::on_status>(app)        // void App::on_status(const StatusView&)
       .on<&App::on_command>(app)       // void App::on_command(const Link::HeaderView&, const CommandView&)
       .on<&App::on_frame>(app)         // void App::on_frame(const Link::AnyView&): every valid frame
-      .on<&App::on_drop>(app);         // void App::on_drop(const gmp::FrameError&)
+      .on<&App::on_drop>(app);         // void App::on_drop(const gmsg::FrameError&)
 parser.feed(chunk);
 ```
 
 - **The slot is chosen from the function's last parameter:**
   - a message view: that message's listener
   - `AnyView`: the every-frame listener
-  - `gmp::FrameError`: the error listener
+  - `gmsg::FrameError`: the error listener
 
   There is one listener per slot, and registering again replaces it. If several parts of the program need the same
   message, register one function that forwards to them.
@@ -249,7 +249,7 @@ receivers do not know. It is reported everywhere:
 | binary view | `extra_bytes()`: bytes after the message in the data given to `from()` (inside a protocol: in the frame body) |
 | text view | `extra_tokens()`: tokens after the message's own |
 | struct | `M::decode(data, extra)` / `decode_text(s, extra)`: like `decode`, also reporting the extra bytes / tokens |
-| protocol | `gmp::extra_of(any_view)`; `Received::extra` (`poll_frame`); `stats().frames_with_extra` |
+| protocol | `gmsg::extra_of(any_view)`; `Received::extra` (`poll_frame`); `stats().frames_with_extra` |
 | C | `<m>_view_extra_bytes(&v)` / `_view_extra_tokens(&v)`, `<m>_decode_extra(data, size, &out, &extra)`, `received.extra`, `stats.frames_with_extra` |
 | JavaScript | `view.extraBytes` / `extraTokens`, `M.decodeWithExtra(bytes)` → `{ message, extra }`, `frame.extra` (pollFrame / pollEvent), `stats.framesWithExtra` |
 | Python | `view.extra_bytes` / `extra_tokens`, `M.decode_with_extra(data)` → `(message, extra)`, `gmsg.extra_of(view)`, `frame.extra` (poll_frame / poll_event), `stats.frames_with_extra` |
@@ -261,17 +261,17 @@ with a `remaining` field takes all the data, so it never has any after it.
 
 ## Printing
 
-Every generated struct, view and bits group has `print_to(gmp::Printer&)`. `gmp::print` and `gmp::println`
+Every generated struct, view and bits group has `print_to(gmsg::Printer&)`. `gmsg::print` and `gmsg::println`
 (`<gmp/print.hpp>`, included by every generated header) use it to dump a message for a console or a debug log:
 
 ```cpp
-gmp::println(status, stdout);                          // std::FILE*: console, or a log opened with fopen
-gmp::print(status, std::cout);                         // anything with write(const char*, n), e.g. std::ostream
-char line[256];  gmp::print(status, line);             // char array or std::span<char>, always NUL terminated
-gmp::static_string<256> s;  gmp::print(status, s);     // appends; also std::string or anything with append()
-gmp::print(status, [](std::string_view t) { uart_log(t); });   // callback; return false from it to stop
+gmsg::println(status, stdout);                          // std::FILE*: console, or a log opened with fopen
+gmsg::print(status, std::cout);                         // anything with write(const char*, n), e.g. std::ostream
+char line[256];  gmsg::print(status, line);             // char array or std::span<char>, always NUL terminated
+gmsg::static_string<256> s;  gmsg::print(status, s);     // appends; also std::string or anything with append()
+gmsg::print(status, [](std::string_view t) { uart_log(t); });   // callback; return false from it to stop
 
-gmp::print(status, stdout, {.style = gmp::PrintStyle::single_line});
+gmsg::print(status, stdout, {.style = gmsg::PrintStyle::single_line});
 ```
 
 ```
@@ -304,12 +304,12 @@ Single line: `Status { voltage: 1234 (12.34 V), flags: { armed: true, mode: run 
 | text view field that fails to parse | `<error: parse error>`. |
 | computed value | `serial: 305419896 (computed)`. |
 | `const` and `pad` fields | Not printed (they have no member). |
-| custom type | `gmp_print(gmp::Printer&, const T&)` declared next to `T` (found by ADL), otherwise `<?>`. |
+| custom type | `gmsg_print(gmsg::Printer&, const T&)` declared next to `T` (found by ADL), otherwise `<?>`. |
 
 A view prints exactly the same text as its struct. A `std::variant` (for example the result of `Protocol::parse()`) prints
-the message it holds, and a lone enum or number prints too: `gmp::print(Mode::run, stdout)` → `run (0x01)`.
+the message it holds, and a lone enum or number prints too: `gmsg::print(Mode::run, stdout)` → `run (0x01)`.
 
-| `gmp::PrintOptions` | default | |
+| `gmsg::PrintOptions` | default | |
 |---------------------|---------|-|
 | `style` | `multi_line` | or `single_line` |
 | `indent` | `2` | spaces per level (`multi_line`) |
@@ -323,7 +323,7 @@ unbounded sink such as `std::string` grows that string as usual. A custom type's
 or `p.value(member)`:
 
 ```cpp
-inline void gmp_print(gmp::Printer& p, const my::Time& t) noexcept {   // 12:34:56
+inline void gmsg_print(gmsg::Printer& p, const my::Time& t) noexcept {   // 12:34:56
     char b[9];
     std::snprintf(b, sizeof b, "%02d:%02d:%02d", t.h, t.m, t.s);
     p.text(b);
@@ -334,7 +334,7 @@ The Studio's decode tester shows the same text for each decoded frame (**View: P
 
 ## Errors
 
-Every fallible operation returns `gmp::Result<T>` (`std::expected<T, gmp::Error>`). `gmp::to_string(Error)` gives a
+Every fallible operation returns `gmsg::Result<T>` (`std::expected<T, gmsg::Error>`). `gmsg::to_string(Error)` gives a
 readable name.
 
 | error | meaning |
@@ -370,11 +370,11 @@ Everything the C++ backend generates is generated for C:
   checksums (also `over: wire`, custom checksums, NMEA-style text checksums), whole-buffer parse / decode / encode,
   callbacks, a stream parser and the pull API
 - printing: `_print` for every struct, view, bits group and protocol `_any_view` / `_any_message`, with the same text
-  as `gmp::print`
+  as `gmsg::print`
 
 Custom types, checksums and framers use `c:` blocks (see [custom extensions](#custom-extensions)). The C output is
 checked against the C++ output on valid, corrupted and noisy input, including streams fed in chunks of every size,
-and its print text is compared with `gmp::print` for every decoded message.
+and its print text is compared with `gmsg::print` for every decoded message.
 
 C99 and C11 compile the same generated code. With C11 the `.gmp.c` also checks the signatures of the functions
 named in `c:` blocks (`_Static_assert` + `_Generic`, behind `#if GMSG_C11`), which gives a clear message on a
@@ -475,7 +475,7 @@ in `_poll_event`, which returns them.
 For each frame the message's callback runs first, then `on_frame` (every frame). Headerless protocols have no `h`
 parameter. The stream struct holds no pointer to itself, so it can live anywhere; its buffer is the caller's.
 
-Printing (`gmp/c/print.h`) gives the same text as [`gmp::print`](#printing), with the same options:
+Printing (`gmp/c/print.h`) gives the same text as [`gmsg::print`](#printing), with the same options:
 
 ```c
 gmsg_printer p;
@@ -531,7 +531,7 @@ s.voltage_scaled = 12.6;                       // scale / conversions / computed
 const frame = tm.BinaryLink.encode(s);         // Uint8Array: sync, header, body, CRC
 
 const stream = tm.BinaryLink.stream();         // gmsg.StreamParser, buffer of maxFrame bytes
-stream.on('Status', (view, header) => console.log(String(view)));   // same text as gmp::print
+stream.on('Status', (view, header) => console.log(String(view)));   // same text as gmsg::print
 stream.on('error', (e) => console.warn(e.message, e.bytes));        // gmsg.GmpError
 stream.feed(chunk);                            // any chunk size; or push() + poll() / pollEvent() / messages()
 
@@ -544,7 +544,7 @@ checksums, protocols, streams, printing, custom extensions), written the way Jav
 
 | | C++ | JavaScript |
 |-|-----|------------|
-| errors | `gmp::Result<T>` | thrown `gmsg.GmpError` (`e.code` is a `gmsg.Err` value with the same name, `e.message` the same text) |
+| errors | `gmsg::Result<T>` | thrown `gmsg.GmpError` (`e.code` is a `gmsg.Err` value with the same name, `e.message` the same text) |
 | integers | `std::uint16_t`, ... | Number; BigInt for `u64` / `i64` |
 | bool, char, floats | `bool`, `char`, `float` / `double` | boolean, one-character string, Number (`f32` values rounded with `Math.fround`) |
 | bytes, strings | `static_vector`, `static_string` (capacity `max`) | `Uint8Array`, string with one character per byte (latin1); more than `max` throws `OutOfRange` on encode |
@@ -555,12 +555,12 @@ checksums, protocols, streams, printing, custom extensions), written the way Jav
 | encode | into your buffer | returns a new `Uint8Array` |
 | stream callbacks | `Callbacks` / `CallbackStream`, overload sets | `stream.on('Status' \| 'frame' \| 'error', fn)` (returns a function that removes it) |
 | pull API | `poll()`, `poll_frame()`, `poll_message()`, `poll_event()`, `poll_for<V>()` | `poll()`, `pollFrame()`, `pollMessage()`, `pollEvent()`, `pollFor('Status')`, iterators `messages(chunk)` / `events(chunk)`; polled views own a copy of their frame, so they never expire |
-| printing | `gmp::print(v, sink, opts)` | `gmsg.print(v, opts)` / `v.toString(opts)` return a string |
+| printing | `gmsg::print(v, sink, opts)` | `gmsg.print(v, opts)` / `v.toString(opts)` return a string |
 
 The runtime is a port of the C++ runtime with the same behaviour: CRCs, framers, escaping, stream resync, exact float
 text (`to_chars` / `from_chars` results) and printing. Its tests compare it with the C++ runtime on random input, and the
 generated JavaScript for every test schema is compared with the generated C++ on valid, mutated and truncated
-messages and on noisy streams (errors, `gmp::print` text, re-encoded bytes, stream events and statistics). Known
+messages and on noisy streams (errors, `gmsg::print` text, re-encoded bytes, stream events and statistics). Known
 differences:
 - signalling NaNs of `f32` fields become quiet NaNs (JavaScript cannot keep their payload), so they re-encode
   differently
@@ -591,7 +591,7 @@ s.voltage_scaled = 12.6                       # scale / conversions / computed v
 frame = tm.BinaryLink.encode(s)               # bytes: sync, header, body, CRC
 
 stream = tm.BinaryLink.stream()               # gmsg.StreamParser, buffer of max_frame bytes
-stream.on(tm.Status, lambda view, header: print(view))       # same text as gmp::print
+stream.on(tm.Status, lambda view, header: print(view))       # same text as gmsg::print
 stream.on('error', lambda e: log.warning('%s %s', e, e.data))  # gmsg.GmpError
 stream.feed(chunk)                            # any chunk size; or push() + poll() / poll_event() / messages()
 for msg in tm.BinaryLink.stream().messages(data): ...
@@ -605,7 +605,7 @@ The generated code covers everything the other backends generate, written the wa
 
 | | C++ | Python |
 |-|-----|--------|
-| errors | `gmp::Result<T>` | raised `gmsg.GmpError` (`e.code` is a `gmsg.Err` IntEnum, `Err.BAD_CHECKSUM`; `str(e)` the same text) |
+| errors | `gmsg::Result<T>` | raised `gmsg.GmpError` (`e.code` is a `gmsg.Err` IntEnum, `Err.BAD_CHECKSUM`; `str(e)` the same text) |
 | integers, floats | `std::uint16_t`, `float`, ... | `int` (any width, checked against the wire type on encode), `float` (`f32` values rounded with `gmsg.to_f32`) |
 | bool, char | `bool`, `char` | `bool`, one-character `str` |
 | bytes, strings | `static_vector`, `static_string` (capacity `max`) | `bytes`, `str` with one character per byte (latin-1); more than `max` raises `OutOfRange` on encode |
@@ -616,7 +616,7 @@ The generated code covers everything the other backends generate, written the wa
 | encode | into your buffer | returns `bytes` |
 | stream callbacks | `Callbacks` / `CallbackStream` | `stream.on('Status' \| tm.Status \| 'frame' \| 'error', fn)` (returns a function that removes it) |
 | pull API | `poll()`, `poll_frame()`, `poll_message()`, `poll_event()`, `poll_for<V>()` | the same names; iterators `messages(data)` / `events(data)`. Frames handed to views are copies, so views never expire |
-| printing | `gmp::print(v, sink, opts)` | `str(v)` / `v.to_text(style='single_line', ...)` / `gmsg.to_text(v, **opts)` |
+| printing | `gmsg::print(v, sink, opts)` | `str(v)` / `v.to_text(style='single_line', ...)` / `gmsg.to_text(v, **opts)` |
 
 **Accelerator.** `runtime-py` includes an optional C extension, `gmsg._native`, built from the C runtime with the
 CPython limited API (one abi3 binary for CPython 3.12+). `pip install ./runtime-py` builds it when a C compiler is

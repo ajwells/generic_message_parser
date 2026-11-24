@@ -1,5 +1,5 @@
 /* gmp/c/error.h - error codes shared by the C runtime and generated C code.
- * Values and texts match gmp::Error / gmp::to_string in the C++ runtime (checked by tests). */
+ * Values and texts match gmsg::Error / gmsg::to_string in the C++ runtime (checked by tests). */
 #ifndef GMSG_C_ERROR_H
 #define GMSG_C_ERROR_H
 
@@ -8,7 +8,7 @@
 GMSG_C_BEGIN
 
 typedef enum gmsg_error {
-    GMSG_OK = 0,             /* no error (gmp::Error::None) */
+    GMSG_OK = 0,             /* no error (gmsg::Error::None) */
     GMSG_ERR_TRUNCATED,      /* input ended before the message/frame was complete */
     GMSG_ERR_BAD_SYNC,       /* sync bytes / start delimiter not found (garbage skipped) */
     GMSG_ERR_BAD_CHECKSUM,   /* checksum / CRC mismatch */

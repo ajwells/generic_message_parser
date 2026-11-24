@@ -48,10 +48,10 @@ std::string prim_type(Prim p) {
     return "void";
 }
 
-std::string endian_expr(Endian e) { return e == Endian::Big ? "gmp::Endian::big" : "gmp::Endian::little"; }
+std::string endian_expr(Endian e) { return e == Endian::Big ? "gmsg::Endian::big" : "gmsg::Endian::little"; }
 
 std::string bit_order_expr(BitOrder o) {
-    return o == BitOrder::MsbFirst ? "gmp::BitOrder::msb_first" : "gmp::BitOrder::lsb_first";
+    return o == BitOrder::MsbFirst ? "gmsg::BitOrder::msb_first" : "gmsg::BitOrder::lsb_first";
 }
 
 std::string view_name(const Message& m) { return m.name + "View"; }
@@ -80,14 +80,14 @@ std::string value_type(const Message& m, const Field& f) {
     switch (f.kind) {
         case FieldKind::Bytes:
             if (f.len.kind == LenKind::Fixed) return "std::array<std::uint8_t, " + std::to_string(f.len.fixed) + ">";
-            return "gmp::static_vector<std::uint8_t, " + std::to_string(f.max.value_or(0)) + ">";
+            return "gmsg::static_vector<std::uint8_t, " + std::to_string(f.max.value_or(0)) + ">";
         case FieldKind::String:
-            if (f.len.kind == LenKind::Fixed) return "gmp::static_string<" + std::to_string(f.len.fixed) + ">";
-            return "gmp::static_string<" + std::to_string(f.max.value_or(0)) + ">";
+            if (f.len.kind == LenKind::Fixed) return "gmsg::static_string<" + std::to_string(f.len.fixed) + ">";
+            return "gmsg::static_string<" + std::to_string(f.max.value_or(0)) + ">";
         case FieldKind::Array: {
             const auto et = element_type(m, *f.elem);
             if (f.len.kind == LenKind::Fixed) return "std::array<" + et + ", " + std::to_string(f.len.fixed) + ">";
-            return "gmp::static_vector<" + et + ", " + std::to_string(f.max.value_or(0)) + ">";
+            return "gmsg::static_vector<" + et + ", " + std::to_string(f.max.value_or(0)) + ">";
         }
         default: return element_type(m, f);
     }
@@ -168,8 +168,8 @@ std::string string_literal(const std::string& s) {
 std::string expr(const Expr& e, const RefFn& ref) {
     switch (e.kind) {
         case Expr::Kind::Int: return "std::int64_t(" + int_literal(e.value) + ")";
-        case Expr::Kind::Ref: return "gmp::to_int(" + ref(*e.field, e.bitfield) + ")";
-        case Expr::Kind::EnumConst: return "gmp::to_int(" + e.enum_def->name + "::" + ident(e.path[1]) + ")";
+        case Expr::Kind::Ref: return "gmsg::to_int(" + ref(*e.field, e.bitfield) + ")";
+        case Expr::Kind::EnumConst: return "gmsg::to_int(" + e.enum_def->name + "::" + ident(e.path[1]) + ")";
         case Expr::Kind::Input: return "value";  // computed setter parameter (as std::int64_t)
         case Expr::Kind::Unary: return "(" + e.op + expr(*e.lhs, ref) + ")";
         case Expr::Kind::Binary: return "(" + expr(*e.lhs, ref) + " " + e.op + " " + expr(*e.rhs, ref) + ")";
@@ -191,10 +191,10 @@ std::string checksum_impl(const ChecksumSpec& c, bool& is_function) {
             os << "0x" << std::hex << std::uppercase << v << "ull";
             return os.str();
         };
-        return "gmp::checksum::Crc<" + t + ", " + std::to_string(p.width) + ", " + hex(p.poly) + ", " + hex(p.init) +
+        return "gmsg::checksum::Crc<" + t + ", " + std::to_string(p.width) + ", " + hex(p.poly) + ", " + hex(p.init) +
                ", " + (p.refin ? "true" : "false") + ", " + (p.refout ? "true" : "false") + ", " + hex(p.xorout) + ">";
     }
-    return "gmp::checksum::" + c.algo;
+    return "gmsg::checksum::" + c.algo;
 }
 
 void doc(CodeWriter& w, const std::string& text) {
@@ -217,9 +217,9 @@ namespace gmpc::cpp {
 void emit_print_extras(CodeWriter& w, const Field& f, const std::string& value) {
     if (f.kind != FieldKind::Scalar) return;
     const bool scaled = f.scale || f.offset_value;
-    if (!f.unit.empty() && !scaled) w.line("gmp_p.unit(" + string_literal(f.unit) + ");");
+    if (!f.unit.empty() && !scaled) w.line("gmsg_p.unit(" + string_literal(f.unit) + ");");
     auto conv = [&](double sc, double of, const std::string& unit) {
-        w.line("gmp_p.conversion(static_cast<double>(" + value + ") * " + double_literal(sc) + " + " + double_literal(of) +
+        w.line("gmsg_p.conversion(static_cast<double>(" + value + ") * " + double_literal(sc) + " + " + double_literal(of) +
                (unit.empty() ? "" : ", " + string_literal(unit)) + ");");
     };
     if (scaled) conv(f.scale.value_or(1.0), f.offset_value.value_or(0.0), f.unit);

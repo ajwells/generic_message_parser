@@ -50,13 +50,13 @@ std::vector<std::uint8_t> wire() {
     return w;
 }
 
-gmp::bytes_view bv(const std::vector<std::uint8_t>& v) { return {v.data(), v.size()}; }
+gmsg::bytes_view bv(const std::vector<std::uint8_t>& v) { return {v.data(), v.size()}; }
 
 template <class R>
 constexpr bool has_header = requires(R r) { r.header; };
 
 std::string kind(const Link::AnyView& v) {
-    return std::visit(gmp::overloaded{[](const tel::StatusView& s) { return "status " + std::to_string(s.voltage()); },
+    return std::visit(gmsg::overloaded{[](const tel::StatusView& s) { return "status " + std::to_string(s.voltage()); },
                                       [](const tel::CommandView& c) { return "command " + std::to_string(c.opcode()); },
                                       [](const tel::LogView& l) { return "log " + std::to_string(l.level()); }},
                       v);
@@ -73,7 +73,7 @@ TEST_CASE("poll: messages in order, partial input, errors skipped and counted") 
     std::vector<std::string> got;
     while (auto m = parser.poll()) got.push_back(kind(*m));
     CHECK(got == std::vector<std::string>{"status 100", "command 7", "log 2"});
-    CHECK(parser.last_error() == gmp::Error::BadSync);
+    CHECK(parser.last_error() == gmsg::Error::BadSync);
     CHECK(parser.stats().frames == 3);
     CHECK(parser.stats().bytes_skipped == 2);
     CHECK(parser.buffered() == 0);
@@ -93,7 +93,7 @@ TEST_CASE("poll: a view stays valid until the parser is used again (Debug check)
     CHECK(second.valid());
     parser.push(bv(w));  // push also releases
     CHECK_FALSE(second.valid());
-    gmp::Polled<Link::AnyView> empty;
+    gmsg::Polled<Link::AnyView> empty;
     CHECK(empty.valid());
     CHECK_FALSE(empty);
 }
@@ -118,7 +118,7 @@ TEST_CASE("poll_message: struct copies outlive the buffer; failed struct decodes
     body.push_back(0);
     std::vector<std::uint8_t> bad{0x03, 0x00, static_cast<std::uint8_t>(body.size())};
     bad.insert(bad.end(), body.begin(), body.end());
-    const auto crc = gmp::checksum::crc16_ccitt::compute(bv(bad));
+    const auto crc = gmsg::checksum::crc16_ccitt::compute(bv(bad));
     bad.insert(bad.begin(), {0xAA, 0x55});
     bad.push_back(static_cast<std::uint8_t>(crc >> 8));
     bad.push_back(static_cast<std::uint8_t>(crc));
@@ -137,7 +137,7 @@ TEST_CASE("poll_message: struct copies outlive the buffer; failed struct decodes
     parser.reset();  // the copies do not depend on the buffer
     CHECK(std::get<tel::Status>(*a).voltage == 5);
     CHECK(std::get<tel::Log>(*b).level == 1);
-    CHECK(parser.last_error() == gmp::Error::None);  // reset() clears it
+    CHECK(parser.last_error() == gmsg::Error::None);  // reset() clears it
 }
 
 TEST_CASE("poll_message: a struct decode failure is reported like a bad frame") {
@@ -146,7 +146,7 @@ TEST_CASE("poll_message: a struct decode failure is reported like a bad frame") 
     body.push_back(0);
     std::vector<std::uint8_t> bad{0x03, 0x00, static_cast<std::uint8_t>(body.size())};
     bad.insert(bad.end(), body.begin(), body.end());
-    const auto crc = gmp::checksum::crc16_ccitt::compute(bv(bad));
+    const auto crc = gmsg::checksum::crc16_ccitt::compute(bv(bad));
     bad.insert(bad.begin(), {0xAA, 0x55});
     bad.push_back(static_cast<std::uint8_t>(crc >> 8));
     bad.push_back(static_cast<std::uint8_t>(crc));
@@ -155,12 +155,12 @@ TEST_CASE("poll_message: a struct decode failure is reported like a bad frame") 
     parser.push(bv(bad));
     CHECK(parser.poll());  // the view is fine
     // with a stored handler, every dropped frame / byte run reaches its FrameError overload
-    std::vector<gmp::Error> errors;
-    auto bound = Link::make_stream([&](const gmp::FrameError& e) { errors.push_back(e.error); });
+    std::vector<gmsg::Error> errors;
+    auto bound = Link::make_stream([&](const gmsg::FrameError& e) { errors.push_back(e.error); });
     bound.push(bv(bad));
     CHECK_FALSE(bound.poll_message());
     REQUIRE_FALSE(errors.empty());
-    CHECK(errors.front() == gmp::Error::OutOfRange);  // then the rest of the frame is skipped while resyncing
+    CHECK(errors.front() == gmsg::Error::OutOfRange);  // then the rest of the frame is skipped while resyncing
     CHECK(bound.stats().frame_errors == 1);
 }
 
@@ -170,9 +170,9 @@ TEST_CASE("poll_event: messages and errors inline, in stream order") {
     parser.push(bv(w));
     std::vector<std::string> got;
     while (auto e = parser.poll_event()) {
-        std::visit(gmp::overloaded{[&](const Link::AnyView& v) { got.push_back(kind(v)); },
-                                   [&](const gmp::FrameError& err) {
-                                       got.push_back(std::string(gmp::to_string(err.error)) + " " +
+        std::visit(gmsg::overloaded{[&](const Link::AnyView& v) { got.push_back(kind(v)); },
+                                   [&](const gmsg::FrameError& err) {
+                                       got.push_back(std::string(gmsg::to_string(err.error)) + " " +
                                                      std::to_string(err.data.size()));
                                    }},
                    *e);
@@ -185,7 +185,7 @@ TEST_CASE("CallbackStream: poll reports errors to the error listener, never call
     struct Counts {
         int status = 0, errors = 0;
         void on_status(const tel::StatusView&) { ++status; }
-        void on_error(const gmp::FrameError&) { ++errors; }
+        void on_error(const gmsg::FrameError&) { ++errors; }
     } c;
     Link::CallbackStream<> link;
     link.on<&Counts::on_status>(c).on<&Counts::on_error>(c);
@@ -222,7 +222,7 @@ TEST_CASE("poll_for: other messages go to the listeners while waiting for the re
     CHECK(reply->opcode() == 42);
     CHECK(app.seen == std::vector<std::string>{"status 1", "log len 3"});
     // frames after the reply stay buffered until asked for
-    CHECK(link.feed(gmp::bytes_view{}) == 1);
+    CHECK(link.feed(gmsg::bytes_view{}) == 1);
     CHECK(app.seen.back() == "status 2");
 
     // make_stream handlers work too
@@ -249,7 +249,7 @@ TEST_CASE("poll on a text protocol") {
     t.text = "HELLO";
     add(t);
     nm::Nmea::Stream<> parser;
-    parser.push(gmp::as_bytes(text.data(), text.size()));
+    parser.push(gmsg::as_bytes(text.data(), text.size()));
     auto r = parser.poll_frame();
     REQUIRE(r);
     CHECK(std::get<nm::TXTView>(r->message).text() == "HELLO");

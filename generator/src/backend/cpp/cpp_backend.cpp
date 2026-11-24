@@ -109,28 +109,28 @@ private:
             const auto t = cpp::lang_value(ct->lang, "type");
             const auto dec = cpp::lang_value(ct->lang, "decode");
             const auto enc = cpp::lang_value(ct->lang, "encode");
-            w.line("static_assert(requires(gmp::ByteReader& r) { { " + dec + "(r) } -> std::same_as<gmp::Result<" + t +
-                   ">>; }, \"custom type '" + ct->name + "': decode must be gmp::Result<" + t + "> (gmp::ByteReader&)\");");
+            w.line("static_assert(requires(gmsg::ByteReader& r) { { " + dec + "(r) } -> std::same_as<gmsg::Result<" + t +
+                   ">>; }, \"custom type '" + ct->name + "': decode must be gmsg::Result<" + t + "> (gmsg::ByteReader&)\");");
             if (!enc.empty())
-                w.line("static_assert(requires(gmp::ByteWriter& w, const " + t + "& v) { { " + enc +
-                       "(w, v) } -> std::same_as<gmp::VoidResult>; }, \"custom type '" + ct->name +
-                       "': encode must be gmp::VoidResult (gmp::ByteWriter&, const " + t + "&)\");");
+                w.line("static_assert(requires(gmsg::ByteWriter& w, const " + t + "& v) { { " + enc +
+                       "(w, v) } -> std::same_as<gmsg::VoidResult>; }, \"custom type '" + ct->name +
+                       "': encode must be gmsg::VoidResult (gmsg::ByteWriter&, const " + t + "&)\");");
         }
         for (const auto* ct : text) {
             const auto t = cpp::lang_value(ct->lang, "type");
             const auto dec = cpp::lang_value(ct->lang, "decode");
             const auto enc = cpp::lang_value(ct->lang, "encode");
-            w.line("static_assert(requires(std::string_view s) { { " + dec + "(s) } -> std::same_as<gmp::Result<" + t +
-                   ">>; }, \"custom text type '" + ct->name + "': decode must be gmp::Result<" + t + "> (std::string_view)\");");
+            w.line("static_assert(requires(std::string_view s) { { " + dec + "(s) } -> std::same_as<gmsg::Result<" + t +
+                   ">>; }, \"custom text type '" + ct->name + "': decode must be gmsg::Result<" + t + "> (std::string_view)\");");
             if (!enc.empty())
-                w.line("static_assert(requires(gmp::text::TextWriter& w, const " + t + "& v) { { " + enc +
-                       "(w, v) } -> std::same_as<gmp::VoidResult>; }, \"custom text type '" + ct->name +
-                       "': encode must be gmp::VoidResult (gmp::text::TextWriter&, const " + t + "&)\");");
+                w.line("static_assert(requires(gmsg::text::TextWriter& w, const " + t + "& v) { { " + enc +
+                       "(w, v) } -> std::same_as<gmsg::VoidResult>; }, \"custom text type '" + ct->name +
+                       "': encode must be gmsg::VoidResult (gmsg::text::TextWriter&, const " + t + "&)\");");
         }
         for (const auto& cs : c.schema.custom_checksums) {
             const auto fn = cpp::lang_value(cs->lang, "function");
-            w.line("static_assert(requires(gmp::bytes_view d) { { " + fn + "(d) } -> std::unsigned_integral; }, \"custom checksum '" +
-                   cs->name + "': function must be <unsigned> (gmp::bytes_view)\");");
+            w.line("static_assert(requires(gmsg::bytes_view d) { { " + fn + "(d) } -> std::unsigned_integral; }, \"custom checksum '" +
+                   cs->name + "': function must be <unsigned> (gmsg::bytes_view)\");");
         }
         if (!binary.empty() || !text.empty() || !c.schema.custom_checksums.empty()) w.line();
     }

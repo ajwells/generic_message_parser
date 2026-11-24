@@ -1229,7 +1229,7 @@ private:
         if (f.kind == FieldKind::Array) {
             emit_array_accessors(f, guard);
         } else if (f.kind == FieldKind::Custom) {
-            // a custom decoder can fail: error code + out parameter (C++: gmp::Result<T>)
+            // a custom decoder can fail: error code + out parameter (C++: gmsg::Result<T>)
             names_.add(f.name, "field " + f.name);
             h_.line("/* Decode " + f.name + " (custom type " + f.custom->name + "); GMSG_ERR_MISSING_FIELD when absent. */");
             h_.open("static inline gmsg_error " + base + "(const " + v_ + "* v, " + element_type(c_, m_, f) + "* out) {");

@@ -14,11 +14,11 @@ using namespace ir;
 std::string sz(std::size_t v) { return std::to_string(v); }
 std::string dv(int depth) { return std::to_string(depth); }
 
-const char* kFailPrefix = "return gmp::fail(";
+const char* kFailPrefix = "return gmsg::fail(";
 
-std::string fail(const char* err) { return std::string(kFailPrefix) + "gmp::Error::" + err + ");"; }
+std::string fail(const char* err) { return std::string(kFailPrefix) + "gmsg::Error::" + err + ");"; }
 
-/// Expression computing a field-level checksum over `covered` (a gmp::bytes_view expression).
+/// Expression computing a field-level checksum over `covered` (a gmsg::bytes_view expression).
 std::string crc_call(const ChecksumSpec& c, const std::string& covered) {
     bool fn = false;
     const auto impl = checksum_impl(c, fn);
@@ -72,9 +72,9 @@ std::vector<ConvAccessor> conversions_of(const Field& f) {
 void print_field_value(CodeWriter& w, const Field& f, const std::string& v, bool view) {
     const auto name = string_literal(f.name);
     if (f.kind == FieldKind::Bytes)
-        w.line("gmp_p.field(" + name + ", gmp::hex(" + (view ? v : "gmp::bytes_view(" + v + ".data(), " + v + ".size())") + "));");
+        w.line("gmsg_p.field(" + name + ", gmsg::hex(" + (view ? v : "gmsg::bytes_view(" + v + ".data(), " + v + ".size())") + "));");
     else
-        w.line("gmp_p.field(" + name + ", " + v + ");");
+        w.line("gmsg_p.field(" + name + ", " + v + ");");
     emit_print_extras(w, f, v);
 }
 
@@ -86,17 +86,17 @@ void print_field(CodeWriter& w, const Field& f, const std::string& access, bool 
         print_field_value(w, f, access, view);
         return;
     }
-    w.open(view ? "if (const auto gmp_v = " + access + ") {" : "if (" + access + ") {");
-    print_field_value(w, f, view ? "(*gmp_v)" : "(*" + access + ")", view);
+    w.open(view ? "if (const auto gmsg_v = " + access + ") {" : "if (" + access + ") {");
+    print_field_value(w, f, view ? "(*gmsg_v)" : "(*" + access + ")", view);
     w.dedent();
     w.open("} else {");
-    w.line("gmp_p.absent(" + string_literal(f.name) + ");");
+    w.line("gmsg_p.absent(" + string_literal(f.name) + ");");
     w.close();
 }
 
 void print_computed(CodeWriter& w, const Message& m) {
     for (const auto& c : m.computed)
-        w.line("gmp_p.computed(" + string_literal(c.name) + ", this->" + ident(c.name) + "()" +
+        w.line("gmsg_p.computed(" + string_literal(c.name) + ", this->" + ident(c.name) + "()" +
                (c.unit.empty() ? "" : ", " + string_literal(c.unit)) + ");");
 }
 
@@ -129,7 +129,7 @@ void emit_bits_type(Ctx& c, const Message& m, const Field& f) {
     w.line(name + " g{};");
     for (const auto& b : f.bits) {
         if (b.pad || b.const_value) continue;
-        w.line("g." + ident(b.name) + " = gmp::get_bits<" + bitfield_type(b) + ">(p, " + sz(b.offset) + ", " +
+        w.line("g." + ident(b.name) + " = gmsg::get_bits<" + bitfield_type(b) + ">(p, " + sz(b.offset) + ", " +
                sz(b.bits) + ", " + order + ");");
     }
     w.line("return g;");
@@ -137,27 +137,27 @@ void emit_bits_type(Ctx& c, const Message& m, const Field& f) {
     w.open("constexpr void pack(std::uint8_t* p) const noexcept {");
     for (const auto& b : f.bits) {
         if (b.pad) {
-            w.line("gmp::set_bits<std::uint64_t>(p, " + sz(b.offset) + ", " + sz(b.bits) + ", 0, " + order + ");");
+            w.line("gmsg::set_bits<std::uint64_t>(p, " + sz(b.offset) + ", " + sz(b.bits) + ", 0, " + order + ");");
         } else if (b.const_value) {
-            w.line("gmp::set_bits<std::uint64_t>(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " +
+            w.line("gmsg::set_bits<std::uint64_t>(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " +
                    int_literal(*b.const_value) + "ull, " + order + ");");
         } else {
-            w.line("gmp::set_bits<" + bitfield_type(b) + ">(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " +
+            w.line("gmsg::set_bits<" + bitfield_type(b) + ">(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " +
                    ident(b.name) + ", " + order + ");");
         }
     }
     w.close();
-    w.open("static constexpr gmp::VoidResult check([[maybe_unused]] const std::uint8_t* p) noexcept {");
+    w.open("static constexpr gmsg::VoidResult check([[maybe_unused]] const std::uint8_t* p) noexcept {");
     for (const auto& b : f.bits) {
         if (b.const_value) {
-            w.line("if (gmp::extract_bits(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " + order + ") != " +
+            w.line("if (gmsg::extract_bits(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " + order + ") != " +
                    int_literal(*b.const_value) + "ull) " + fail("BadConst"));
         } else if (b.enum_def && b.enum_def->strict) {
-            w.line("if (!is_known(gmp::get_bits<" + bitfield_type(b) + ">(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " +
+            w.line("if (!is_known(gmsg::get_bits<" + bitfield_type(b) + ">(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " +
                    order + "))) " + fail("UnknownEnum"));
         } else if (!b.limit_checks.empty()) {
             w.open("{");
-            w.line("const auto v = gmp::get_bits<" + bitfield_type(b) + ">(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " + order + ");");
+            w.line("const auto v = gmsg::get_bits<" + bitfield_type(b) + ">(p, " + sz(b.offset) + ", " + sz(b.bits) + ", " + order + ");");
             w.line(limit_stmt(b, "v"));
             w.close();
         }
@@ -165,16 +165,16 @@ void emit_bits_type(Ctx& c, const Message& m, const Field& f) {
     w.line("return {};");
     w.close();
     w.line("/// Human readable dump (see gmp/print.hpp).");
-    w.open("void print_to(gmp::Printer& gmp_p) const noexcept {");
-    w.line("gmp_p.begin({});");
+    w.open("void print_to(gmsg::Printer& gmsg_p) const noexcept {");
+    w.line("gmsg_p.begin({});");
     for (const auto& b : f.bits) {
         if (b.pad || b.const_value) continue;
-        w.line("gmp_p.field(" + string_literal(b.name) + ", this->" + ident(b.name) + ");");
+        w.line("gmsg_p.field(" + string_literal(b.name) + ", this->" + ident(b.name) + ");");
         if (b.scale || b.offset_value)
-            w.line("gmp_p.conversion(static_cast<double>(this->" + ident(b.name) + ") * " +
+            w.line("gmsg_p.conversion(static_cast<double>(this->" + ident(b.name) + ") * " +
                    double_literal(b.scale.value_or(1.0)) + " + " + double_literal(b.offset_value.value_or(0.0)) + ");");
     }
-    w.line("gmp_p.end();");
+    w.line("gmsg_p.end();");
     w.close();
     w.line("bool operator==(const " + name + "&) const = default;");
     w.close("};");
@@ -290,7 +290,7 @@ private:
     }
 
     void emit_read() {
-        w_.open("gmp::VoidResult read([[maybe_unused]] gmp::ByteReader& r) noexcept {");
+        w_.open("gmsg::VoidResult read([[maybe_unused]] gmsg::ByteReader& r) noexcept {");
         for (const auto& f : m_.fields) {
             const auto dst = f->has_member() ? ident(f->name) : std::string();
             if (f->when) {
@@ -320,14 +320,14 @@ private:
                     // value bytes followed by their checksum
                     const auto n = sz(value_bytes(f));
                     w_.line("auto b" + d + " = r.read_bytes(" + sz(value_bytes(f) + f.crc->size) + ");");
-                    w_.line("if (!b" + d + ") return gmp::fail(b" + d + ".error());");
-                    w_.line("if (gmp::load_uint(b" + d + "->data() + " + n + ", " + sz(f.crc->size) + ", " +
+                    w_.line("if (!b" + d + ") return gmsg::fail(b" + d + ".error());");
+                    w_.line("if (gmsg::load_uint(b" + d + "->data() + " + n + ", " + sz(f.crc->size) + ", " +
                             endian_expr(f.crc->endian) + ") != " + crc_call(*f.crc, "b" + d + "->first(" + n + ")") + ") " +
                             fail("BadChecksum"));
-                    w_.line("const auto v" + d + " = gmp::load<" + t + ">(b" + d + "->data(), " + endian_expr(f.endian) + ");");
+                    w_.line("const auto v" + d + " = gmsg::load<" + t + ">(b" + d + "->data(), " + endian_expr(f.endian) + ");");
                 } else {
                     w_.line("auto v" + d + " = r.read<" + t + ">(" + endian_expr(f.endian) + ");");
-                    w_.line("if (!v" + d + ") return gmp::fail(v" + d + ".error());");
+                    w_.line("if (!v" + d + ") return gmsg::fail(v" + d + ".error());");
                 }
                 const auto val = (f.crc ? "v" : "*v") + d;
                 if (strict_enum(f)) w_.line("if (!is_known(" + val + ")) " + fail("UnknownEnum"));
@@ -341,7 +341,7 @@ private:
                 const auto t = bits_type_name(m_, f);
                 w_.open("{");
                 w_.line("auto b" + d + " = r.read_bytes(" + sz(f.bits_bytes) + ");");
-                w_.line("if (!b" + d + ") return gmp::fail(b" + d + ".error());");
+                w_.line("if (!b" + d + ") return gmsg::fail(b" + d + ".error());");
                 w_.line("if (auto c" + d + " = " + t + "::check(b" + d + "->data()); !c" + d + ") return c" + d + ";");
                 w_.line(dst + " = " + t + "::unpack(b" + d + "->data());");
                 w_.close();
@@ -361,13 +361,13 @@ private:
                 w_.open("{");
                 if (f.custom->wire_size) {
                     w_.line("auto b" + d + " = r.read_bytes(" + sz(*f.custom->wire_size) + ");");
-                    w_.line("if (!b" + d + ") return gmp::fail(b" + d + ".error());");
-                    w_.line("gmp::ByteReader sub" + d + "(*b" + d + ");");
+                    w_.line("if (!b" + d + ") return gmsg::fail(b" + d + ".error());");
+                    w_.line("gmsg::ByteReader sub" + d + "(*b" + d + ");");
                     w_.line("auto v" + d + " = " + fn + "(sub" + d + ");");
                 } else {
                     w_.line("auto v" + d + " = " + fn + "(r);");
                 }
-                w_.line("if (!v" + d + ") return gmp::fail(v" + d + ".error());");
+                w_.line("if (!v" + d + ") return gmsg::fail(v" + d + ".error());");
                 w_.line(dst + " = std::move(*v" + d + ");");
                 w_.close();
                 break;
@@ -396,15 +396,15 @@ private:
                 break;
             case LenKind::None: break;
         }
-        w_.line("if (!" + b + ") return gmp::fail(" + b + ".error());");
+        w_.line("if (!" + b + ") return gmsg::fail(" + b + ".error());");
         if (f.len.kind == LenKind::Terminator)
             w_.line("if (" + b + "->size() > " + sz(f.max.value_or(0)) + ") " + fail("OutOfRange"));
         if (str) {
             if (f.len.kind == LenKind::Fixed)
-                w_.line("(void)" + dst + ".assign(gmp::strip_padding(gmp::as_string_view(*" + b + "), " +
+                w_.line("(void)" + dst + ".assign(gmsg::strip_padding(gmsg::as_string_view(*" + b + "), " +
                         int_literal(static_cast<unsigned char>(f.pad_char)) + "));");
             else
-                w_.line("(void)" + dst + ".assign(gmp::as_string_view(*" + b + "));");
+                w_.line("(void)" + dst + ".assign(gmsg::as_string_view(*" + b + "));");
         } else {
             if (f.len.kind == LenKind::Fixed)
                 w_.line("std::copy(" + b + "->begin(), " + b + "->end(), " + dst + ".begin());");
@@ -451,7 +451,7 @@ private:
     // ---------------------------------------------------------------------------------------------
     void emit_write() {
         ref_ = write_ref_;  // expressions on the encode side see derived values
-        w_.open("gmp::VoidResult write([[maybe_unused]] gmp::ByteWriter& w) const noexcept {");
+        w_.open("gmsg::VoidResult write([[maybe_unused]] gmsg::ByteWriter& w) const noexcept {");
         for (const auto& f : m_.fields) {
             const auto src = f->has_member() ? ident(f->name) : std::string();
             if (f->when) {
@@ -502,7 +502,7 @@ private:
                         w_.line(limit_stmt(b, src + "." + ident(b.name)));
                 w_.open("{");
                 w_.line("auto at" + d + " = w.reserve(" + sz(f.bits_bytes) + ");");
-                w_.line("if (!at" + d + ") return gmp::fail(at" + d + ".error());");
+                w_.line("if (!at" + d + ") return gmsg::fail(at" + d + ".error());");
                 w_.line(src + ".pack(w.buffer().data() + *at" + d + ");");
                 w_.close();
                 break;
@@ -540,9 +540,9 @@ private:
         w_.open("{");
         if (str) {
             w_.line("const std::string_view s" + d + " = " + src + ".view();");
-            w_.line("const gmp::bytes_view b" + d + " = gmp::as_bytes(s" + d + ".data(), s" + d + ".size());");
+            w_.line("const gmsg::bytes_view b" + d + " = gmsg::as_bytes(s" + d + ".data(), s" + d + ".size());");
         } else {
-            w_.line("const gmp::bytes_view b" + d + "(" + src + ".data(), " + src + ".size());");
+            w_.line("const gmsg::bytes_view b" + d + "(" + src + ".data(), " + src + ".size());");
         }
         length_check(f, "b" + d + ".size()");
         if (f.len.kind == LenKind::Fixed && str) {
@@ -566,34 +566,34 @@ private:
     }
 
     void emit_wrappers() {
-        w_.open("static gmp::Result<" + m_.name + "> decode(gmp::bytes_view data) noexcept {");
+        w_.open("static gmsg::Result<" + m_.name + "> decode(gmsg::bytes_view data) noexcept {");
         w_.line(m_.name + " m{};");
-        w_.line("gmp::ByteReader r(data);");
-        w_.line("if (auto e = m.read(r); !e) return gmp::fail(e.error());");
+        w_.line("gmsg::ByteReader r(data);");
+        w_.line("if (auto e = m.read(r); !e) return gmsg::fail(e.error());");
         w_.line("return m;");
         w_.close();
         w_.line("/// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).");
-        w_.open("static gmp::Result<" + m_.name + "> decode(gmp::bytes_view data, std::size_t& extra) noexcept {");
+        w_.open("static gmsg::Result<" + m_.name + "> decode(gmsg::bytes_view data, std::size_t& extra) noexcept {");
         w_.line(m_.name + " m{};");
-        w_.line("gmp::ByteReader r(data);");
-        w_.line("if (auto e = m.read(r); !e) return gmp::fail(e.error());");
+        w_.line("gmsg::ByteReader r(data);");
+        w_.line("if (auto e = m.read(r); !e) return gmsg::fail(e.error());");
         w_.line("extra = data.size() - r.position();");
         w_.line("return m;");
         w_.close();
-        w_.open("gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {");
-        w_.line("gmp::ByteWriter w(out);");
-        w_.line("if (auto e = write(w); !e) return gmp::fail(e.error());");
+        w_.open("gmsg::Result<std::size_t> encode(gmsg::mut_bytes out) const noexcept {");
+        w_.line("gmsg::ByteWriter w(out);");
+        w_.line("if (auto e = write(w); !e) return gmsg::fail(e.error());");
         w_.line("return w.position();");
         w_.close();
     }
 
     void emit_print() {
-        w_.line("/// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).");
-        w_.open("void print_to(gmp::Printer& gmp_p) const noexcept {");
-        w_.line("gmp_p.begin(" + string_literal(m_.name) + ");");
+        w_.line("/// Human readable dump (see gmp/print.hpp): gmsg::print(msg, stdout).");
+        w_.open("void print_to(gmsg::Printer& gmsg_p) const noexcept {");
+        w_.line("gmsg_p.begin(" + string_literal(m_.name) + ");");
         for (const auto& f : m_.fields) print_field(w_, *f, "this->" + ident(f->name), false);
         print_computed(w_, m_);
-        w_.line("gmp_p.end();");
+        w_.line("gmsg_p.end();");
         w_.close();
     }
 
@@ -637,33 +637,33 @@ public:
         w_.line();
         emit_from();
         emit_unchecked();
-        w_.line("[[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }");
-        w_.line("[[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }");
+        w_.line("[[nodiscard]] gmsg::bytes_view data() const noexcept { return gmsg_data_; }");
+        w_.line("[[nodiscard]] std::size_t wire_size() const noexcept { return gmsg_data_.size(); }");
         w_.line("/// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).");
-        w_.line("[[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }");
+        w_.line("[[nodiscard]] std::size_t extra_bytes() const noexcept { return gmsg_extra_; }");
         w_.line();
         for (const auto& f : m_.fields) emit_accessor(*f);
         emit_computed_accessors();
         w_.line();
         w_.line("/// Human readable dump (see gmp/print.hpp); same output as the struct.");
-        w_.open("void print_to(gmp::Printer& gmp_p) const noexcept {");
-        w_.line("gmp_p.begin(" + string_literal(m_.name) + ");");
+        w_.open("void print_to(gmsg::Printer& gmsg_p) const noexcept {");
+        w_.line("gmsg_p.begin(" + string_literal(m_.name) + ");");
         for (const auto& f : m_.fields) print_field(w_, *f, "this->" + ident(f->name) + "()", true);
         print_computed(w_, m_);
-        w_.line("gmp_p.end();");
+        w_.line("gmsg_p.end();");
         w_.close();
         if (m_.want_struct) {
             w_.line();
             w_.line("/// Decode into the eager struct.");
-            w_.line("[[nodiscard]] gmp::Result<" + m_.name + "> to_struct() const noexcept { return " + m_.name +
-                    "::decode(gmp_data_); }");
+            w_.line("[[nodiscard]] gmsg::Result<" + m_.name + "> to_struct() const noexcept { return " + m_.name +
+                    "::decode(gmsg_data_); }");
         }
         w_.line();
         w_.label("private:");
-        w_.line("gmp::bytes_view gmp_data_{};");
-        w_.line("std::size_t gmp_extra_ = 0;");
-        if (dynamic_) w_.line("std::array<std::uint32_t, " + sz(m_.fields.size() + 1) + "> gmp_off_{};");
-        if (m_.conditional_count) w_.line("std::uint64_t gmp_present_ = 0;");
+        w_.line("gmsg::bytes_view gmsg_data_{};");
+        w_.line("std::size_t gmsg_extra_ = 0;");
+        if (dynamic_) w_.line("std::array<std::uint32_t, " + sz(m_.fields.size() + 1) + "> gmsg_off_{};");
+        if (m_.conditional_count) w_.line("std::uint64_t gmsg_present_ = 0;");
         w_.close("};");
         w_.line();
     }
@@ -671,11 +671,11 @@ public:
 private:
     std::string off(const Field& f) const {
         if (f.static_offset) return sz(*f.static_offset);
-        return "gmp_off_[" + sz(f.index) + "]";
+        return "gmsg_off_[" + sz(f.index) + "]";
     }
     std::string size(const Field& f) const {
         if (f.static_size) return sz(*f.static_size);
-        return "(gmp_off_[" + sz(f.index + 1) + "] - gmp_off_[" + sz(f.index) + "])";
+        return "(gmsg_off_[" + sz(f.index + 1) + "] - gmsg_off_[" + sz(f.index) + "])";
     }
 
     /// Validation for a field with static size located at byte offset expression `o` of `data`.
@@ -686,43 +686,43 @@ private:
             case FieldKind::Enum:
                 if (f.crc) {
                     const auto n = sz(value_bytes(f));
-                    w_.line("if (gmp::load_uint(" + p + " + " + n + ", " + sz(f.crc->size) + ", " + endian_expr(f.crc->endian) +
-                            ") != " + crc_call(*f.crc, "gmp::bytes_view(" + p + ", " + n + ")") + ") " + fail("BadChecksum"));
+                    w_.line("if (gmsg::load_uint(" + p + " + " + n + ", " + sz(f.crc->size) + ", " + endian_expr(f.crc->endian) +
+                            ") != " + crc_call(*f.crc, "gmsg::bytes_view(" + p + ", " + n + ")") + ") " + fail("BadChecksum"));
                 }
                 if (f.const_value)
-                    w_.line("if (gmp::load<" + element_type(m_, f) + ">(" + p + ", " + endian_expr(f.endian) + ") != " +
+                    w_.line("if (gmsg::load<" + element_type(m_, f) + ">(" + p + ", " + endian_expr(f.endian) + ") != " +
                             typed_literal(f, *f.const_value) + ") " + fail("BadConst"));
                 else if (strict_enum(f))
-                    w_.line("if (!is_known(gmp::load<" + element_type(m_, f) + ">(" + p + ", " + endian_expr(f.endian) +
+                    w_.line("if (!is_known(gmsg::load<" + element_type(m_, f) + ">(" + p + ", " + endian_expr(f.endian) +
                             "))) " + fail("UnknownEnum"));
                 if (!f.limit_checks.empty()) {
                     w_.open("{");
-                    w_.line("const auto v = gmp::load<" + element_type(m_, f) + ">(" + p + ", " + endian_expr(f.endian) + ");");
+                    w_.line("const auto v = gmsg::load<" + element_type(m_, f) + ">(" + p + ", " + endian_expr(f.endian) + ");");
                     w_.line(limit_stmt(f, "v"));
                     w_.close();
                 }
                 break;
             case FieldKind::Bits:
                 if (bits_need_check(f))
-                    w_.line("if (auto c = " + bits_type_name(m_, f) + "::check(" + p + "); !c) return gmp::fail(c.error());");
+                    w_.line("if (auto c = " + bits_type_name(m_, f) + "::check(" + p + "); !c) return gmsg::fail(c.error());");
                 break;
             case FieldKind::Message:
                 if (f.message->needs_validation)
                     w_.line("if (auto c = " + view_name(*f.message) + "::from(data.subspan(" + o + ", " +
-                            sz(*f.static_size) + ")); !c) return gmp::fail(c.error());");
+                            sz(*f.static_size) + ")); !c) return gmsg::fail(c.error());");
                 break;
             case FieldKind::Array:
                 if (f.elem->kind == FieldKind::Message && f.elem->message->needs_validation) {
                     const auto es = sz(*f.elem->static_size);
                     w_.open("for (std::size_t k = 0; k < " + sz(f.len.fixed) + "; ++k) {");
                     w_.line("if (auto c = " + view_name(*f.elem->message) + "::from(data.subspan(" + o + " + k * " + es +
-                            ", " + es + ")); !c) return gmp::fail(c.error());");
+                            ", " + es + ")); !c) return gmsg::fail(c.error());");
                     w_.close();
                 } else if (f.elem->const_value) {
                     // arrays of constants are unusual; validate each element
                     const auto es = sz(*f.elem->static_size);
                     w_.open("for (std::size_t k = 0; k < " + sz(f.len.fixed) + "; ++k) {");
-                    w_.line("if (gmp::load<" + element_type(m_, *f.elem) + ">(" + p + " + k * " + es + ", " +
+                    w_.line("if (gmsg::load<" + element_type(m_, *f.elem) + ">(" + p + " + k * " + es + ", " +
                             endian_expr(f.elem->endian) + ") != " + typed_literal(*f.elem, *f.elem->const_value) + ") " +
                             fail("BadConst"));
                     w_.close();
@@ -739,7 +739,7 @@ private:
     void emit_enum_array_check(const Field& e, const std::string& p, const std::string& count) {
         const auto es = sz(prim_size(e.prim));
         w_.open("for (std::size_t k = 0; k < " + count + "; ++k) {");
-        const auto load = "gmp::load<" + element_type(m_, e) + ">(" + p + " + k * " + es + ", " + endian_expr(e.endian) + ")";
+        const auto load = "gmsg::load<" + element_type(m_, e) + ">(" + p + " + k * " + es + ", " + endian_expr(e.endian) + ")";
         if (strict_enum(e)) {
             w_.line("if (!is_known(" + load + ")) " + fail("UnknownEnum"));
         } else {
@@ -751,33 +751,33 @@ private:
 
     void emit_from() {
         w_.line("/// Validate `data` and build a view. Trailing bytes beyond the message are ignored.");
-        w_.open("[[nodiscard]] static gmp::Result<" + name_ + "> from(gmp::bytes_view data) noexcept {");
+        w_.open("[[nodiscard]] static gmsg::Result<" + name_ + "> from(gmsg::bytes_view data) noexcept {");
         if (!dynamic_) {
             w_.line("if (data.size() < " + sz(*m_.static_size) + ") " + fail("Truncated"));
             for (const auto& f : m_.fields) validate_static(*f, sz(*f->static_offset));
             w_.line(name_ + " v;");
-            w_.line("v.gmp_data_ = data.first(" + sz(*m_.static_size) + ");");
-            w_.line("v.gmp_extra_ = data.size() - " + sz(*m_.static_size) + ";");
+            w_.line("v.gmsg_data_ = data.first(" + sz(*m_.static_size) + ");");
+            w_.line("v.gmsg_extra_ = data.size() - " + sz(*m_.static_size) + ";");
             w_.line("return v;");
             w_.close();
             return;
         }
         w_.line(name_ + " v;");
-        w_.line("v.gmp_data_ = data;");
+        w_.line("v.gmsg_data_ = data;");
         w_.line("std::size_t pos = 0;");
         for (const auto& fp : m_.fields) {
             const auto& f = *fp;
-            w_.line("v.gmp_off_[" + sz(f.index) + "] = static_cast<std::uint32_t>(pos);");
+            w_.line("v.gmsg_off_[" + sz(f.index) + "] = static_cast<std::uint32_t>(pos);");
             if (f.when) {
                 w_.open("if (" + expr(*f.when, walk_ref_) + ") {");
-                w_.line("v.gmp_present_ |= std::uint64_t{1} << " + sz(cond_bit_.at(&f)) + ";");
+                w_.line("v.gmsg_present_ |= std::uint64_t{1} << " + sz(cond_bit_.at(&f)) + ";");
             }
             walk_field(f);
             if (f.when) w_.close();
         }
-        w_.line("v.gmp_off_[" + sz(m_.fields.size()) + "] = static_cast<std::uint32_t>(pos);");
-        w_.line("v.gmp_data_ = data.first(pos);");
-        w_.line("v.gmp_extra_ = data.size() - pos;");
+        w_.line("v.gmsg_off_[" + sz(m_.fields.size()) + "] = static_cast<std::uint32_t>(pos);");
+        w_.line("v.gmsg_data_ = data.first(pos);");
+        w_.line("v.gmsg_extra_ = data.size() - pos;");
         w_.line("return v;");
         w_.close();
     }
@@ -808,12 +808,12 @@ private:
             w_.line("if (data.size() - pos < " + sz(*fixed) + ") " + fail("Truncated"));
             if (f.kind == FieldKind::Message && f.message->needs_validation) {
                 w_.line("if (auto c = " + view_name(*f.message) + "::from(data.subspan(pos, " + sz(*fixed) +
-                        ")); !c) return gmp::fail(c.error());");
+                        ")); !c) return gmsg::fail(c.error());");
             } else if (f.kind == FieldKind::Array && f.elem->kind == FieldKind::Message && f.elem->message->needs_validation) {
                 const auto es = sz(*f.elem->static_size);
                 w_.open("for (std::size_t k = 0; k < " + sz(f.len.fixed) + "; ++k) {");
                 w_.line("if (auto c = " + view_name(*f.elem->message) + "::from(data.subspan(pos + k * " + es + ", " + es +
-                        ")); !c) return gmp::fail(c.error());");
+                        ")); !c) return gmsg::fail(c.error());");
                 w_.close();
             } else {
                 validate_static(f, "pos");
@@ -848,15 +848,15 @@ private:
             case FieldKind::Message:
                 w_.open("{");
                 w_.line("auto c = " + view_name(*f.message) + "::from(data.subspan(pos));");
-                w_.line("if (!c) return gmp::fail(c.error());");
+                w_.line("if (!c) return gmsg::fail(c.error());");
                 w_.line("pos += c->wire_size();");
                 w_.close();
                 break;
             case FieldKind::Custom:
                 w_.open("{");
-                w_.line("gmp::ByteReader cr(data.subspan(pos));");
+                w_.line("gmsg::ByteReader cr(data.subspan(pos));");
                 w_.line("auto c = " + lang_value(f.custom->lang, "decode") + "(cr);");
-                w_.line("if (!c) return gmp::fail(c.error());");
+                w_.line("if (!c) return gmsg::fail(c.error());");
                 w_.line("pos += cr.position();");
                 w_.close();
                 break;
@@ -879,7 +879,7 @@ private:
             } else {
                 w_.open("while (pos < data.size()) {");
                 w_.line("auto c = " + view_name(*e.message) + "::from(data.subspan(pos));");
-                w_.line("if (!c) return gmp::fail(c.error());");
+                w_.line("if (!c) return gmsg::fail(c.error());");
                 w_.line("pos += c->wire_size();");
                 w_.close();
             }
@@ -895,7 +895,7 @@ private:
             } else {
                 w_.open("for (std::int64_t k = 0; k < n; ++k) {");
                 w_.line("auto c = " + view_name(*e.message) + "::from(data.subspan(pos));");
-                w_.line("if (!c) return gmp::fail(c.error());");
+                w_.line("if (!c) return gmsg::fail(c.error());");
                 w_.line("pos += c->wire_size();");
                 w_.close();
             }
@@ -905,11 +905,11 @@ private:
 
     void emit_unchecked() {
         w_.line("/// Build a view over data already validated by from() (no checks).");
-        w_.open("[[nodiscard]] static " + name_ + " unchecked(gmp::bytes_view data) noexcept {");
+        w_.open("[[nodiscard]] static " + name_ + " unchecked(gmsg::bytes_view data) noexcept {");
         if (!dynamic_) {
             w_.line(name_ + " v;");
-            w_.line("v.gmp_data_ = data.first(" + sz(*m_.static_size) + ");");
-            w_.line("v.gmp_extra_ = data.size() - " + sz(*m_.static_size) + ";");
+            w_.line("v.gmsg_data_ = data.first(" + sz(*m_.static_size) + ");");
+            w_.line("v.gmsg_extra_ = data.size() - " + sz(*m_.static_size) + ";");
             w_.line("return v;");
         } else {
             w_.line("return *from(data);");
@@ -922,17 +922,17 @@ private:
         switch (f.kind) {
             case FieldKind::Scalar: case FieldKind::Enum: return element_type(m_, f);
             case FieldKind::Bits: return bits_type_name(m_, f);
-            case FieldKind::Bytes: return "gmp::bytes_view";
+            case FieldKind::Bytes: return "gmsg::bytes_view";
             case FieldKind::String: return "std::string_view";
             case FieldKind::Message: return view_name(*f.message);
-            case FieldKind::Custom: return "gmp::Result<" + lang_value(f.custom->lang, "type") + ">";
+            case FieldKind::Custom: return "gmsg::Result<" + lang_value(f.custom->lang, "type") + ">";
             case FieldKind::Array: {
                 const auto& e = *f.elem;
                 if (e.kind == FieldKind::Message) {
-                    if (e.static_size) return "gmp::FixedArrayView<" + view_name(*e.message) + ", " + sz(*e.static_size) + ">";
-                    return "gmp::SeqArrayView<" + view_name(*e.message) + ">";
+                    if (e.static_size) return "gmsg::FixedArrayView<" + view_name(*e.message) + ", " + sz(*e.static_size) + ">";
+                    return "gmsg::SeqArrayView<" + view_name(*e.message) + ">";
                 }
-                return "gmp::ScalarArrayView<" + element_type(m_, e) + ">";
+                return "gmsg::ScalarArrayView<" + element_type(m_, e) + ">";
             }
             default: return "void";
         }
@@ -944,24 +944,24 @@ private:
         switch (f.kind) {
             case FieldKind::Scalar:
             case FieldKind::Enum:
-                return "gmp::load<" + element_type(m_, f) + ">(gmp_data_.data() + " + o + ", " + endian_expr(f.endian) + ")";
-            case FieldKind::Bits: return bits_type_name(m_, f) + "::unpack(gmp_data_.data() + " + o + ")";
-            case FieldKind::Bytes: return "gmp_data_.subspan(" + o + ", " + z + ")";
+                return "gmsg::load<" + element_type(m_, f) + ">(gmsg_data_.data() + " + o + ", " + endian_expr(f.endian) + ")";
+            case FieldKind::Bits: return bits_type_name(m_, f) + "::unpack(gmsg_data_.data() + " + o + ")";
+            case FieldKind::Bytes: return "gmsg_data_.subspan(" + o + ", " + z + ")";
             case FieldKind::String: {
                 if (f.len.kind == LenKind::Fixed)
-                    return "gmp::strip_padding(gmp::as_string_view(gmp_data_.subspan(" + o + ", " + z + ")), " +
+                    return "gmsg::strip_padding(gmsg::as_string_view(gmsg_data_.subspan(" + o + ", " + z + ")), " +
                            int_literal(static_cast<unsigned char>(f.pad_char)) + ")";
                 if (f.len.kind == LenKind::Terminator)
-                    return "gmp::as_string_view(gmp_data_.subspan(" + o + ", " + z + " - 1))";
-                return "gmp::as_string_view(gmp_data_.subspan(" + o + ", " + z + "))";
+                    return "gmsg::as_string_view(gmsg_data_.subspan(" + o + ", " + z + " - 1))";
+                return "gmsg::as_string_view(gmsg_data_.subspan(" + o + ", " + z + "))";
             }
-            case FieldKind::Message: return view_name(*f.message) + "::unchecked(gmp_data_.subspan(" + o + ", " + z + "))";
+            case FieldKind::Message: return view_name(*f.message) + "::unchecked(gmsg_data_.subspan(" + o + ", " + z + "))";
             case FieldKind::Custom:
-                return "[&] { gmp::ByteReader r(gmp_data_.subspan(" + o + ", " + z + ")); return " +
+                return "[&] { gmsg::ByteReader r(gmsg_data_.subspan(" + o + ", " + z + ")); return " +
                        lang_value(f.custom->lang, "decode") + "(r); }()";
             case FieldKind::Array: {
                 const auto& e = *f.elem;
-                const auto sub = "gmp_data_.subspan(" + o + ", " + z + ")";
+                const auto sub = "gmsg_data_.subspan(" + o + ", " + z + ")";
                 if (e.kind == FieldKind::Message) {
                     if (e.static_size) return accessor_type(f) + "(" + sub + ", " + z + " / " + sz(*e.static_size) + ")";
                     return accessor_type(f) + "(" + sub + ")";
@@ -992,7 +992,7 @@ private:
         const bool constexpr_ok = f.kind == FieldKind::Scalar || f.kind == FieldKind::Enum || f.kind == FieldKind::Bits;
         (void)constexpr_ok;
         if (f.when) {
-            const auto bit = "(gmp_present_ >> " + sz(cond_bit_.at(&f)) + ") & 1u";
+            const auto bit = "(gmsg_present_ >> " + sz(cond_bit_.at(&f)) + ") & 1u";
             w_.line("[[nodiscard]] std::optional<" + t + "> " + n + "() const noexcept { if (!(" + bit +
                     ")) return std::nullopt; return " + accessor_body(f) + "; }");
         } else {

@@ -1,6 +1,6 @@
 /* gmp/c/types.h - small value types used by generated C code.
  *
- *   gmsg_bytes   borrowed byte range { data, size } (gmp::bytes_view)
+ *   gmsg_bytes   borrowed byte range { data, size } (gmsg::bytes_view)
  *   gmsg_str     borrowed character range { data, size }, not NUL terminated (std::string_view)
  *   gmsg_round_i64(x)  round half away from zero, like llround(), without <math.h>
  */

@@ -19,27 +19,27 @@ namespace {
 using Bytes = std::vector<std::uint8_t>;
 
 // Same configs as crosscheck_framing_c.c.
-const gmp::EscapeConfig& escape_cfg(int which) {
-    static const gmp::EscapeConfig xor_cfg = gmp::make_xor_escape(0x7D, 0x20, {0x7E});
-    static const gmp::EscapeConfig index_cfg = gmp::make_index_escape(0x81, {0x80, 0x81});
-    static const gmp::EscapeConfig map_cfg = gmp::make_map_escape(0xDB, {0xC0, 0xDB}, {0xDC, 0xDD});
+const gmsg::EscapeConfig& escape_cfg(int which) {
+    static const gmsg::EscapeConfig xor_cfg = gmsg::make_xor_escape(0x7D, 0x20, {0x7E});
+    static const gmsg::EscapeConfig index_cfg = gmsg::make_index_escape(0x81, {0x80, 0x81});
+    static const gmsg::EscapeConfig map_cfg = gmsg::make_map_escape(0xDB, {0xC0, 0xDB}, {0xDC, 0xDD});
     return which == 0 ? xor_cfg : which == 1 ? index_cfg : map_cfg;
 }
 
-gmp::FrameScan cpp_scan(int which, gmp::bytes_view b) {
-    const gmp::Pattern aa55{{0xAA, 0x55}, 2}, flag{{0x7E}, 1}, dollar{{0x24}, 1}, crlf{{0x0D, 0x0A}, 2}, x80{{0x80}, 1};
+gmsg::FrameScan cpp_scan(int which, gmsg::bytes_view b) {
+    const gmsg::Pattern aa55{{0xAA, 0x55}, 2}, flag{{0x7E}, 1}, dollar{{0x24}, 1}, crlf{{0x0D, 0x0A}, 2}, x80{{0x80}, 1};
     switch (which) {
-        case 0: return gmp::scan_fixed(b, gmp::FixedFrameConfig{aa55, 6});
-        case 1: return gmp::scan_fixed(b, gmp::FixedFrameConfig{gmp::Pattern{}, 4});
-        case 2: return gmp::scan_fixed(b, gmp::FixedFrameConfig{x80, 5, escape_cfg(1), 0});
-        case 3: return gmp::scan_length_prefixed(b, gmp::LengthPrefixedConfig{aa55, 2, 1, gmp::Endian::big, 5, 5, 24});
-        case 4: return gmp::scan_length_prefixed(b, gmp::LengthPrefixedConfig{gmp::Pattern{}, 0, 2, gmp::Endian::little, -1, 3, 20});
-        case 5: return gmp::scan_length_prefixed(b, gmp::LengthPrefixedConfig{flag, 1, 1, gmp::Endian::big, 4, 4, 32, escape_cfg(0), 0});
+        case 0: return gmsg::scan_fixed(b, gmsg::FixedFrameConfig{aa55, 6});
+        case 1: return gmsg::scan_fixed(b, gmsg::FixedFrameConfig{gmsg::Pattern{}, 4});
+        case 2: return gmsg::scan_fixed(b, gmsg::FixedFrameConfig{x80, 5, escape_cfg(1), 0});
+        case 3: return gmsg::scan_length_prefixed(b, gmsg::LengthPrefixedConfig{aa55, 2, 1, gmsg::Endian::big, 5, 5, 24});
+        case 4: return gmsg::scan_length_prefixed(b, gmsg::LengthPrefixedConfig{gmsg::Pattern{}, 0, 2, gmsg::Endian::little, -1, 3, 20});
+        case 5: return gmsg::scan_length_prefixed(b, gmsg::LengthPrefixedConfig{flag, 1, 1, gmsg::Endian::big, 4, 4, 32, escape_cfg(0), 0});
         case 6:
-            return gmp::scan_length_prefixed(
-                b, gmp::LengthPrefixedConfig{flag, 1, 1, gmp::Endian::big, 0, 4, 32, escape_cfg(0), 0, true, 2, 1, false});
-        case 7: return gmp::scan_delimited(b, gmp::DelimitedConfig{flag, flag, escape_cfg(0), 24});
-        default: return gmp::scan_delimited(b, gmp::DelimitedConfig{dollar, crlf, gmp::EscapeConfig{}, 16});
+            return gmsg::scan_length_prefixed(
+                b, gmsg::LengthPrefixedConfig{flag, 1, 1, gmsg::Endian::big, 0, 4, 32, escape_cfg(0), 0, true, 2, 1, false});
+        case 7: return gmsg::scan_delimited(b, gmsg::DelimitedConfig{flag, flag, escape_cfg(0), 24});
+        default: return gmsg::scan_delimited(b, gmsg::DelimitedConfig{dollar, crlf, gmsg::EscapeConfig{}, 16});
     }
 }
 
@@ -76,19 +76,19 @@ struct Event {
 
 struct Recorder {
     std::vector<Event>* events;
-    void operator()(gmp::bytes_view frame) const { events->push_back({0, 0, frame.size()}); }
-    void operator()(const gmp::FrameError& e) const {
+    void operator()(gmsg::bytes_view frame) const { events->push_back({0, 0, frame.size()}); }
+    void operator()(const gmsg::FrameError& e) const {
         events->push_back({1, static_cast<std::size_t>(e.error), e.data.size()});
     }
 };
 
 struct TestProtocol {
-    static gmp::FrameScan scan(gmp::bytes_view b) noexcept { return cpp_scan(g_cfg, b); }
+    static gmsg::FrameScan scan(gmsg::bytes_view b) noexcept { return cpp_scan(g_cfg, b); }
     template <class H>
-    static gmp::Error process(gmp::mut_bytes frame, H& h) {
-        if (frame.empty() || (frame.back() & 1u) != 0) return gmp::Error::BadChecksum;
-        h(gmp::bytes_view(frame));
-        return gmp::Error::None;
+    static gmsg::Error process(gmsg::mut_bytes frame, H& h) {
+        if (frame.empty() || (frame.back() & 1u) != 0) return gmsg::Error::BadChecksum;
+        h(gmsg::bytes_view(frame));
+        return gmsg::Error::None;
     }
 };
 
@@ -96,9 +96,9 @@ template <std::size_t Cap>
 void stream_case(int which, const Bytes& data, std::size_t chunk) {
     g_cfg = which;
     std::vector<Event> expected;
-    gmp::StreamParser<TestProtocol, Cap> p;
+    gmsg::StreamParser<TestProtocol, Cap> p;
     for (std::size_t pos = 0; pos < data.size(); pos += chunk)
-        (void)p.feed(gmp::bytes_view(data.data() + pos, std::min(chunk, data.size() - pos)), Recorder{&expected});
+        (void)p.feed(gmsg::bytes_view(data.data() + pos, std::min(chunk, data.size() - pos)), Recorder{&expected});
 
     std::vector<std::size_t> ev(3 * 4096);
     std::array<std::uint32_t, 4> st{};
@@ -123,7 +123,7 @@ TEST_CASE("C framing scanners match the C++ runtime") {
         const auto b = structured(rng, rng() % 40);
         for (int which = 0; which < GMPCT_SCAN_COUNT; ++which) {
             INFO("config " << which << ", round " << round);
-            const auto s = cpp_scan(which, gmp::bytes_view(b.data(), b.size()));
+            const auto s = cpp_scan(which, gmsg::bytes_view(b.data(), b.size()));
             std::size_t out[5]{};
             gmpct_scan(which, b.data(), b.size(), out);
             CHECK(out[0] == static_cast<std::size_t>(s.kind));
@@ -131,7 +131,7 @@ TEST_CASE("C framing scanners match the C++ runtime") {
             CHECK(out[2] == s.consume);
             CHECK(out[3] == s.consume_on_error);
             CHECK(out[4] == static_cast<std::size_t>(s.error));
-            if (s.kind == gmp::FrameScan::Kind::frame) ++frames[static_cast<std::size_t>(which)];
+            if (s.kind == gmsg::FrameScan::Kind::frame) ++frames[static_cast<std::size_t>(which)];
         }
     }
     for (int which = 0; which < GMPCT_SCAN_COUNT; ++which) {
@@ -149,7 +149,7 @@ TEST_CASE("C escaping matches the C++ runtime") {
             const auto& cfg = escape_cfg(which);
             // unescape in place
             auto x = b, y = b;
-            const auto r = gmp::unescape_in_place(gmp::mut_bytes(x.data(), x.size()), cfg);
+            const auto r = gmsg::unescape_in_place(gmsg::mut_bytes(x.data(), x.size()), cfg);
             std::size_t n = 0;
             const int e = gmpct_unescape(which, y.data(), y.size(), &n);
             REQUIRE(e == (r ? 0 : static_cast<int>(r.error())));
@@ -162,7 +162,7 @@ TEST_CASE("C escaping matches the C++ runtime") {
                 Bytes ex(b.size() + 2 + extra, 0xEE), ey(b.size() + 2 + extra, 0xEE);
                 std::copy(b.begin(), b.end(), ex.begin() + 2);
                 std::copy(b.begin(), b.end(), ey.begin() + 2);
-                const auto er = gmp::escape_in_place(gmp::mut_bytes(ex.data(), ex.size()), 2, b.size(), cfg);
+                const auto er = gmsg::escape_in_place(gmsg::mut_bytes(ex.data(), ex.size()), 2, b.size(), cfg);
                 std::size_t en = 0;
                 const int ee = gmpct_escape(which, ey.data(), ey.size(), 2, b.size(), &en);
                 REQUIRE(ee == (er ? 0 : static_cast<int>(er.error())));
@@ -174,14 +174,14 @@ TEST_CASE("C escaping matches the C++ runtime") {
             // walk with a pick window
             const std::size_t count = rng() % 12, pick_at = rng() % 4;
             std::array<std::uint8_t, 4> px{}, py{};
-            const auto w = gmp::walk_escaped(gmp::bytes_view(b.data(), b.size()), 0, count, cfg, pick_at,
-                                             gmp::mut_bytes(px.data(), px.size()));
+            const auto w = gmsg::walk_escaped(gmsg::bytes_view(b.data(), b.size()), 0, count, cfg, pick_at,
+                                             gmsg::mut_bytes(px.data(), px.size()));
             std::size_t wo[3]{};
             gmpct_walk(which, b.data(), b.size(), 0, count, pick_at, py.data(), py.size(), wo);
             CHECK(wo[0] == static_cast<std::size_t>(w.kind));
             CHECK(wo[1] == w.wire);
             CHECK(wo[2] == static_cast<std::size_t>(w.error));
-            if (w.kind == gmp::EscapeWalk::Kind::done) CHECK(px == py);
+            if (w.kind == gmsg::EscapeWalk::Kind::done) CHECK(px == py);
         }
     }
 }

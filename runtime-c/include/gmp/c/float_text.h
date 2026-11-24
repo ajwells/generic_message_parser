@@ -8,7 +8,7 @@
  *                                                    i.e. printf "%.*g" (used by print for converted values)
  *   gmsg_parse_double(s, n, &v) / gmsg_parse_float(s, n, &v)   strict, locale-free, correctly rounded
  *       GMSG_ERR_MISSING_FIELD for an empty token, GMSG_ERR_PARSE for bad syntax, GMSG_ERR_OUT_OF_RANGE when the
- *       value overflows or underflows to zero. A leading '+' is accepted (as gmp::text::parse_float).
+ *       value overflows or underflows to zero. A leading '+' is accepted (as gmsg::text::parse_float).
  *
  * GMSG_FLOAT_TEXT (gmp/c/config.h) selects the implementation:
  *   GMSG_FLOAT_TEXT_BUILTIN (default)  exact algorithms on a fixed-size big integer: no heap, no <math.h>, same

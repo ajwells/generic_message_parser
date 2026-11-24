@@ -4,8 +4,8 @@
 
 #include "gmp/checksum.hpp"
 
-using namespace gmp;
-using namespace gmp::checksum;
+using namespace gmsg;
+using namespace gmsg::checksum;
 
 namespace {
 constexpr std::string_view kCheck = "123456789";

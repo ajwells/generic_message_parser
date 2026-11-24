@@ -31,7 +31,7 @@ int main() {
     st.label = "bench";
     std::array<std::uint8_t, BinaryLink::max_frame> frame{};
     const std::size_t n = *BinaryLink::encode(st, frame);
-    const gmp::bytes_view fv(frame.data(), n);
+    const gmsg::bytes_view fv(frame.data(), n);
     constexpr std::size_t N = 2'000'000;
 
     run("binary: parse frame + view access", n, N, [&] {
@@ -57,7 +57,7 @@ int main() {
     });
 
     constexpr std::string_view gga = "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n";
-    const auto gv = gmp::as_bytes(gga.data(), gga.size());
+    const auto gv = gmsg::as_bytes(gga.data(), gga.size());
     run("nmea: parse GGA + 3 lazy fields", gga.size(), N, [&] {
         auto v = nav::nmea::Nmea::parse(gv);
         if (!v) return std::size_t{0};

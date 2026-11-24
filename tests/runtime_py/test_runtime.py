@@ -55,7 +55,7 @@ attempt = gmsg.attempt
 # ================================================================================================================
 # unit checks
 # ================================================================================================================
-@T.test("error codes and texts match gmp::Error")
+@T.test("error codes and texts match gmsg::Error")
 def _():
     T.eq(int(Err.UNKNOWN_ENUM), 14)
     T.eq(int(Err.VALUE_OUT_OF_LIMITS), 15)
@@ -322,7 +322,7 @@ def _():
             T.eq(bits_hex(fv, True), fbits, f'f32 bits for "{s}"')
 
 
-@vectors("integer parsing matches gmp::text::parse_int")
+@vectors("integer parsing matches gmsg::text::parse_int")
 def _():
     for t, s, base, err, value in V["int_parse"]:
         c, v = attempt(lambda: gmsg.text.parse_int(s, t, base))
@@ -390,7 +390,7 @@ def _():
             T.eq(pk.hex(), pick, f"walk pick {which} {h}")
 
 
-@vectors("stream parser matches gmp::StreamParser (events, resync, statistics)")
+@vectors("stream parser matches gmsg::StreamParser (events, resync, statistics)")
 def _():
     class Frame:
         message_name = "Frame"
@@ -421,7 +421,7 @@ def _():
              f"stats {which} {capacity} {chunk}")
 
 
-@vectors("printer matches gmp::Printer for every option set")
+@vectors("printer matches gmsg::Printer for every option set")
 def _():
     class Inner:
         def __init__(self, i):

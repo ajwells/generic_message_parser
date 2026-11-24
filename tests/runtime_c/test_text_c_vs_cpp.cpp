@@ -1,6 +1,6 @@
 // Cross-check of the C text runtime (crosscheck_text_c.c, C11) against C++: float formatting (shortest, fixed and
-// general with a digit count) against std::to_chars, the C printer (gmp/c/print.h) against gmp::Printer, float parsing against gmp::text::parse_float (std::from_chars), integer parsing against
-// gmp::text::parse_int, and the text writer's tokens against gmp::text::TextWriter.
+// general with a digit count) against std::to_chars, the C printer (gmp/c/print.h) against gmsg::Printer, float parsing against gmsg::text::parse_float (std::from_chars), integer parsing against
+// gmsg::text::parse_int, and the text writer's tokens against gmsg::text::TextWriter.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -47,19 +47,19 @@ std::string c_format(float v, int precision) {
 bool same_value(double a, double b) { return std::isnan(a) ? std::isnan(b) && std::signbit(a) == std::signbit(b) : std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b); }
 bool same_value(float a, float b) { return std::isnan(a) ? std::isnan(b) && std::signbit(a) == std::signbit(b) : std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b); }
 
-int code(gmp::Error e) { return static_cast<int>(e); }
+int code(gmsg::Error e) { return static_cast<int>(e); }
 
 void check_parse(std::string_view s) {
     INFO("text: \"" << std::string(s) << "\"");
     {
-        const auto cpp = gmp::text::parse_float<double>(s);
+        const auto cpp = gmsg::text::parse_float<double>(s);
         double v = 0;
         const int e = gmpct_parse_double(s.data(), s.size(), &v);
         REQUIRE(e == (cpp ? 0 : code(cpp.error())));
         if (cpp) CHECK(same_value(v, *cpp));
     }
     {
-        const auto cpp = gmp::text::parse_float<float>(s);
+        const auto cpp = gmsg::text::parse_float<float>(s);
         float v = 0;
         const int e = gmpct_parse_float(s.data(), s.size(), &v);
         REQUIRE(e == (cpp ? 0 : code(cpp.error())));
@@ -194,31 +194,31 @@ std::string_view to_string(E64) { return ""; }
 
 struct Blk {
     std::int64_t v;
-    void print_to(gmp::Printer& p) const noexcept {
+    void print_to(gmsg::Printer& p) const noexcept {
         p.begin("Blk");
         p.field("v", v);
         p.end();
     }
 };
 struct Empty {
-    void print_to(gmp::Printer& p) const noexcept {
+    void print_to(gmsg::Printer& p) const noexcept {
         p.begin("Empty");
         p.end();
     }
 };
 struct Group {
-    void print_to(gmp::Printer& p) const noexcept {
+    void print_to(gmsg::Printer& p) const noexcept {
         p.begin({});
         p.end();
     }
 };
 struct Custom {
-    void print_to(gmp::Printer& p) const noexcept { p.text("12:34:56"); }
+    void print_to(gmsg::Printer& p) const noexcept { p.text("12:34:56"); }
 };
 
 /// The C++ twin of gmpct_print_scenario (crosscheck_text_c.c).
 struct Scenario {
-    void print_to(gmp::Printer& p) const noexcept {
+    void print_to(gmsg::Printer& p) const noexcept {
         static const std::uint8_t bytes[6] = {0x00, 0x0A, 0x7F, 0x80, 0xFE, 0xFF};
         static const char text[] = "a\"b'c\\\n\r\t\x01\x7F\x80 z";
         p.begin("Scenario");
@@ -236,8 +236,8 @@ struct Scenario {
         p.field("e16", static_cast<E16>(-2));
         p.field("e32", E32::big);
         p.field("e64", static_cast<E64>(-2));
-        p.field("raw", gmp::hex(gmp::bytes_view(bytes, sizeof bytes)));
-        p.field("none", gmp::hex(gmp::bytes_view(bytes, 0)));
+        p.field("raw", gmsg::hex(gmsg::bytes_view(bytes, sizeof bytes)));
+        p.field("none", gmsg::hex(gmsg::bytes_view(bytes, 0)));
         p.field("list", std::array<std::int64_t, 5>{-2, -1, 0, 1, 2});
         p.field("nothing", std::array<std::int64_t, 0>{});
         p.field("blocks", std::array<Blk, 3>{Blk{0}, Blk{10}, Blk{20}});
@@ -252,7 +252,7 @@ struct Scenario {
         p.unit("m");
         p.note("computed");
         p.absent("gone");
-        p.field("bad", gmp::Result<int>(gmp::fail(gmp::Error::ParseError)));
+        p.field("bad", gmsg::Result<int>(gmsg::fail(gmsg::Error::ParseError)));
         p.field("custom", Custom{});
         p.key("nested");
         p.begin("Outer");
@@ -268,20 +268,20 @@ struct Scenario {
 
 } // namespace
 
-TEST_CASE("C printer matches gmp::Printer (every value kind, notes, lists, options, truncation)") {
+TEST_CASE("C printer matches gmsg::Printer (every value kind, notes, lists, options, truncation)") {
     for (const int style : {0, 1})
         for (const unsigned indent : {0u, 2u, 3u})
             for (const std::size_t items : {std::size_t{0}, std::size_t{1}, std::size_t{2}, std::size_t{64}})
                 for (const std::size_t bytes : {std::size_t{0}, std::size_t{1}, std::size_t{3}})
                     for (const int precision : {0, 1, 3, 9, 17}) {
-                        gmp::PrintOptions o;
-                        o.style = style ? gmp::PrintStyle::single_line : gmp::PrintStyle::multi_line;
+                        gmsg::PrintOptions o;
+                        o.style = style ? gmsg::PrintStyle::single_line : gmsg::PrintStyle::multi_line;
                         o.indent = static_cast<std::uint8_t>(indent);
                         o.max_items = items;
                         o.max_bytes = bytes;
                         o.precision = precision;
                         std::array<char, 4096> a{}, b{};
-                        const auto r = gmp::println(Scenario{}, std::span<char>(a), o);
+                        const auto r = gmsg::println(Scenario{}, std::span<char>(a), o);
                         REQUIRE(r);
                         std::size_t n = 0;
                         REQUIRE(gmpct_print_scenario(style, indent, items, bytes, precision, b.data(), b.size(), &n) == 0);
@@ -291,7 +291,7 @@ TEST_CASE("C printer matches gmp::Printer (every value kind, notes, lists, optio
                         if (style == 1 && indent == 2 && items == 2 && bytes == 3 && precision == 9) {
                             for (std::size_t cap = 0; cap <= *r + 1; ++cap) {
                                 std::array<char, 4096> x{}, y{};
-                                const auto rr = gmp::println(Scenario{}, std::span<char>(x.data(), cap), o);
+                                const auto rr = gmsg::println(Scenario{}, std::span<char>(x.data(), cap), o);
                                 std::size_t nn = 0;
                                 const int e = gmpct_print_scenario(style, indent, items, bytes, precision, y.data(), cap, &nn);
                                 INFO("capacity " << cap);
@@ -303,7 +303,7 @@ TEST_CASE("C printer matches gmp::Printer (every value kind, notes, lists, optio
                     }
 }
 
-TEST_CASE("C float parsing matches gmp::text::parse_float (std::from_chars)") {
+TEST_CASE("C float parsing matches gmsg::text::parse_float (std::from_chars)") {
     // fixed strings: syntax corners, infinities, NaNs, limits
     for (const char* s : {"", "+", "-", ".", "+.", "-.", "e5", "1e", "1e+", "1e-", "1.5e3", "1.5E-3", " 1", "1 ", "+-1",
                           "-+1", "++1", "0x10", "1.2.3", "..1", "1..", "inf", "INF", "-inf", "+inf", "infinity", "Infinity",
@@ -363,7 +363,7 @@ TEST_CASE("C float parsing matches gmp::text::parse_float (std::from_chars)") {
     }
 }
 
-TEST_CASE("C integer parsing matches gmp::text::parse_int") {
+TEST_CASE("C integer parsing matches gmsg::text::parse_int") {
     std::mt19937_64 rng(4);
     const std::string chars = "0123456789abcdefABCDEF+- xz";
     for (int i = 0; i < 200000; ++i) {
@@ -373,14 +373,14 @@ TEST_CASE("C integer parsing matches gmp::text::parse_int") {
         for (const int base : {10, 16, 2, 8}) {
             INFO("\"" << s << "\" base " << base);
             auto check_i = [&]<class T>(T) {
-                const auto cpp = gmp::text::parse_int<T>(s, base);
+                const auto cpp = gmsg::text::parse_int<T>(s, base);
                 std::int64_t v = 0;
                 const int e = gmpct_parse_i64(s.data(), s.size(), base, std::numeric_limits<T>::min(), std::numeric_limits<T>::max(), &v);
                 REQUIRE(e == (cpp ? 0 : code(cpp.error())));
                 if (cpp) CHECK(v == static_cast<std::int64_t>(*cpp));
             };
             auto check_u = [&]<class T>(T) {
-                const auto cpp = gmp::text::parse_int<T>(s, base);
+                const auto cpp = gmsg::text::parse_int<T>(s, base);
                 std::uint64_t v = 0;
                 const int e = gmpct_parse_u64(s.data(), s.size(), base, std::numeric_limits<T>::max(), &v);
                 REQUIRE(e == (cpp ? 0 : code(cpp.error())));
@@ -410,7 +410,7 @@ TEST_CASE("C and C++ text writers write huge fixed-notation floats (no internal 
         for (int which = 2; which < 4; ++which) {
             std::array<std::uint8_t, 1024> a{};
             std::array<char, 1024> b{};
-            gmp::text::TextWriter w(gmp::mut_bytes(a.data(), a.size()), ',');
+            gmsg::text::TextWriter w(gmsg::mut_bytes(a.data(), a.size()), ',');
             const auto r = which == 2 ? w.float_token(dv, precision, width) : w.float_token(fv, precision, width);
             REQUIRE(r);  // fits the buffer: must not fail
             const std::size_t len = w.position();
@@ -421,17 +421,17 @@ TEST_CASE("C and C++ text writers write huge fixed-notation floats (no internal 
             REQUIRE(n == len + 2);
             CHECK(std::string_view(b.data(), len) == std::string_view(reinterpret_cast<const char*>(a.data()), len));
             // one byte short: both report BufferFull
-            gmp::text::TextWriter small(gmp::mut_bytes(a.data(), len - 1), ',');
+            gmsg::text::TextWriter small(gmsg::mut_bytes(a.data(), len - 1), ',');
             const auto rs = which == 2 ? small.float_token(dv, precision, width) : small.float_token(fv, precision, width);
             REQUIRE(!rs);
-            CHECK(rs.error() == gmp::Error::BufferFull);
-            CHECK(gmpct_text_tokens(which, 0, 0, dv, fv, 10, precision, width, b.data(), len - 1, &n) == code(gmp::Error::BufferFull));
+            CHECK(rs.error() == gmsg::Error::BufferFull);
+            CHECK(gmpct_text_tokens(which, 0, 0, dv, fv, 10, precision, width, b.data(), len - 1, &n) == code(gmsg::Error::BufferFull));
         }
     }
     CHECK(long_tokens > 1000);
 }
 
-TEST_CASE("C text writer tokens match gmp::text::TextWriter") {
+TEST_CASE("C text writer tokens match gmsg::text::TextWriter") {
     std::mt19937_64 rng(5);
     for (int i = 0; i < 50000; ++i) {
         const auto iv = static_cast<std::int64_t>(rng()) >> (rng() % 64);
@@ -445,8 +445,8 @@ TEST_CASE("C text writer tokens match gmp::text::TextWriter") {
             const std::size_t cap = rng() % 4 == 0 ? rng() % 12 : 64;  // sometimes too small
             std::array<std::uint8_t, 64> a{};
             std::array<char, 64> b{};
-            gmp::text::TextWriter w(gmp::mut_bytes(a.data(), cap), ',');
-            gmp::VoidResult r;
+            gmsg::text::TextWriter w(gmsg::mut_bytes(a.data(), cap), ',');
+            gmsg::VoidResult r;
             switch (which) {
                 case 0: r = w.int_token(iv, base, width); break;
                 case 1: r = w.int_token(uv, base, width); break;

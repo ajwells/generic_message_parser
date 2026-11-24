@@ -11,7 +11,7 @@ int main() {
 
     auto view = vc::EngineDataView::from(payload);
     if (!view) {
-        std::printf("invalid frame: %s\n", gmp::to_string(view.error()).data());
+        std::printf("invalid frame: %s\n", gmsg::to_string(view.error()).data());
         return 1;
     }
     const auto s = view->signals();

@@ -17,7 +17,7 @@
 
 #include "gmp/result.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 enum class EscapeStyle : std::uint8_t { xor_mask, table };
 
@@ -229,4 +229,4 @@ constexpr EscapeWalk walk_escaped(bytes_view buf, std::size_t at, std::size_t n,
     return {EscapeWalk::Kind::done, i, Error::None};
 }
 
-} // namespace gmp
+} // namespace gmsg

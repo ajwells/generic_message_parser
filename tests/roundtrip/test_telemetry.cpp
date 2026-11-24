@@ -34,7 +34,7 @@ TEST_CASE("Status struct round trip (conditional present and absent)") {
         CHECK(*n == (mode == Mode::fault ? 26u : 20u));
         CHECK(buf[0] == 0x5A);  // const magic written automatically
 
-        auto d = Status::decode(gmp::bytes_view(buf.data(), *n));
+        auto d = Status::decode(gmsg::bytes_view(buf.data(), *n));
         REQUIRE(d);
         Status expected = s;
         expected.count = 3;  // derived from samples.size()
@@ -47,7 +47,7 @@ TEST_CASE("Status view matches struct") {
     std::array<std::uint8_t, 64> buf{};
     auto n = s.encode(buf);
     REQUIRE(n);
-    auto v = StatusView::from(gmp::bytes_view(buf.data(), *n));
+    auto v = StatusView::from(gmsg::bytes_view(buf.data(), *n));
     REQUIRE(v);
     CHECK(v->wire_size() == *n);
     CHECK(v->voltage() == 1234);
@@ -76,13 +76,13 @@ TEST_CASE("view rejects bad const and truncation") {
     auto n = s.encode(buf);
     REQUIRE(n);
     for (std::size_t len = 0; len < *n; ++len) {
-        auto v = StatusView::from(gmp::bytes_view(buf.data(), len));
+        auto v = StatusView::from(gmsg::bytes_view(buf.data(), len));
         REQUIRE_FALSE(v);
     }
     buf[0] = 0x00;
-    auto v = StatusView::from(gmp::bytes_view(buf.data(), *n));
+    auto v = StatusView::from(gmsg::bytes_view(buf.data(), *n));
     REQUIRE_FALSE(v);
-    CHECK(v.error() == gmp::Error::BadConst);
+    CHECK(v.error() == gmsg::Error::BadConst);
 }
 
 TEST_CASE("array capacity is enforced on decode") {
@@ -91,9 +91,9 @@ TEST_CASE("array capacity is enforced on decode") {
     auto n = s.encode(buf);
     REQUIRE(n);
     buf[4] = 200;  // count > max (16)
-    auto d = Status::decode(gmp::bytes_view(buf.data(), *n));
+    auto d = Status::decode(gmsg::bytes_view(buf.data(), *n));
     REQUIRE_FALSE(d);
-    CHECK(d.error() == gmp::Error::OutOfRange);
+    CHECK(d.error() == gmsg::Error::OutOfRange);
 }
 
 TEST_CASE("Log: terminated string and remaining bytes") {
@@ -105,11 +105,11 @@ TEST_CASE("Log: terminated string and remaining bytes") {
     auto n = l.encode(buf);
     REQUIRE(n);
     CHECK(*n == 1 + 6 + 3);
-    auto v = LogView::from(gmp::bytes_view(buf.data(), *n));
+    auto v = LogView::from(gmsg::bytes_view(buf.data(), *n));
     REQUIRE(v);
     CHECK(v->text() == "hello");
     CHECK(v->tail().size() == 3);
-    auto d = Log::decode(gmp::bytes_view(buf.data(), *n));
+    auto d = Log::decode(gmsg::bytes_view(buf.data(), *n));
     REQUIRE(d);
     CHECK(*d == l);
 }
@@ -127,14 +127,14 @@ TEST_CASE("BinaryLink framing: encode, parse and select the message type") {
     CHECK(frame[2] == 0x02);
     CHECK(frame[4] == 0x06);
 
-    auto any = BinaryLink::parse(gmp::bytes_view(frame.data(), *n));
+    auto any = BinaryLink::parse(gmsg::bytes_view(frame.data(), *n));
     REQUIRE(any);
     REQUIRE(std::holds_alternative<CommandView>(*any));
     const auto& cv = std::get<CommandView>(*any);
     CHECK(cv.opcode() == 0xBEEF);
     CHECK(cv.args().size() == 3);
 
-    auto msg = BinaryLink::decode(gmp::bytes_view(frame.data(), *n));
+    auto msg = BinaryLink::decode(gmsg::bytes_view(frame.data(), *n));
     REQUIRE(msg);
     Command expected = c;
     expected.arg_len = 3;
@@ -142,9 +142,9 @@ TEST_CASE("BinaryLink framing: encode, parse and select the message type") {
 
     // corrupt one body byte -> checksum failure
     frame[6] ^= 0x01;
-    auto bad = BinaryLink::parse(gmp::bytes_view(frame.data(), *n));
+    auto bad = BinaryLink::parse(gmsg::bytes_view(frame.data(), *n));
     REQUIRE_FALSE(bad);
-    CHECK(bad.error() == gmp::Error::BadChecksum);
+    CHECK(bad.error() == gmsg::Error::BadChecksum);
 }
 
 TEST_CASE("BinaryLink stream: random chunking with garbage between frames") {
@@ -153,7 +153,7 @@ TEST_CASE("BinaryLink stream: random chunking with garbage between frames") {
     int expected_status = 0, expected_cmd = 0, expected_log = 0;
     for (int i = 0; i < 300; ++i) {
         std::array<std::uint8_t, BinaryLink::max_frame> f{};
-        gmp::Result<std::size_t> n = gmp::fail(gmp::Error::None);
+        gmsg::Result<std::size_t> n = gmsg::fail(gmsg::Error::None);
         switch (rng() % 3) {
             case 0: n = BinaryLink::encode(make_status(rng() % 2 ? Mode::fault : Mode::idle), f); ++expected_status; break;
             case 1: {
@@ -177,7 +177,7 @@ TEST_CASE("BinaryLink stream: random chunking with garbage between frames") {
     }
 
     int got_status = 0, got_cmd = 0, got_log = 0, errors = 0;
-    auto handler = gmp::overloaded{
+    auto handler = gmsg::overloaded{
         [&](const BinaryLink::HeaderView& h, const StatusView& v) {
             CHECK(h.msg_id() == MsgId::status);
             CHECK(v.voltage() == 1234);
@@ -185,13 +185,13 @@ TEST_CASE("BinaryLink stream: random chunking with garbage between frames") {
         },
         [&](const CommandView&) { ++got_cmd; },
         [&](const LogView& v) { CHECK(v.text() == "msg"); ++got_log; },
-        [&](const gmp::FrameError&) { ++errors; },
+        [&](const gmsg::FrameError&) { ++errors; },
     };
     BinaryLink::Stream<> parser;
     std::size_t off = 0;
     while (off < stream.size()) {
         const std::size_t chunk = std::min<std::size_t>(1 + rng() % 40, stream.size() - off);
-        parser.feed(gmp::bytes_view(stream.data() + off, chunk), handler);
+        parser.feed(gmsg::bytes_view(stream.data() + off, chunk), handler);
         off += chunk;
     }
     CHECK(got_status == expected_status);

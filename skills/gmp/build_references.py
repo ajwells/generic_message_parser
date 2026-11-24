@@ -85,7 +85,7 @@ recipes = [
            ('examples', 'nmea_text', 'nmea.yaml'),
            '- `format: text` in `defaults`; each field is one token, `{ pad: 4 }` skips four tokens.\n'
            '- `message_type: { token: 0 }` matches the first token (`GPGGA`) against `type_id`.\n'
-           '- Text view accessors parse on demand and return `gmp::Result<T>` (optional fields: `Result<std::optional<T>>`).',
+           '- Text view accessors parse on demand and return `gmsg::Result<T>` (optional fields: `Result<std::optional<T>>`).',
            nmea_main),
     recipe('3. CAN payload with bit-packed signals',
            'a DBC-style CAN frame (Intel `@1` = `lsb_first`, little endian), or any register map with sub-byte fields.',
@@ -118,7 +118,7 @@ recipes = [
            'a field GMP cannot describe declaratively (BCD dates, packed decimals, proprietary encodings) or a non-standard checksum.',
            ('examples', 'custom_codec', 'meter.yaml'),
            '- The functions are checked at compile time with a clear `static_assert` message if a signature is wrong.\n'
-           '- Custom-type view accessors return `gmp::Result<T>` because your decoder can fail.\n\n'
+           '- Custom-type view accessors return `gmsg::Result<T>` because your decoder can fail.\n\n'
            '```cpp\n// examples/custom_codec/meter_codecs.hpp\n' + meter_hpp.rstrip() + '\n```',
            meter_main),
 ]

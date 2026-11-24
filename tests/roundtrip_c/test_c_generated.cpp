@@ -3,7 +3,7 @@
 // The generated C (compiled as C11 in the gmp_test_schemas_c library) and the generated C++ decode the same inputs:
 // valid encodings, every truncation, single-byte corruptions, trailing bytes and random bytes. For every input both
 // must report the same error; on success every field (structs and views), conversion and computed value must match,
-// re-encoding must give the same bytes, and print must give the same text as gmp::print (print_compare.hpp). The C headers are included from C++ here (they are C++ compatible).
+// re-encoding must give the same bytes, and print must give the same text as gmsg::print (print_compare.hpp). The C headers are included from C++ here (they are C++ compatible).
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -43,7 +43,7 @@ constexpr auto u(E e) { return std::to_underlying(e); }
 std::string_view sv(const char* p, std::size_t n) { return {p, n}; }
 std::string_view sv(gmsg_str s) { return {s.data, s.size}; }
 
-int code(gmp::Error e) { return static_cast<int>(e); }
+int code(gmsg::Error e) { return static_cast<int>(e); }
 
 /// Inputs derived from valid encodings: the encodings, every truncation, byte corruptions, trailing bytes.
 std::vector<Bytes> mutations(const std::vector<Bytes>& valid, unsigned seed) {
@@ -90,7 +90,7 @@ void cross_check(const std::vector<Bytes>& valid, CApi<C> capi, CViewApi<CV> vap
                  unsigned seed) {
     int decoded = 0, failed = 0;
     for (const auto& in : mutations(valid, seed)) {
-        const gmp::bytes_view bv(in.data(), in.size());
+        const gmsg::bytes_view bv(in.data(), in.size());
         INFO("input size " << in.size());
         // struct
         const auto cpp = Cpp::decode(bv);
@@ -110,7 +110,7 @@ void cross_check(const std::vector<Bytes>& valid, CApi<C> capi, CViewApi<CV> vap
                 REQUIRE(cn == *n);
                 CHECK(std::memcmp(a.data(), b.data(), cn) == 0);
                 if (cn > 0) {  // one byte too small: both report BufferFull
-                    const auto small = cpp->encode(gmp::mut_bytes(a.data(), *n - 1));
+                    const auto small = cpp->encode(gmsg::mut_bytes(a.data(), *n - 1));
                     CHECK(static_cast<int>(capi.encode(&c, b.data(), cn - 1, nullptr)) == code(small.error()));
                 }
             }
@@ -498,7 +498,7 @@ TEST_CASE("generated C matches generated C++: value limits") {
 
 TEST_CASE("generated C: encoding values outside the limits fails like C++") {
     const auto bytes = enc(limits_sample(true));
-    const auto cpp0 = tl::Sample::decode(gmp::bytes_view(bytes.data(), bytes.size()));
+    const auto cpp0 = tl::Sample::decode(gmsg::bytes_view(bytes.data(), bytes.size()));
     REQUIRE(cpp0);
     test_limits_sample c0;
     REQUIRE(test_limits_sample_decode(bytes.data(), bytes.size(), &c0) == GMSG_OK);
@@ -512,24 +512,24 @@ TEST_CASE("generated C: encoding values outside the limits fails like C++") {
         const auto n = a.encode(buf);
         std::size_t cn = 0;
         CHECK(static_cast<int>(test_limits_sample_encode(&b, buf.data(), buf.size(), &cn)) == (n ? 0 : code(n.error())));
-        return n ? gmp::Error::None : n.error();
+        return n ? gmsg::Error::None : n.error();
     };
-    CHECK(check([](tl::Sample&) {}, [](test_limits_sample&) {}) == gmp::Error::None);
-    CHECK(check([](tl::Sample& s) { s.humidity = 3145; }, [](test_limits_sample& s) { s.humidity = 3145; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.temp = -305 - 1; }, [](test_limits_sample& s) { s.temp = -306; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.big = 5; }, [](test_limits_sample& s) { s.big = 5; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.neg = 0; }, [](test_limits_sample& s) { s.neg = 0; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.ratio = NAN; }, [](test_limits_sample& s) { s.ratio = NAN; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.wide = INFINITY; }, [](test_limits_sample& s) { s.wide = INFINITY; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.flags.level = 6; }, [](test_limits_sample& s) { s.flags.level = 6; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.flags.trim = -11; }, [](test_limits_sample& s) { s.flags.trim = -11; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.flags.gain = 201; }, [](test_limits_sample& s) { s.flags.gain = 201; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.levels[1] = 1001; }, [](test_limits_sample& s) { s.levels[1] = 1001; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.inner.pct = 101; }, [](test_limits_sample& s) { s.inner.pct = 101; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.more[0] = -51; }, [](test_limits_sample& s) { s.more[0] = -51; }) == gmp::Error::ValueOutOfLimits);
-    CHECK(check([](tl::Sample& s) { s.opt = 1; }, [](test_limits_sample& s) { s.opt = 1; }) == gmp::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample&) {}, [](test_limits_sample&) {}) == gmsg::Error::None);
+    CHECK(check([](tl::Sample& s) { s.humidity = 3145; }, [](test_limits_sample& s) { s.humidity = 3145; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.temp = -305 - 1; }, [](test_limits_sample& s) { s.temp = -306; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.big = 5; }, [](test_limits_sample& s) { s.big = 5; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.neg = 0; }, [](test_limits_sample& s) { s.neg = 0; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.ratio = NAN; }, [](test_limits_sample& s) { s.ratio = NAN; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.wide = INFINITY; }, [](test_limits_sample& s) { s.wide = INFINITY; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.flags.level = 6; }, [](test_limits_sample& s) { s.flags.level = 6; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.flags.trim = -11; }, [](test_limits_sample& s) { s.flags.trim = -11; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.flags.gain = 201; }, [](test_limits_sample& s) { s.flags.gain = 201; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.levels[1] = 1001; }, [](test_limits_sample& s) { s.levels[1] = 1001; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.inner.pct = 101; }, [](test_limits_sample& s) { s.inner.pct = 101; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.more[0] = -51; }, [](test_limits_sample& s) { s.more[0] = -51; }) == gmsg::Error::ValueOutOfLimits);
+    CHECK(check([](tl::Sample& s) { s.opt = 1; }, [](test_limits_sample& s) { s.opt = 1; }) == gmsg::Error::ValueOutOfLimits);
     CHECK(check([](tl::Sample& s) { (void)s.more.push_back(0); },
-                [](test_limits_sample& s) { s.more[s.n++] = 0; }) == gmp::Error::ValueOutOfLimits);  // n = 4 > 3
+                [](test_limits_sample& s) { s.more[s.n++] = 0; }) == gmsg::Error::ValueOutOfLimits);  // n = 4 > 3
 }
 
 // ---- field CRCs (preset and inline), conversions, conditional with CRC, const with CRC ------------------------

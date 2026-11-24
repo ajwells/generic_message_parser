@@ -1,15 +1,15 @@
 #pragma once
 // gmp/print.hpp - human readable printing of generated messages for logs and troubleshooting.
 //
-// Generated structs, views and bits groups have `void print_to(gmp::Printer&) const`. Use the free functions:
+// Generated structs, views and bits groups have `void print_to(gmsg::Printer&) const`. Use the free functions:
 //
-//   gmp::println(msg, stdout);                  // FILE*
-//   char buf[256];  gmp::print(msg, buf);       // char buffer (always NUL terminated)
-//   gmp::static_string<256> s; gmp::print(msg, s);   // appends; also std::string or anything with append()
-//   gmp::print(msg, std::cout);                 // anything with write(const char*, n), e.g. std::ostream
-//   gmp::print(msg, [](std::string_view t) { uart_log(t); });   // callback
+//   gmsg::println(msg, stdout);                  // FILE*
+//   char buf[256];  gmsg::print(msg, buf);       // char buffer (always NUL terminated)
+//   gmsg::static_string<256> s; gmsg::print(msg, s);   // appends; also std::string or anything with append()
+//   gmsg::print(msg, std::cout);                 // anything with write(const char*, n), e.g. std::ostream
+//   gmsg::print(msg, [](std::string_view t) { uart_log(t); });   // callback
 //
-// Output (multi-line by default, `{.style = gmp::PrintStyle::single_line}` for one line):
+// Output (multi-line by default, `{.style = gmsg::PrintStyle::single_line}` for one line):
 //
 //   Status {
 //     voltage: 12600 (12.6 V)
@@ -38,7 +38,7 @@
 #include "gmp/containers.hpp"
 #include "gmp/result.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 enum class PrintStyle : std::uint8_t {
     multi_line,   ///< one field per line, nested values indented
@@ -65,9 +65,9 @@ class Printer;
 template <class T>
 concept SelfPrinting = requires(const T& t, Printer& p) { t.print_to(p); };
 
-/// Custom types opt in by providing `void gmp_print(gmp::Printer&, const T&)` next to the type (found by ADL).
+/// Custom types opt in by providing `void gmsg_print(gmsg::Printer&, const T&)` next to the type (found by ADL).
 template <class T>
-concept CustomPrinting = requires(const T& t, Printer& p) { gmp_print(p, t); };
+concept CustomPrinting = requires(const T& t, Printer& p) { gmsg_print(p, t); };
 
 /// Formats values into a type-erased character sink. Generated `print_to` methods drive it field by field.
 class Printer {
@@ -141,7 +141,7 @@ public:
         put(u);
     }
     /// Engineering conversion of the value just printed, collected in parentheses: `12600 (12.6 V, 54.7 degF)`.
-    /// Accepts double, std::optional<double> or gmp::Result<double> (nothing is printed when empty / failed).
+    /// Accepts double, std::optional<double> or gmsg::Result<double> (nothing is printed when empty / failed).
     template <class T>
     void conversion(const T& v, std::string_view u = {}) noexcept {
         if constexpr (is_optional<T>::value) {
@@ -161,7 +161,7 @@ public:
     }
     /// Raw text.
     void text(std::string_view s) noexcept { put(s); }
-    /// Closes a pending note; call after the last value (gmp::print does this).
+    /// Closes a pending note; call after the last value (gmsg::print does this).
     void flush() noexcept { close_note(); }
 
     // ---- values ----
@@ -172,7 +172,7 @@ public:
         if constexpr (SelfPrinting<U>) {
             v.print_to(*this);
         } else if constexpr (CustomPrinting<U>) {
-            gmp_print(*this, v);
+            gmsg_print(*this, v);
         } else if constexpr (std::is_same_v<U, bool>) {
             put(v ? "true" : "false");
         } else if constexpr (std::is_same_v<U, char>) {
@@ -441,7 +441,7 @@ inline bool file_write(void* c, std::string_view s) noexcept {
 
 /// Prints `v` (a generated struct / view / enum / any printable value) to `sink`.
 /// Sinks: `std::FILE*`, a char array or `std::span<char>` (NUL terminated, truncation = BufferFull),
-/// any string with `append(std::string_view)` (gmp::static_string, std::string; text is appended),
+/// any string with `append(std::string_view)` (gmsg::static_string, std::string; text is appended),
 /// any stream with `write(const char*, n)` (std::ostream), or a callable taking `std::string_view`
 /// (return false from it to stop). Returns the number of characters written.
 template <class T, class Sink>
@@ -493,7 +493,7 @@ Result<std::size_t> print_impl(const T& v, Sink& sink, const PrintOptions& opts,
         return finish(p, v, newline);
     } else {
         static_assert(sizeof(S) == 0,
-                      "gmp::print: unsupported sink (use FILE*, char[N], std::span<char>, a string with append(), "
+                      "gmsg::print: unsupported sink (use FILE*, char[N], std::span<char>, a string with append(), "
                       "a stream with write(), or a callable taking std::string_view)");
         return fail(Error::InvalidValue);
     }
@@ -511,4 +511,4 @@ Result<std::size_t> println(const T& v, Sink&& sink, const PrintOptions& opts) n
     return detail::print_impl(v, sink, opts, true);
 }
 
-} // namespace gmp
+} // namespace gmsg

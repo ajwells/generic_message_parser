@@ -65,41 +65,41 @@ struct EngineData_signals {
     [[nodiscard]] constexpr double throttle_scaled() const noexcept { return static_cast<double>(throttle) * 0.10000000000000001 + 0.0; }
     static constexpr EngineData_signals unpack(const std::uint8_t* p) noexcept {
         EngineData_signals g{};
-        g.rpm = gmp::get_bits<std::uint16_t>(p, 0, 14, gmp::BitOrder::lsb_first);
-        g.gear = gmp::get_bits<Gear>(p, 14, 2, gmp::BitOrder::lsb_first);
-        g.coolant = gmp::get_bits<std::uint8_t>(p, 16, 8, gmp::BitOrder::lsb_first);
-        g.throttle = gmp::get_bits<std::uint16_t>(p, 24, 10, gmp::BitOrder::lsb_first);
-        g.counter = gmp::get_bits<std::uint8_t>(p, 40, 4, gmp::BitOrder::lsb_first);
-        g.flags = gmp::get_bits<std::uint16_t>(p, 48, 16, gmp::BitOrder::lsb_first);
+        g.rpm = gmsg::get_bits<std::uint16_t>(p, 0, 14, gmsg::BitOrder::lsb_first);
+        g.gear = gmsg::get_bits<Gear>(p, 14, 2, gmsg::BitOrder::lsb_first);
+        g.coolant = gmsg::get_bits<std::uint8_t>(p, 16, 8, gmsg::BitOrder::lsb_first);
+        g.throttle = gmsg::get_bits<std::uint16_t>(p, 24, 10, gmsg::BitOrder::lsb_first);
+        g.counter = gmsg::get_bits<std::uint8_t>(p, 40, 4, gmsg::BitOrder::lsb_first);
+        g.flags = gmsg::get_bits<std::uint16_t>(p, 48, 16, gmsg::BitOrder::lsb_first);
         return g;
     }
     constexpr void pack(std::uint8_t* p) const noexcept {
-        gmp::set_bits<std::uint16_t>(p, 0, 14, rpm, gmp::BitOrder::lsb_first);
-        gmp::set_bits<Gear>(p, 14, 2, gear, gmp::BitOrder::lsb_first);
-        gmp::set_bits<std::uint8_t>(p, 16, 8, coolant, gmp::BitOrder::lsb_first);
-        gmp::set_bits<std::uint16_t>(p, 24, 10, throttle, gmp::BitOrder::lsb_first);
-        gmp::set_bits<std::uint64_t>(p, 34, 6, 0, gmp::BitOrder::lsb_first);
-        gmp::set_bits<std::uint8_t>(p, 40, 4, counter, gmp::BitOrder::lsb_first);
-        gmp::set_bits<std::uint64_t>(p, 44, 4, 1ull, gmp::BitOrder::lsb_first);
-        gmp::set_bits<std::uint16_t>(p, 48, 16, flags, gmp::BitOrder::lsb_first);
+        gmsg::set_bits<std::uint16_t>(p, 0, 14, rpm, gmsg::BitOrder::lsb_first);
+        gmsg::set_bits<Gear>(p, 14, 2, gear, gmsg::BitOrder::lsb_first);
+        gmsg::set_bits<std::uint8_t>(p, 16, 8, coolant, gmsg::BitOrder::lsb_first);
+        gmsg::set_bits<std::uint16_t>(p, 24, 10, throttle, gmsg::BitOrder::lsb_first);
+        gmsg::set_bits<std::uint64_t>(p, 34, 6, 0, gmsg::BitOrder::lsb_first);
+        gmsg::set_bits<std::uint8_t>(p, 40, 4, counter, gmsg::BitOrder::lsb_first);
+        gmsg::set_bits<std::uint64_t>(p, 44, 4, 1ull, gmsg::BitOrder::lsb_first);
+        gmsg::set_bits<std::uint16_t>(p, 48, 16, flags, gmsg::BitOrder::lsb_first);
     }
-    static constexpr gmp::VoidResult check([[maybe_unused]] const std::uint8_t* p) noexcept {
-        if (gmp::extract_bits(p, 44, 4, gmp::BitOrder::lsb_first) != 1ull) return gmp::fail(gmp::Error::BadConst);
+    static constexpr gmsg::VoidResult check([[maybe_unused]] const std::uint8_t* p) noexcept {
+        if (gmsg::extract_bits(p, 44, 4, gmsg::BitOrder::lsb_first) != 1ull) return gmsg::fail(gmsg::Error::BadConst);
         return {};
     }
     /// Human readable dump (see gmp/print.hpp).
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin({});
-        gmp_p.field("rpm", this->rpm);
-        gmp_p.conversion(static_cast<double>(this->rpm) * 0.5 + 0.0);
-        gmp_p.field("gear", this->gear);
-        gmp_p.field("coolant", this->coolant);
-        gmp_p.conversion(static_cast<double>(this->coolant) * 1.0 + -40.0);
-        gmp_p.field("throttle", this->throttle);
-        gmp_p.conversion(static_cast<double>(this->throttle) * 0.10000000000000001 + 0.0);
-        gmp_p.field("counter", this->counter);
-        gmp_p.field("flags", this->flags);
-        gmp_p.end();
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin({});
+        gmsg_p.field("rpm", this->rpm);
+        gmsg_p.conversion(static_cast<double>(this->rpm) * 0.5 + 0.0);
+        gmsg_p.field("gear", this->gear);
+        gmsg_p.field("coolant", this->coolant);
+        gmsg_p.conversion(static_cast<double>(this->coolant) * 1.0 + -40.0);
+        gmsg_p.field("throttle", this->throttle);
+        gmsg_p.conversion(static_cast<double>(this->throttle) * 0.10000000000000001 + 0.0);
+        gmsg_p.field("counter", this->counter);
+        gmsg_p.field("flags", this->flags);
+        gmsg_p.end();
     }
     bool operator==(const EngineData_signals&) const = default;
 };
@@ -112,47 +112,47 @@ struct EngineData {
     static constexpr std::size_t max_wire_size = 8;
     static constexpr std::size_t wire_size = 8;
 
-    gmp::VoidResult read([[maybe_unused]] gmp::ByteReader& r) noexcept {
+    gmsg::VoidResult read([[maybe_unused]] gmsg::ByteReader& r) noexcept {
         {
             auto b0 = r.read_bytes(8);
-            if (!b0) return gmp::fail(b0.error());
+            if (!b0) return gmsg::fail(b0.error());
             if (auto c0 = EngineData_signals::check(b0->data()); !c0) return c0;
             signals = EngineData_signals::unpack(b0->data());
         }
         return {};
     }
-    gmp::VoidResult write([[maybe_unused]] gmp::ByteWriter& w) const noexcept {
+    gmsg::VoidResult write([[maybe_unused]] gmsg::ByteWriter& w) const noexcept {
         {
             auto at0 = w.reserve(8);
-            if (!at0) return gmp::fail(at0.error());
+            if (!at0) return gmsg::fail(at0.error());
             signals.pack(w.buffer().data() + *at0);
         }
         return {};
     }
-    static gmp::Result<EngineData> decode(gmp::bytes_view data) noexcept {
+    static gmsg::Result<EngineData> decode(gmsg::bytes_view data) noexcept {
         EngineData m{};
-        gmp::ByteReader r(data);
-        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        gmsg::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmsg::fail(e.error());
         return m;
     }
     /// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).
-    static gmp::Result<EngineData> decode(gmp::bytes_view data, std::size_t& extra) noexcept {
+    static gmsg::Result<EngineData> decode(gmsg::bytes_view data, std::size_t& extra) noexcept {
         EngineData m{};
-        gmp::ByteReader r(data);
-        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        gmsg::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmsg::fail(e.error());
         extra = data.size() - r.position();
         return m;
     }
-    gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
-        gmp::ByteWriter w(out);
-        if (auto e = write(w); !e) return gmp::fail(e.error());
+    gmsg::Result<std::size_t> encode(gmsg::mut_bytes out) const noexcept {
+        gmsg::ByteWriter w(out);
+        if (auto e = write(w); !e) return gmsg::fail(e.error());
         return w.position();
     }
-    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("EngineData");
-        gmp_p.field("signals", this->signals);
-        gmp_p.end();
+    /// Human readable dump (see gmp/print.hpp): gmsg::print(msg, stdout).
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("EngineData");
+        gmsg_p.field("signals", this->signals);
+        gmsg_p.end();
     }
     bool operator==(const EngineData&) const = default;
 };
@@ -164,42 +164,42 @@ public:
     static constexpr std::size_t wire_size_v = 8;
 
     /// Validate `data` and build a view. Trailing bytes beyond the message are ignored.
-    [[nodiscard]] static gmp::Result<EngineDataView> from(gmp::bytes_view data) noexcept {
-        if (data.size() < 8) return gmp::fail(gmp::Error::Truncated);
-        if (auto c = EngineData_signals::check(data.data() + 0); !c) return gmp::fail(c.error());
+    [[nodiscard]] static gmsg::Result<EngineDataView> from(gmsg::bytes_view data) noexcept {
+        if (data.size() < 8) return gmsg::fail(gmsg::Error::Truncated);
+        if (auto c = EngineData_signals::check(data.data() + 0); !c) return gmsg::fail(c.error());
         EngineDataView v;
-        v.gmp_data_ = data.first(8);
-        v.gmp_extra_ = data.size() - 8;
+        v.gmsg_data_ = data.first(8);
+        v.gmsg_extra_ = data.size() - 8;
         return v;
     }
     /// Build a view over data already validated by from() (no checks).
-    [[nodiscard]] static EngineDataView unchecked(gmp::bytes_view data) noexcept {
+    [[nodiscard]] static EngineDataView unchecked(gmsg::bytes_view data) noexcept {
         EngineDataView v;
-        v.gmp_data_ = data.first(8);
-        v.gmp_extra_ = data.size() - 8;
+        v.gmsg_data_ = data.first(8);
+        v.gmsg_extra_ = data.size() - 8;
         return v;
     }
 
-    [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
-    [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
+    [[nodiscard]] gmsg::bytes_view data() const noexcept { return gmsg_data_; }
+    [[nodiscard]] std::size_t wire_size() const noexcept { return gmsg_data_.size(); }
     /// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).
-    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }
+    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmsg_extra_; }
 
-    [[nodiscard]] EngineData_signals signals() const noexcept { return EngineData_signals::unpack(gmp_data_.data() + 0); }
+    [[nodiscard]] EngineData_signals signals() const noexcept { return EngineData_signals::unpack(gmsg_data_.data() + 0); }
 
     /// Human readable dump (see gmp/print.hpp); same output as the struct.
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("EngineData");
-        gmp_p.field("signals", this->signals());
-        gmp_p.end();
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("EngineData");
+        gmsg_p.field("signals", this->signals());
+        gmsg_p.end();
     }
 
     /// Decode into the eager struct.
-    [[nodiscard]] gmp::Result<EngineData> to_struct() const noexcept { return EngineData::decode(gmp_data_); }
+    [[nodiscard]] gmsg::Result<EngineData> to_struct() const noexcept { return EngineData::decode(gmsg_data_); }
 
 private:
-    gmp::bytes_view gmp_data_{};
-    std::size_t gmp_extra_ = 0;
+    gmsg::bytes_view gmsg_data_{};
+    std::size_t gmsg_extra_ = 0;
 };
 
 struct Sensor {
@@ -213,50 +213,50 @@ struct Sensor {
     [[nodiscard]] constexpr double temp_scaled() const noexcept { return static_cast<double>(temp) * 0.01 + 0.0; }
     void set_temp_scaled(double v) noexcept { temp = static_cast<std::int16_t>(std::llround((v - 0.0) / 0.01)); }
 
-    gmp::VoidResult read([[maybe_unused]] gmp::ByteReader& r) noexcept {
+    gmsg::VoidResult read([[maybe_unused]] gmsg::ByteReader& r) noexcept {
         {
-            auto v0 = r.read<std::int16_t>(gmp::Endian::little);
-            if (!v0) return gmp::fail(v0.error());
+            auto v0 = r.read<std::int16_t>(gmsg::Endian::little);
+            if (!v0) return gmsg::fail(v0.error());
             temp = *v0;
         }
         {
-            auto v0 = r.read<std::uint8_t>(gmp::Endian::little);
-            if (!v0) return gmp::fail(v0.error());
+            auto v0 = r.read<std::uint8_t>(gmsg::Endian::little);
+            if (!v0) return gmsg::fail(v0.error());
             humidity = *v0;
         }
         return {};
     }
-    gmp::VoidResult write([[maybe_unused]] gmp::ByteWriter& w) const noexcept {
-        if (auto e0 = w.write<std::int16_t>(temp, gmp::Endian::little); !e0) return e0;
-        if (auto e0 = w.write<std::uint8_t>(humidity, gmp::Endian::little); !e0) return e0;
+    gmsg::VoidResult write([[maybe_unused]] gmsg::ByteWriter& w) const noexcept {
+        if (auto e0 = w.write<std::int16_t>(temp, gmsg::Endian::little); !e0) return e0;
+        if (auto e0 = w.write<std::uint8_t>(humidity, gmsg::Endian::little); !e0) return e0;
         return {};
     }
-    static gmp::Result<Sensor> decode(gmp::bytes_view data) noexcept {
+    static gmsg::Result<Sensor> decode(gmsg::bytes_view data) noexcept {
         Sensor m{};
-        gmp::ByteReader r(data);
-        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        gmsg::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmsg::fail(e.error());
         return m;
     }
     /// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).
-    static gmp::Result<Sensor> decode(gmp::bytes_view data, std::size_t& extra) noexcept {
+    static gmsg::Result<Sensor> decode(gmsg::bytes_view data, std::size_t& extra) noexcept {
         Sensor m{};
-        gmp::ByteReader r(data);
-        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        gmsg::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmsg::fail(e.error());
         extra = data.size() - r.position();
         return m;
     }
-    gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
-        gmp::ByteWriter w(out);
-        if (auto e = write(w); !e) return gmp::fail(e.error());
+    gmsg::Result<std::size_t> encode(gmsg::mut_bytes out) const noexcept {
+        gmsg::ByteWriter w(out);
+        if (auto e = write(w); !e) return gmsg::fail(e.error());
         return w.position();
     }
-    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("Sensor");
-        gmp_p.field("temp", this->temp);
-        gmp_p.conversion(static_cast<double>(this->temp) * 0.01 + 0.0);
-        gmp_p.field("humidity", this->humidity);
-        gmp_p.end();
+    /// Human readable dump (see gmp/print.hpp): gmsg::print(msg, stdout).
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("Sensor");
+        gmsg_p.field("temp", this->temp);
+        gmsg_p.conversion(static_cast<double>(this->temp) * 0.01 + 0.0);
+        gmsg_p.field("humidity", this->humidity);
+        gmsg_p.end();
     }
     bool operator==(const Sensor&) const = default;
 };
@@ -268,45 +268,45 @@ public:
     static constexpr std::size_t wire_size_v = 3;
 
     /// Validate `data` and build a view. Trailing bytes beyond the message are ignored.
-    [[nodiscard]] static gmp::Result<SensorView> from(gmp::bytes_view data) noexcept {
-        if (data.size() < 3) return gmp::fail(gmp::Error::Truncated);
+    [[nodiscard]] static gmsg::Result<SensorView> from(gmsg::bytes_view data) noexcept {
+        if (data.size() < 3) return gmsg::fail(gmsg::Error::Truncated);
         SensorView v;
-        v.gmp_data_ = data.first(3);
-        v.gmp_extra_ = data.size() - 3;
+        v.gmsg_data_ = data.first(3);
+        v.gmsg_extra_ = data.size() - 3;
         return v;
     }
     /// Build a view over data already validated by from() (no checks).
-    [[nodiscard]] static SensorView unchecked(gmp::bytes_view data) noexcept {
+    [[nodiscard]] static SensorView unchecked(gmsg::bytes_view data) noexcept {
         SensorView v;
-        v.gmp_data_ = data.first(3);
-        v.gmp_extra_ = data.size() - 3;
+        v.gmsg_data_ = data.first(3);
+        v.gmsg_extra_ = data.size() - 3;
         return v;
     }
 
-    [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
-    [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
+    [[nodiscard]] gmsg::bytes_view data() const noexcept { return gmsg_data_; }
+    [[nodiscard]] std::size_t wire_size() const noexcept { return gmsg_data_.size(); }
     /// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).
-    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }
+    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmsg_extra_; }
 
-    [[nodiscard]] std::int16_t temp() const noexcept { return gmp::load<std::int16_t>(gmp_data_.data() + 0, gmp::Endian::little); }
+    [[nodiscard]] std::int16_t temp() const noexcept { return gmsg::load<std::int16_t>(gmsg_data_.data() + 0, gmsg::Endian::little); }
     [[nodiscard]] double temp_scaled() const noexcept { return static_cast<double>(temp()) * 0.01 + 0.0; }
-    [[nodiscard]] std::uint8_t humidity() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 2, gmp::Endian::little); }
+    [[nodiscard]] std::uint8_t humidity() const noexcept { return gmsg::load<std::uint8_t>(gmsg_data_.data() + 2, gmsg::Endian::little); }
 
     /// Human readable dump (see gmp/print.hpp); same output as the struct.
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("Sensor");
-        gmp_p.field("temp", this->temp());
-        gmp_p.conversion(static_cast<double>(this->temp()) * 0.01 + 0.0);
-        gmp_p.field("humidity", this->humidity());
-        gmp_p.end();
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("Sensor");
+        gmsg_p.field("temp", this->temp());
+        gmsg_p.conversion(static_cast<double>(this->temp()) * 0.01 + 0.0);
+        gmsg_p.field("humidity", this->humidity());
+        gmsg_p.end();
     }
 
     /// Decode into the eager struct.
-    [[nodiscard]] gmp::Result<Sensor> to_struct() const noexcept { return Sensor::decode(gmp_data_); }
+    [[nodiscard]] gmsg::Result<Sensor> to_struct() const noexcept { return Sensor::decode(gmsg_data_); }
 
 private:
-    gmp::bytes_view gmp_data_{};
-    std::size_t gmp_extra_ = 0;
+    gmsg::bytes_view gmsg_data_{};
+    std::size_t gmsg_extra_ = 0;
 };
 
 struct Can {
@@ -319,18 +319,18 @@ struct Can {
     using AnyMessage = std::variant<EngineData>;
 
     /// No framing: the whole buffer is one frame.
-    static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::FrameScan::frame(b.size(), b.size(), b.size()); }
+    static constexpr gmsg::FrameScan scan(gmsg::bytes_view b) noexcept { return gmsg::FrameScan::frame(b.size(), b.size(), b.size()); }
 
     /// A validated frame split into its parts (views into the input buffer).
     struct Frame {
-        gmp::bytes_view body{};
+        gmsg::bytes_view body{};
     };
 
     /// Validate one complete frame (as delimited by scan()) and split it into header and body.
-    [[nodiscard]] static gmp::Result<Frame> open(gmp::bytes_view frame) noexcept {
-        if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmp::fail(gmp::Error::Truncated);
-        const gmp::bytes_view interior = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
-        if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+    [[nodiscard]] static gmsg::Result<Frame> open(gmsg::bytes_view frame) noexcept {
+        if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmsg::fail(gmsg::Error::Truncated);
+        const gmsg::bytes_view interior = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
+        if (interior.size() < header_size + trailer_size) return gmsg::fail(gmsg::Error::Truncated);
         Frame f;
         f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
         return f;
@@ -338,36 +338,36 @@ struct Can {
 
     /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
     template <class F>
-    static gmp::Error visit_frame(const Frame& f, F&& fn) noexcept {
+    static gmsg::Error visit_frame(const Frame& f, F&& fn) noexcept {
         auto v = EngineDataView::from(f.body);
         if (!v) return v.error();
         fn(*v);
-        return gmp::Error::None;
+        return gmsg::Error::None;
     }
 
-    [[nodiscard]] static gmp::Result<AnyView> select_message(const Frame& f) noexcept {
-        gmp::Result<AnyView> out = gmp::fail(gmp::Error::UnknownType);
-        const gmp::Error e = visit_frame(f, [&](const auto& v) { out = AnyView(v); });
-        if (e != gmp::Error::None) return gmp::fail(e);
+    [[nodiscard]] static gmsg::Result<AnyView> select_message(const Frame& f) noexcept {
+        gmsg::Result<AnyView> out = gmsg::fail(gmsg::Error::UnknownType);
+        const gmsg::Error e = visit_frame(f, [&](const auto& v) { out = AnyView(v); });
+        if (e != gmsg::Error::None) return gmsg::fail(e);
         return out;
     }
 
     /// Parse one frame located at the start of `buffer` (whole-buffer / datagram mode).
-    [[nodiscard]] static gmp::Result<AnyView> parse(gmp::bytes_view buffer) noexcept {
-        const gmp::FrameScan s = scan(buffer);
-        if (s.kind == gmp::FrameScan::Kind::need_more) return gmp::fail(gmp::Error::Truncated);
-        if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
+    [[nodiscard]] static gmsg::Result<AnyView> parse(gmsg::bytes_view buffer) noexcept {
+        const gmsg::FrameScan s = scan(buffer);
+        if (s.kind == gmsg::FrameScan::Kind::need_more) return gmsg::fail(gmsg::Error::Truncated);
+        if (s.kind == gmsg::FrameScan::Kind::skip) return gmsg::fail(s.error == gmsg::Error::None ? gmsg::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
-        if (!f) return gmp::fail(f.error());
+        if (!f) return gmsg::fail(f.error());
         return select_message(*f);
     }
     /// Parse one frame and decode it into the eager message struct.
-    [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::bytes_view buffer) noexcept {
+    [[nodiscard]] static gmsg::Result<AnyMessage> decode(gmsg::bytes_view buffer) noexcept {
         auto v = parse(buffer);
-        if (!v) return gmp::fail(v.error());
-        return std::visit([](const auto& view) -> gmp::Result<AnyMessage> {
+        if (!v) return gmsg::fail(v.error());
+        return std::visit([](const auto& view) -> gmsg::Result<AnyMessage> {
             auto m = view.to_struct();
-            if (!m) return gmp::fail(m.error());
+            if (!m) return gmsg::fail(m.error());
             return AnyMessage(std::move(*m));
         }, *v);
     }
@@ -377,27 +377,27 @@ struct Can {
     /// whichever it accepts; message types it does not accept are ignored. `extra` (if given) receives the
     /// bytes after the message in the frame.
     template <class H>
-    static gmp::Error process(gmp::mut_bytes frame, H& handler, std::size_t* extra = nullptr) {
+    static gmsg::Error process(gmsg::mut_bytes frame, H& handler, std::size_t* extra = nullptr) {
         auto f = open(frame);
         if (!f) return f.error();
         return visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
-            if (extra) *extra = gmp::extra_of(v);
+            if (extra) *extra = gmsg::extra_of(v);
             if constexpr (std::invocable<H&, const V&>) handler(v);
         });
     }
 
-    static gmp::Result<std::size_t> encode(const EngineData& m, gmp::mut_bytes out) noexcept {
-        gmp::ByteWriter w(out);
+    static gmsg::Result<std::size_t> encode(const EngineData& m, gmsg::mut_bytes out) noexcept {
+        gmsg::ByteWriter w(out);
         [[maybe_unused]] const std::size_t header_at = w.position();
         [[maybe_unused]] const std::size_t body_at = w.position();
-        if (auto e = m.write(w); !e) return gmp::fail(e.error());
+        if (auto e = m.write(w); !e) return gmsg::fail(e.error());
         [[maybe_unused]] const std::size_t body_len = w.position() - body_at;
         std::size_t total = w.position();
         return total;
     }
     /// Encode any message of this protocol.
-    static gmp::Result<std::size_t> encode(const AnyMessage& m, gmp::mut_bytes out) noexcept {
+    static gmsg::Result<std::size_t> encode(const AnyMessage& m, gmsg::mut_bytes out) noexcept {
         return std::visit([&](const auto& x) { return encode(x, out); }, m);
     }
 };
@@ -409,42 +409,42 @@ struct FixedLinkHeader {
     static constexpr std::size_t max_wire_size = 1;
     static constexpr std::size_t wire_size = 1;
 
-    gmp::VoidResult read([[maybe_unused]] gmp::ByteReader& r) noexcept {
+    gmsg::VoidResult read([[maybe_unused]] gmsg::ByteReader& r) noexcept {
         {
-            auto v0 = r.read<std::uint8_t>(gmp::Endian::big);
-            if (!v0) return gmp::fail(v0.error());
+            auto v0 = r.read<std::uint8_t>(gmsg::Endian::big);
+            if (!v0) return gmsg::fail(v0.error());
             id = *v0;
         }
         return {};
     }
-    gmp::VoidResult write([[maybe_unused]] gmp::ByteWriter& w) const noexcept {
-        if (auto e0 = w.write<std::uint8_t>(id, gmp::Endian::big); !e0) return e0;
+    gmsg::VoidResult write([[maybe_unused]] gmsg::ByteWriter& w) const noexcept {
+        if (auto e0 = w.write<std::uint8_t>(id, gmsg::Endian::big); !e0) return e0;
         return {};
     }
-    static gmp::Result<FixedLinkHeader> decode(gmp::bytes_view data) noexcept {
+    static gmsg::Result<FixedLinkHeader> decode(gmsg::bytes_view data) noexcept {
         FixedLinkHeader m{};
-        gmp::ByteReader r(data);
-        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        gmsg::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmsg::fail(e.error());
         return m;
     }
     /// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).
-    static gmp::Result<FixedLinkHeader> decode(gmp::bytes_view data, std::size_t& extra) noexcept {
+    static gmsg::Result<FixedLinkHeader> decode(gmsg::bytes_view data, std::size_t& extra) noexcept {
         FixedLinkHeader m{};
-        gmp::ByteReader r(data);
-        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        gmsg::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmsg::fail(e.error());
         extra = data.size() - r.position();
         return m;
     }
-    gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
-        gmp::ByteWriter w(out);
-        if (auto e = write(w); !e) return gmp::fail(e.error());
+    gmsg::Result<std::size_t> encode(gmsg::mut_bytes out) const noexcept {
+        gmsg::ByteWriter w(out);
+        if (auto e = write(w); !e) return gmsg::fail(e.error());
         return w.position();
     }
-    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("FixedLinkHeader");
-        gmp_p.field("id", this->id);
-        gmp_p.end();
+    /// Human readable dump (see gmp/print.hpp): gmsg::print(msg, stdout).
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("FixedLinkHeader");
+        gmsg_p.field("id", this->id);
+        gmsg_p.end();
     }
     bool operator==(const FixedLinkHeader&) const = default;
 };
@@ -456,41 +456,41 @@ public:
     static constexpr std::size_t wire_size_v = 1;
 
     /// Validate `data` and build a view. Trailing bytes beyond the message are ignored.
-    [[nodiscard]] static gmp::Result<FixedLinkHeaderView> from(gmp::bytes_view data) noexcept {
-        if (data.size() < 1) return gmp::fail(gmp::Error::Truncated);
+    [[nodiscard]] static gmsg::Result<FixedLinkHeaderView> from(gmsg::bytes_view data) noexcept {
+        if (data.size() < 1) return gmsg::fail(gmsg::Error::Truncated);
         FixedLinkHeaderView v;
-        v.gmp_data_ = data.first(1);
-        v.gmp_extra_ = data.size() - 1;
+        v.gmsg_data_ = data.first(1);
+        v.gmsg_extra_ = data.size() - 1;
         return v;
     }
     /// Build a view over data already validated by from() (no checks).
-    [[nodiscard]] static FixedLinkHeaderView unchecked(gmp::bytes_view data) noexcept {
+    [[nodiscard]] static FixedLinkHeaderView unchecked(gmsg::bytes_view data) noexcept {
         FixedLinkHeaderView v;
-        v.gmp_data_ = data.first(1);
-        v.gmp_extra_ = data.size() - 1;
+        v.gmsg_data_ = data.first(1);
+        v.gmsg_extra_ = data.size() - 1;
         return v;
     }
 
-    [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
-    [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
+    [[nodiscard]] gmsg::bytes_view data() const noexcept { return gmsg_data_; }
+    [[nodiscard]] std::size_t wire_size() const noexcept { return gmsg_data_.size(); }
     /// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).
-    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }
+    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmsg_extra_; }
 
-    [[nodiscard]] std::uint8_t id() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 0, gmp::Endian::big); }
+    [[nodiscard]] std::uint8_t id() const noexcept { return gmsg::load<std::uint8_t>(gmsg_data_.data() + 0, gmsg::Endian::big); }
 
     /// Human readable dump (see gmp/print.hpp); same output as the struct.
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("FixedLinkHeader");
-        gmp_p.field("id", this->id());
-        gmp_p.end();
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("FixedLinkHeader");
+        gmsg_p.field("id", this->id());
+        gmsg_p.end();
     }
 
     /// Decode into the eager struct.
-    [[nodiscard]] gmp::Result<FixedLinkHeader> to_struct() const noexcept { return FixedLinkHeader::decode(gmp_data_); }
+    [[nodiscard]] gmsg::Result<FixedLinkHeader> to_struct() const noexcept { return FixedLinkHeader::decode(gmsg_data_); }
 
 private:
-    gmp::bytes_view gmp_data_{};
-    std::size_t gmp_extra_ = 0;
+    gmsg::bytes_view gmsg_data_{};
+    std::size_t gmsg_extra_ = 0;
 };
 
 struct FixedLink {
@@ -506,43 +506,43 @@ struct FixedLink {
     using AnyMessage = std::variant<Sensor>;
     /// Incremental parser; Capacity must be >= max_frame. Pass the handler on each feed()/next() call.
     template <std::size_t Capacity = max_frame>
-    using Stream = gmp::StreamParser<FixedLink, Capacity>;
+    using Stream = gmsg::StreamParser<FixedLink, Capacity>;
     /// Incremental parser that stores its handler (a named type): feed(bytes) / next() without a handler.
     template <class Handler, std::size_t Capacity = max_frame>
-    using StreamWith = gmp::StreamParser<FixedLink, Capacity, Handler>;
-    /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
+    using StreamWith = gmsg::StreamParser<FixedLink, Capacity, Handler>;
+    /// StreamWith for any handler, e.g. make_stream(gmsg::overloaded{[](const AView&) {}, ...}).
     template <std::size_t Capacity = max_frame, class Handler>
     static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
     /// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).
     struct Received {
         HeaderView header{};
         AnyView message;
-        gmp::bytes_view bytes{};  ///< the whole frame as received
+        gmsg::bytes_view bytes{};  ///< the whole frame as received
         std::size_t extra = 0;  ///< bytes in the frame after the message (ignored)
     };
 
-    static constexpr gmp::FixedFrameConfig framing_config{gmp::Pattern{{0xA5, 0xA5}, 2}, 10};
-    static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_fixed(b, framing_config); }
+    static constexpr gmsg::FixedFrameConfig framing_config{gmsg::Pattern{{0xA5, 0xA5}, 2}, 10};
+    static constexpr gmsg::FrameScan scan(gmsg::bytes_view b) noexcept { return gmsg::scan_fixed(b, framing_config); }
 
     /// A validated frame split into its parts (views into the input buffer).
     struct Frame {
         HeaderView header{};
-        gmp::bytes_view body{};
+        gmsg::bytes_view body{};
     };
 
     /// Validate one complete frame (as delimited by scan()) and split it into header and body.
-    [[nodiscard]] static gmp::Result<Frame> open(gmp::bytes_view frame) noexcept {
-        if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmp::fail(gmp::Error::Truncated);
-        const gmp::bytes_view interior = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
-        if (interior.size() < header_size + trailer_size) return gmp::fail(gmp::Error::Truncated);
+    [[nodiscard]] static gmsg::Result<Frame> open(gmsg::bytes_view frame) noexcept {
+        if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmsg::fail(gmsg::Error::Truncated);
+        const gmsg::bytes_view interior = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
+        if (interior.size() < header_size + trailer_size) return gmsg::fail(gmsg::Error::Truncated);
         {
-            const auto stored = gmp::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, gmp::Endian::big);
-            const auto computed = static_cast<std::uint64_t>(gmp::checksum::Crc<std::uint8_t, 8, 0x1Dull, 0xFFull, false, false, 0xFFull>::compute(interior.first(interior.size() - trailer_size)));
-            if (stored != computed) return gmp::fail(gmp::Error::BadChecksum);
+            const auto stored = gmsg::load_uint(interior.data() + interior.size() - trailer_size, trailer_size, gmsg::Endian::big);
+            const auto computed = static_cast<std::uint64_t>(gmsg::checksum::Crc<std::uint8_t, 8, 0x1Dull, 0xFFull, false, false, 0xFFull>::compute(interior.first(interior.size() - trailer_size)));
+            if (stored != computed) return gmsg::fail(gmsg::Error::BadChecksum);
         }
         Frame f;
         auto h = HeaderView::from(interior.first(header_size));
-        if (!h) return gmp::fail(h.error());
+        if (!h) return gmsg::fail(h.error());
         f.header = *h;
         f.body = interior.subspan(header_size, interior.size() - header_size - trailer_size);
         return f;
@@ -550,41 +550,41 @@ struct FixedLink {
 
     /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
     template <class F>
-    static gmp::Error visit_frame(const Frame& f, F&& fn) noexcept {
-        switch (gmp::to_int(f.header.id())) {
+    static gmsg::Error visit_frame(const Frame& f, F&& fn) noexcept {
+        switch (gmsg::to_int(f.header.id())) {
             case 1: {  // Sensor
                 auto v = SensorView::from(f.body);
                 if (!v) return v.error();
                 fn(*v);
-                return gmp::Error::None;
+                return gmsg::Error::None;
             }
-            default: return gmp::Error::UnknownType;
+            default: return gmsg::Error::UnknownType;
         }
     }
 
-    [[nodiscard]] static gmp::Result<AnyView> select_message(const Frame& f) noexcept {
-        gmp::Result<AnyView> out = gmp::fail(gmp::Error::UnknownType);
-        const gmp::Error e = visit_frame(f, [&](const auto& v) { out = AnyView(v); });
-        if (e != gmp::Error::None) return gmp::fail(e);
+    [[nodiscard]] static gmsg::Result<AnyView> select_message(const Frame& f) noexcept {
+        gmsg::Result<AnyView> out = gmsg::fail(gmsg::Error::UnknownType);
+        const gmsg::Error e = visit_frame(f, [&](const auto& v) { out = AnyView(v); });
+        if (e != gmsg::Error::None) return gmsg::fail(e);
         return out;
     }
 
     /// Parse one frame located at the start of `buffer` (whole-buffer / datagram mode).
-    [[nodiscard]] static gmp::Result<AnyView> parse(gmp::bytes_view buffer) noexcept {
-        const gmp::FrameScan s = scan(buffer);
-        if (s.kind == gmp::FrameScan::Kind::need_more) return gmp::fail(gmp::Error::Truncated);
-        if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
+    [[nodiscard]] static gmsg::Result<AnyView> parse(gmsg::bytes_view buffer) noexcept {
+        const gmsg::FrameScan s = scan(buffer);
+        if (s.kind == gmsg::FrameScan::Kind::need_more) return gmsg::fail(gmsg::Error::Truncated);
+        if (s.kind == gmsg::FrameScan::Kind::skip) return gmsg::fail(s.error == gmsg::Error::None ? gmsg::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
-        if (!f) return gmp::fail(f.error());
+        if (!f) return gmsg::fail(f.error());
         return select_message(*f);
     }
     /// Parse one frame and decode it into the eager message struct.
-    [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::bytes_view buffer) noexcept {
+    [[nodiscard]] static gmsg::Result<AnyMessage> decode(gmsg::bytes_view buffer) noexcept {
         auto v = parse(buffer);
-        if (!v) return gmp::fail(v.error());
-        return std::visit([](const auto& view) -> gmp::Result<AnyMessage> {
+        if (!v) return gmsg::fail(v.error());
+        return std::visit([](const auto& view) -> gmsg::Result<AnyMessage> {
             auto m = view.to_struct();
-            if (!m) return gmp::fail(m.error());
+            if (!m) return gmsg::fail(m.error());
             return AnyMessage(std::move(*m));
         }, *v);
     }
@@ -594,34 +594,34 @@ struct FixedLink {
     /// whichever it accepts; message types it does not accept are ignored. `extra` (if given) receives the
     /// bytes after the message in the frame.
     template <class H>
-    static gmp::Error process(gmp::mut_bytes frame, H& handler, std::size_t* extra = nullptr) {
+    static gmsg::Error process(gmsg::mut_bytes frame, H& handler, std::size_t* extra = nullptr) {
         auto f = open(frame);
         if (!f) return f.error();
         return visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
-            if (extra) *extra = gmp::extra_of(v);
+            if (extra) *extra = gmsg::extra_of(v);
             if constexpr (std::invocable<H&, const HeaderView&, const V&>) handler(f->header, v);
             else if constexpr (std::invocable<H&, const V&>) handler(v);
         });
     }
 
     /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
-    /// for dropped data (gmp::FrameError). on<Fn>(ctx) picks the slot from Fn's last parameter.
+    /// for dropped data (gmsg::FrameError). on<Fn>(ctx) picks the slot from Fn's last parameter.
     /// Fn may take (View) or (HeaderView, View); the header is passed only when Fn asks for it.
     class Callbacks {
     public:
         /// Register Fn with context `ctx`: a member function of C, or a function taking C& / C* first.
         template <auto Fn, class C>
-        Callbacks& on(C& ctx) noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(ctx); return *this; }
+        Callbacks& on(C& ctx) noexcept { slot<gmsg::callback_message_t<decltype(Fn)>>().template bind<Fn>(ctx); return *this; }
         /// Register Fn that takes no context.
         template <auto Fn>
-        Callbacks& on() noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(); return *this; }
+        Callbacks& on() noexcept { slot<gmsg::callback_message_t<decltype(Fn)>>().template bind<Fn>(); return *this; }
         /// Register a function pointer chosen at run time, called as fn(ctx, ...) (C-style void* or a typed pointer).
         template <class F, class C> requires std::is_function_v<F>
-        Callbacks& on(F* fn, C* ctx) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn, ctx); return *this; }
+        Callbacks& on(F* fn, C* ctx) noexcept { slot<gmsg::callback_message_t<F*>>().bind(fn, ctx); return *this; }
         template <class F> requires std::is_function_v<F>
-        Callbacks& on(F* fn) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn); return *this; }
-        /// Remove the listener of V (a message view, AnyView or gmp::FrameError).
+        Callbacks& on(F* fn) noexcept { slot<gmsg::callback_message_t<F*>>().bind(fn); return *this; }
+        /// Remove the listener of V (a message view, AnyView or gmsg::FrameError).
         template <class V>
         Callbacks& off() noexcept { slot<V>().reset(); return *this; }
         template <class V>
@@ -629,28 +629,28 @@ struct FixedLink {
         void clear() noexcept { *this = Callbacks{}; }
 
         // handler interface used by the stream parser: the message listener first, then the every-frame listener
-        void operator()(const HeaderView& h, const SensorView& v) const { gmp_on_Sensor_(h, v); if (gmp_on_frame_) gmp_on_frame_(h, AnyView(v)); }
-        void operator()(const gmp::FrameError& e) const { gmp_on_error_(e); }
+        void operator()(const HeaderView& h, const SensorView& v) const { gmsg_on_Sensor_(h, v); if (gmsg_on_frame_) gmsg_on_frame_(h, AnyView(v)); }
+        void operator()(const gmsg::FrameError& e) const { gmsg_on_error_(e); }
 
     private:
         template <class V>
         auto& slot() noexcept {
-            if constexpr (std::is_same_v<V, SensorView>) return gmp_on_Sensor_;
-            else if constexpr (std::is_same_v<V, AnyView>) return gmp_on_frame_;
-            else if constexpr (std::is_same_v<V, gmp::FrameError>) return gmp_on_error_;
-            else static_assert(gmp::detail::always_false<V>, "FixedLink::Callbacks: the callback's last parameter must be one of this protocol's message views, AnyView or gmp::FrameError");
+            if constexpr (std::is_same_v<V, SensorView>) return gmsg_on_Sensor_;
+            else if constexpr (std::is_same_v<V, AnyView>) return gmsg_on_frame_;
+            else if constexpr (std::is_same_v<V, gmsg::FrameError>) return gmsg_on_error_;
+            else static_assert(gmsg::detail::always_false<V>, "FixedLink::Callbacks: the callback's last parameter must be one of this protocol's message views, AnyView or gmsg::FrameError");
         }
 
-        gmp::CallbackSlot<const HeaderView&, const SensorView&> gmp_on_Sensor_;
-        gmp::CallbackSlot<const HeaderView&, const AnyView&> gmp_on_frame_;
-        gmp::CallbackSlot<const gmp::FrameError&> gmp_on_error_;
+        gmsg::CallbackSlot<const HeaderView&, const SensorView&> gmsg_on_Sensor_;
+        gmsg::CallbackSlot<const HeaderView&, const AnyView&> gmsg_on_frame_;
+        gmsg::CallbackSlot<const gmsg::FrameError&> gmsg_on_error_;
     };
 
     /// Stream parser with runtime callbacks: register with on<&App::fn>(app), then feed(bytes).
     template <std::size_t Capacity = max_frame>
-    class CallbackStream : private Callbacks, public gmp::StreamParser<FixedLink, Capacity, Callbacks&> {
+    class CallbackStream : private Callbacks, public gmsg::StreamParser<FixedLink, Capacity, Callbacks&> {
     public:
-        CallbackStream() noexcept : Callbacks(), gmp::StreamParser<FixedLink, Capacity, Callbacks&>(static_cast<Callbacks&>(*this)) {}
+        CallbackStream() noexcept : Callbacks(), gmsg::StreamParser<FixedLink, Capacity, Callbacks&>(static_cast<Callbacks&>(*this)) {}
         CallbackStream(const CallbackStream&) = delete;
         CallbackStream& operator=(const CallbackStream&) = delete;
         using Callbacks::on;
@@ -660,26 +660,26 @@ struct FixedLink {
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
 
-    static gmp::Result<std::size_t> encode(const Sensor& m, gmp::mut_bytes out) noexcept { return encode(Header{}, m, out); }
+    static gmsg::Result<std::size_t> encode(const Sensor& m, gmsg::mut_bytes out) noexcept { return encode(Header{}, m, out); }
     /// Encode with explicit header values (id/length fields are filled in automatically).
-    static gmp::Result<std::size_t> encode([[maybe_unused]] Header h, const Sensor& m, gmp::mut_bytes out) noexcept {
-        gmp::ByteWriter w(out);
-        if (auto e = w.write_bytes(prefix); !e) return gmp::fail(e.error());
+    static gmsg::Result<std::size_t> encode([[maybe_unused]] Header h, const Sensor& m, gmsg::mut_bytes out) noexcept {
+        gmsg::ByteWriter w(out);
+        if (auto e = w.write_bytes(prefix); !e) return gmsg::fail(e.error());
         [[maybe_unused]] const std::size_t header_at = w.position();
         h.id = static_cast<std::uint8_t>(1);
-        if (auto e = h.write(w); !e) return gmp::fail(e.error());
+        if (auto e = h.write(w); !e) return gmsg::fail(e.error());
         [[maybe_unused]] const std::size_t body_at = w.position();
-        if (auto e = m.write(w); !e) return gmp::fail(e.error());
+        if (auto e = m.write(w); !e) return gmsg::fail(e.error());
         [[maybe_unused]] const std::size_t body_len = w.position() - body_at;
-        if (body_len > 6) return gmp::fail(gmp::Error::BadLength);
-        if (auto e = w.fill(0, 6 - body_len); !e) return gmp::fail(e.error());
-        const auto cs = static_cast<std::uint64_t>(gmp::checksum::Crc<std::uint8_t, 8, 0x1Dull, 0xFFull, false, false, 0xFFull>::compute(w.written().subspan(header_at)));
-        if (auto e = w.write_uint(cs, trailer_size, gmp::Endian::big); !e) return gmp::fail(e.error());
+        if (body_len > 6) return gmsg::fail(gmsg::Error::BadLength);
+        if (auto e = w.fill(0, 6 - body_len); !e) return gmsg::fail(e.error());
+        const auto cs = static_cast<std::uint64_t>(gmsg::checksum::Crc<std::uint8_t, 8, 0x1Dull, 0xFFull, false, false, 0xFFull>::compute(w.written().subspan(header_at)));
+        if (auto e = w.write_uint(cs, trailer_size, gmsg::Endian::big); !e) return gmsg::fail(e.error());
         std::size_t total = w.position();
         return total;
     }
     /// Encode any message of this protocol.
-    static gmp::Result<std::size_t> encode(const AnyMessage& m, gmp::mut_bytes out) noexcept {
+    static gmsg::Result<std::size_t> encode(const AnyMessage& m, gmsg::mut_bytes out) noexcept {
         return std::visit([&](const auto& x) { return encode(x, out); }, m);
     }
 };

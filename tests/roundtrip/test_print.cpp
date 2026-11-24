@@ -31,13 +31,13 @@ tel::Status make_status(tel::Mode mode) {
 }
 
 template <class T>
-std::string to_text(const T& v, const gmp::PrintOptions& o = {}) {
+std::string to_text(const T& v, const gmsg::PrintOptions& o = {}) {
     std::string s;
-    REQUIRE(gmp::print(v, s, o));
+    REQUIRE(gmsg::print(v, s, o));
     return s;
 }
 
-constexpr gmp::PrintOptions kOneLine{.style = gmp::PrintStyle::single_line};
+constexpr gmsg::PrintOptions kOneLine{.style = gmsg::PrintStyle::single_line};
 
 } // namespace
 
@@ -85,7 +85,7 @@ TEST_CASE("print: view prints exactly like the struct") {
         std::array<std::uint8_t, 64> buf{};
         auto n = s.encode(buf);
         REQUIRE(n);
-        auto v = tel::StatusView::from(gmp::bytes_view(buf.data(), *n));
+        auto v = tel::StatusView::from(gmsg::bytes_view(buf.data(), *n));
         REQUIRE(v);
         CHECK(to_text(*v) == to_text(s));
         CHECK(to_text(*v, kOneLine) == to_text(s, kOneLine));
@@ -114,7 +114,7 @@ TEST_CASE("print: bytes as hex, strings escaped, limits") {
     l.level = 2;
     l.text = "a\"b\r\n";
     l.tail = {1, 2, 3, 4, 5};
-    gmp::PrintOptions o = kOneLine;
+    gmsg::PrintOptions o = kOneLine;
     o.max_bytes = 2;
     CHECK(to_text(l, o) == "Log { level: 2, text: \"a\\\"b\\r\\n\", tail: [01 02 ... (+3 more)] }");
 
@@ -129,7 +129,7 @@ TEST_CASE("print: protocol parse result (variant of views)") {
     std::array<std::uint8_t, tel::BinaryLink::max_frame> buf{};
     auto n = tel::BinaryLink::encode(s, buf);
     REQUIRE(n);
-    auto any = tel::BinaryLink::parse(gmp::bytes_view(buf.data(), *n));
+    auto any = tel::BinaryLink::parse(gmsg::bytes_view(buf.data(), *n));
     REQUIRE(any);
     CHECK(to_text(*any) == to_text(s));
 }
@@ -140,51 +140,51 @@ TEST_CASE("print: sinks") {
 
     SECTION("char buffer, NUL terminated, truncation reported") {
         char big[512];
-        auto n = gmp::print(s, big, kOneLine);
+        auto n = gmsg::print(s, big, kOneLine);
         REQUIRE(n);
         CHECK(std::string(big) == expected);
         CHECK(*n == expected.size());
 
         char small[16];
-        auto t = gmp::print(s, small, kOneLine);
+        auto t = gmsg::print(s, small, kOneLine);
         REQUIRE_FALSE(t);
-        CHECK(t.error() == gmp::Error::BufferFull);
+        CHECK(t.error() == gmsg::Error::BufferFull);
         CHECK(std::string(small) == expected.substr(0, 15));
 
         std::array<char, 512> arr{};
-        REQUIRE(gmp::print(s, std::span<char>(arr), kOneLine));
+        REQUIRE(gmsg::print(s, std::span<char>(arr), kOneLine));
         CHECK(std::string(arr.data()) == expected);
     }
     SECTION("static_string appends and reports truncation") {
-        gmp::static_string<512> str = "rx: ";
-        REQUIRE(gmp::println(s, str, kOneLine));
+        gmsg::static_string<512> str = "rx: ";
+        REQUIRE(gmsg::println(s, str, kOneLine));
         CHECK(str.view() == "rx: " + expected + "\n");
 
-        gmp::static_string<10> tiny;
-        auto t = gmp::print(s, tiny, kOneLine);
+        gmsg::static_string<10> tiny;
+        auto t = gmsg::print(s, tiny, kOneLine);
         REQUIRE_FALSE(t);
-        CHECK(t.error() == gmp::Error::BufferFull);
+        CHECK(t.error() == gmsg::Error::BufferFull);
         CHECK(tiny.view() == expected.substr(0, 10));
     }
     SECTION("std::ostream") {
         std::ostringstream os;
-        REQUIRE(gmp::print(s, os, kOneLine));
+        REQUIRE(gmsg::print(s, os, kOneLine));
         CHECK(os.str() == expected);
     }
     SECTION("callback, which can stop the output") {
         std::string got;
-        REQUIRE(gmp::print(s, [&](std::string_view t) { got += t; }, kOneLine));
+        REQUIRE(gmsg::print(s, [&](std::string_view t) { got += t; }, kOneLine));
         CHECK(got == expected);
 
         std::string limited;
-        auto t = gmp::print(s, [&](std::string_view x) { limited += x; return limited.size() < 8; }, kOneLine);
+        auto t = gmsg::print(s, [&](std::string_view x) { limited += x; return limited.size() < 8; }, kOneLine);
         REQUIRE_FALSE(t);
-        CHECK(t.error() == gmp::Error::BufferFull);
+        CHECK(t.error() == gmsg::Error::BufferFull);
     }
     SECTION("FILE*") {
         std::FILE* f = std::tmpfile();
         REQUIRE(f);
-        auto n = gmp::println(s, f, kOneLine);
+        auto n = gmsg::println(s, f, kOneLine);
         REQUIRE(n);
         CHECK(*n == expected.size() + 1);
         std::rewind(f);
@@ -228,7 +228,7 @@ TEST_CASE("print: computed values") {
     CHECK(s.find("  sum: 0 (computed)\n") != std::string::npos);
 }
 
-TEST_CASE("print: arrays of messages one per line, custom types through gmp_print") {
+TEST_CASE("print: arrays of messages one per line, custom types through gmsg_print") {
     link::hdlc::Batch b;
     b.when = test::Time{12, 34, 56};
     b.n = 2;
@@ -268,11 +268,11 @@ TEST_CASE("print: arrays of messages one per line, custom types through gmp_prin
     std::array<std::uint8_t, 128> buf{};
     auto n = b.encode(buf);
     REQUIRE(n);
-    auto v = link::hdlc::BatchView::from(gmp::bytes_view(buf.data(), *n));
+    auto v = link::hdlc::BatchView::from(gmsg::bytes_view(buf.data(), *n));
     REQUIRE(v);
     CHECK(to_text(*v) == expected);
 
-    gmp::PrintOptions o;
+    gmsg::PrintOptions o;
     o.max_items = 1;
     CHECK(to_text(b, o).find("    }\n    ... (+1 more)\n  ]\n") != std::string::npos);
 }

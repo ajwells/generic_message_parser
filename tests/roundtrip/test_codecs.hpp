@@ -12,34 +12,34 @@ struct Time {
     bool operator==(const Time&) const = default;
 };
 
-inline gmp::Result<std::uint8_t> from_bcd(std::uint8_t b) {
-    if ((b >> 4) > 9 || (b & 0xF) > 9) return gmp::fail(gmp::Error::InvalidValue);
+inline gmsg::Result<std::uint8_t> from_bcd(std::uint8_t b) {
+    if ((b >> 4) > 9 || (b & 0xF) > 9) return gmsg::fail(gmsg::Error::InvalidValue);
     return static_cast<std::uint8_t>((b >> 4) * 10 + (b & 0xF));
 }
 
 /// Three BCD bytes: HH MM SS.
-inline gmp::Result<Time> decode_bcd_time(gmp::ByteReader& r) {
+inline gmsg::Result<Time> decode_bcd_time(gmsg::ByteReader& r) {
     Time t;
     for (std::uint8_t* dst : {&t.h, &t.m, &t.s}) {
         auto b = r.read<std::uint8_t>();
-        if (!b) return gmp::fail(b.error());
+        if (!b) return gmsg::fail(b.error());
         auto v = from_bcd(*b);
-        if (!v) return gmp::fail(v.error());
+        if (!v) return gmsg::fail(v.error());
         *dst = *v;
     }
     return t;
 }
 
-inline gmp::VoidResult encode_bcd_time(gmp::ByteWriter& w, const Time& t) {
+inline gmsg::VoidResult encode_bcd_time(gmsg::ByteWriter& w, const Time& t) {
     for (std::uint8_t v : {t.h, t.m, t.s}) {
-        if (v > 99) return gmp::fail(gmp::Error::OutOfRange);
+        if (v > 99) return gmsg::fail(gmsg::Error::OutOfRange);
         if (auto e = w.write<std::uint8_t>(static_cast<std::uint8_t>(((v / 10) << 4) | (v % 10))); !e) return e;
     }
     return {};
 }
 
-/// Pretty-print hook for gmp::print (found by ADL): HH:MM:SS.
-inline void gmp_print(gmp::Printer& p, const Time& t) noexcept {
+/// Pretty-print hook for gmsg::print (found by ADL): HH:MM:SS.
+inline void gmsg_print(gmsg::Printer& p, const Time& t) noexcept {
     const char b[8] = {static_cast<char>('0' + t.h / 10 % 10), static_cast<char>('0' + t.h % 10), ':',
                        static_cast<char>('0' + t.m / 10 % 10), static_cast<char>('0' + t.m % 10), ':',
                        static_cast<char>('0' + t.s / 10 % 10), static_cast<char>('0' + t.s % 10)};
@@ -47,7 +47,7 @@ inline void gmp_print(gmp::Printer& p, const Time& t) noexcept {
 }
 
 /// Custom checksum: 16-bit sum of all bytes.
-inline std::uint16_t add16(gmp::bytes_view d) {
+inline std::uint16_t add16(gmsg::bytes_view d) {
     std::uint16_t s = 0;
     for (auto b : d) s = static_cast<std::uint16_t>(s + b);
     return s;
@@ -62,30 +62,30 @@ inline std::uint16_t add16(gmp::bytes_view d) {
 namespace test {
 
 /// NMEA "ddmm.mmmm" -> decimal degrees.
-inline gmp::Result<double> decode_coord(std::string_view s) {
-    auto v = gmp::text::parse_float<double>(s);
-    if (!v) return gmp::fail(v.error());
+inline gmsg::Result<double> decode_coord(std::string_view s) {
+    auto v = gmsg::text::parse_float<double>(s);
+    if (!v) return gmsg::fail(v.error());
     const double deg = std::floor(*v / 100.0);
     return deg + (*v - deg * 100.0) / 60.0;
 }
 
-inline gmp::VoidResult encode_coord(gmp::text::TextWriter& w, const double& degrees) {
+inline gmsg::VoidResult encode_coord(gmsg::text::TextWriter& w, const double& degrees) {
     const double deg = std::floor(degrees);
     const double ddmm = deg * 100.0 + (degrees - deg) * 60.0;
     std::array<char, 32> buf{};
     auto [p, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), ddmm, std::chars_format::fixed, 4);
-    if (ec != std::errc{}) return gmp::fail(gmp::Error::InvalidValue);
+    if (ec != std::errc{}) return gmsg::fail(gmsg::Error::InvalidValue);
     return w.raw(std::string_view(buf.data(), static_cast<std::size_t>(p - buf.data())));
 }
 
 /// Frame = [n][n bytes]; a zero length byte is treated as garbage.
 struct LengthByteFramer {
-    static gmp::FrameScan scan(gmp::bytes_view b) {
-        if (b.empty()) return gmp::FrameScan::need_more(1);
-        if (b[0] == 0) return gmp::FrameScan::skip(1, gmp::Error::BadLength);
+    static gmsg::FrameScan scan(gmsg::bytes_view b) {
+        if (b.empty()) return gmsg::FrameScan::need_more(1);
+        if (b[0] == 0) return gmsg::FrameScan::skip(1, gmsg::Error::BadLength);
         const std::size_t n = 1u + b[0];
-        if (b.size() < n) return gmp::FrameScan::need_more(n);
-        return gmp::FrameScan::frame(n, n, n);
+        if (b.size() < n) return gmsg::FrameScan::need_more(n);
+        return gmsg::FrameScan::frame(n, n, n);
     }
 };
 

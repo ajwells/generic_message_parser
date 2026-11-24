@@ -72,11 +72,11 @@ messages:
 | `char` | 1 byte | `char` | value |
 | *EnumName* | underlying integer | enum | enum |
 | `bits` | group of bit fields packed into whole bytes | `<Msg>_<field>` struct | that struct |
-| `bytes` | raw bytes, see *lengths* | `std::array` / `gmp::static_vector` | `gmp::bytes_view` |
-| `string` | characters, see *lengths* | `gmp::static_string<N>` | `std::string_view` |
-| `array` | repeated `of:` element | `std::array` / `gmp::static_vector` | `ScalarArrayView` / `FixedArrayView` / `SeqArrayView` |
+| `bytes` | raw bytes, see *lengths* | `std::array` / `gmsg::static_vector` | `gmsg::bytes_view` |
+| `string` | characters, see *lengths* | `gmsg::static_string<N>` | `std::string_view` |
+| `array` | repeated `of:` element | `std::array` / `gmsg::static_vector` | `ScalarArrayView` / `FixedArrayView` / `SeqArrayView` |
 | *MessageName* | nested message | that struct | that view |
-| *custom type* | user codec | user type | `gmp::Result<T>` |
+| *custom type* | user codec | user type | `gmsg::Result<T>` |
 | `{ pad: N }` | N zero bytes (text: N ignored tokens) | none | none |
 
 The same type names are used in text messages, which parse them from tokens instead.
@@ -192,7 +192,7 @@ protocols:
 | `fixed` | `sync`, `size`, `end`, `escape` | Fixed-size frames, optionally starting with a sync pattern and ending with an `end` pattern (never escaped). Without `size`, all messages must share one fixed size. Shorter messages are zero padded. |
 | `length_prefixed` | `sync`, `length: { field, covers, adjust, counts }`, `end`, `escape` | The size comes from a header field. `covers`: `body` (default), `body_checksum` (body and checksum), `header_body` or `all` (prefix through checksum). Covered length = value + `adjust`. |
 | `delimited` | `start`, `end`, `escape` | Bounded by delimiters (`start` is optional). Identical start and end bytes (HDLC `0x7E`) may share a flag between frames. |
-| `custom` | `framer` | User type from `custom.framers` providing `static gmp::FrameScan scan(gmp::bytes_view)`. |
+| `custom` | `framer` | User type from `custom.framers` providing `static gmsg::FrameScan scan(gmsg::bytes_view)`. |
 
 Shared keys:
 - `max_frame`: largest frame and the stream buffer size. It is computed when every message is bounded, and required otherwise.
@@ -295,13 +295,13 @@ Required C++ signatures. The generated code checks them with `static_assert`:
 
 | extension | signature |
 |-----------|-----------|
-| binary decoder | `gmp::Result<T> decode(gmp::ByteReader&)` |
-| binary encoder | `gmp::VoidResult encode(gmp::ByteWriter&, const T&)` |
-| text decoder | `gmp::Result<T> decode(std::string_view token)` |
-| text encoder | `gmp::VoidResult encode(gmp::text::TextWriter&, const T&)`. Write the token content with `w.raw(...)`; the separator is already handled. |
-| checksum | `<unsigned integer> fn(gmp::bytes_view covered)` |
-| framer | `struct F { static gmp::FrameScan scan(gmp::bytes_view); };` |
-| printing (optional) | `void gmp_print(gmp::Printer&, const T&)` next to `T`, used by `gmp::print`; without it the value prints as `<?>` |
+| binary decoder | `gmsg::Result<T> decode(gmsg::ByteReader&)` |
+| binary encoder | `gmsg::VoidResult encode(gmsg::ByteWriter&, const T&)` |
+| text decoder | `gmsg::Result<T> decode(std::string_view token)` |
+| text encoder | `gmsg::VoidResult encode(gmsg::text::TextWriter&, const T&)`. Write the token content with `w.raw(...)`; the separator is already handled. |
+| checksum | `<unsigned integer> fn(gmsg::bytes_view covered)` |
+| framer | `struct F { static gmsg::FrameScan scan(gmsg::bytes_view); };` |
+| printing (optional) | `void gmsg_print(gmsg::Printer&, const T&)` next to `T`, used by `gmsg::print`; without it the value prints as `<?>` |
 
 A `FrameScan` is one of three results:
 - `need_more(hint)`

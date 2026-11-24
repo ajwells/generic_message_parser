@@ -1,7 +1,7 @@
 // Cross-check of generated C text messages against generated C++: valid records, every truncation, character
 // substitutions (digits, separators, signs, letters, empty tokens) and random text. For every input both languages
 // must report the same error; on success every field must match, the view accessors (parsed on demand) must give
-// the same values or errors, re-encoding must give the same text, and print must give the same text as gmp::print
+// the same values or errors, re-encoding must give the same text, and print must give the same text as gmsg::print
 // (also for views whose fields fail to parse: `<error: ...>`).
 
 #include <catch2/catch_test_macros.hpp>
@@ -33,7 +33,7 @@
 
 namespace {
 
-int code(gmp::Error e) { return static_cast<int>(e); }
+int code(gmsg::Error e) { return static_cast<int>(e); }
 std::string_view sv(const char* p, std::size_t n) { return {p, n}; }
 std::string_view sv(gmsg_str s) { return {s.data, s.size}; }
 
@@ -43,18 +43,18 @@ bool same(T a, T b) {
     else return a == b;
 }
 
-/// Compare a C++ view accessor (gmp::Result<T>) with a C accessor (error code + out parameter).
+/// Compare a C++ view accessor (gmsg::Result<T>) with a C accessor (error code + out parameter).
 template <class T, class CFn>
-void same_access(const gmp::Result<T>& cpp, CFn c) {
+void same_access(const gmsg::Result<T>& cpp, CFn c) {
     T v{};
     const int e = static_cast<int>(c(&v));
     REQUIRE(e == (cpp ? 0 : code(cpp.error())));
     if (cpp) CHECK(same(*cpp, v));
 }
 
-/// Same for an optional field: C++ gmp::Result<std::optional<T>>, C has_<f>() + accessor.
+/// Same for an optional field: C++ gmsg::Result<std::optional<T>>, C has_<f>() + accessor.
 template <class T, class CFn>
-void same_optional(const gmp::Result<std::optional<T>>& cpp, bool c_has, CFn c) {
+void same_optional(const gmsg::Result<std::optional<T>>& cpp, bool c_has, CFn c) {
     T v{};
     const int e = static_cast<int>(c(&v));
     if (!cpp) {
@@ -122,7 +122,7 @@ void cross_check(const std::vector<std::string>& valid, CApi<C> capi, CViewApi<C
     for (const auto& in : mutations(valid, seed)) {
         INFO("text: \"" << in << "\"");
         const auto* data = reinterpret_cast<const std::uint8_t*>(in.data());
-        const auto cpp = Cpp::decode(gmp::bytes_view(data, in.size()));
+        const auto cpp = Cpp::decode(gmsg::bytes_view(data, in.size()));
         C c;
         const auto ce = capi.decode(data, in.size(), &c);
         REQUIRE(static_cast<int>(ce) == (cpp ? 0 : code(cpp.error())));
@@ -139,7 +139,7 @@ void cross_check(const std::vector<std::string>& valid, CApi<C> capi, CViewApi<C
                 REQUIRE(cn == *n);
                 CHECK(std::memcmp(a.data(), b.data(), cn) == 0);
                 if (cn > 0) {
-                    const auto small = cpp->encode(gmp::mut_bytes(a.data(), *n - 1));
+                    const auto small = cpp->encode(gmsg::mut_bytes(a.data(), *n - 1));
                     CHECK(static_cast<int>(capi.encode(&c, b.data(), cn - 1, nullptr)) == code(small.error()));
                 }
             }
@@ -147,7 +147,7 @@ void cross_check(const std::vector<std::string>& valid, CApi<C> capi, CViewApi<C
             ++bad;
         }
         // views tokenise and always succeed; accessors parse on demand
-        const auto cppv = CppView::from(gmp::bytes_view(data, in.size()));
+        const auto cppv = CppView::from(gmsg::bytes_view(data, in.size()));
         REQUIRE(cppv);
         CV v;
         REQUIRE(vapi.from(data, in.size(), &v) == GMSG_OK);
@@ -263,7 +263,7 @@ TEST_CASE("generated C text messages match C++: value limits on tokens (struct, 
     std::array<std::uint8_t, 64> buf{};
     const auto n = a.encode(buf);
     REQUIRE_FALSE(n);
-    CHECK(n.error() == gmp::Error::ValueOutOfLimits);
+    CHECK(n.error() == gmsg::Error::ValueOutOfLimits);
     CHECK(static_cast<int>(test_limits_line_encode(&b, buf.data(), buf.size(), nullptr)) == code(n.error()));
 }
 

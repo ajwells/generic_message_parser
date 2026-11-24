@@ -33,7 +33,7 @@ TEST_CASE("computed values read the same on struct and view") {
     std::array<std::uint8_t, 32> buf{};
     auto n = p.encode(buf);
     REQUIRE(n);
-    auto v = PackedView::from(gmp::bytes_view(buf.data(), *n));
+    auto v = PackedView::from(gmsg::bytes_view(buf.data(), *n));
     REQUIRE(v);
 
     CHECK(p.rgb() == 0x123456u);

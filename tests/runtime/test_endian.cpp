@@ -7,7 +7,7 @@
 #include "gmp/containers.hpp"
 #include "gmp/endian.hpp"
 
-using namespace gmp;
+using namespace gmsg;
 
 TEST_CASE("load/store integers in both byte orders") {
     std::array<std::uint8_t, 4> b{0x12, 0x34, 0x56, 0x78};

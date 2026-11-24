@@ -61,8 +61,8 @@ std::string nmea_wire() {
     return out;
 }
 
-gmp::bytes_view bytes(const std::vector<std::uint8_t>& v) { return {v.data(), v.size()}; }
-gmp::bytes_view bytes(const std::string& s) { return gmp::as_bytes(s.data(), s.size()); }
+gmsg::bytes_view bytes(const std::vector<std::uint8_t>& v) { return {v.data(), v.size()}; }
+gmsg::bytes_view bytes(const std::string& s) { return gmsg::as_bytes(s.data(), s.size()); }
 
 struct App {
     std::vector<std::string> log;
@@ -71,7 +71,7 @@ struct App {
         log.push_back("command " + std::to_string(v.opcode()) + " id " + std::string(tel::to_string(h.msg_id())));
     }
     void on_any(const tel::BinaryLink::AnyView& v) { log.push_back("frame " + std::to_string(v.index())); }
-    void on_error(const gmp::FrameError& e) { log.push_back("error " + std::string(gmp::to_string(e.error))); }
+    void on_error(const gmsg::FrameError& e) { log.push_back("error " + std::string(gmsg::to_string(e.error))); }
     void on_gga(const nm::GGAView& v) const { const_cast<App*>(this)->log.push_back("gga " + std::to_string(*v.satellites())); }
 };
 
@@ -101,10 +101,10 @@ struct Device {
 TEST_CASE("make_stream stores an overload set: feed(bytes) without a handler") {
     const auto wire = telemetry_wire();
     std::vector<std::string> seen;
-    auto parser = tel::BinaryLink::make_stream(gmp::overloaded{
+    auto parser = tel::BinaryLink::make_stream(gmsg::overloaded{
         [&](const tel::StatusView& v) { seen.push_back("status " + std::to_string(v.voltage())); },
         [&](const tel::BinaryLink::HeaderView& h, const tel::CommandView&) { seen.push_back("command len " + std::to_string(h.len())); },
-        [&](const gmp::FrameError& e) { seen.push_back(std::string(gmp::to_string(e.error))); },
+        [&](const gmsg::FrameError& e) { seen.push_back(std::string(gmsg::to_string(e.error))); },
     });
     for (std::size_t i = 0; i < wire.size(); i += 3)  // chunked
         parser.feed(bytes(wire).subspan(i, std::min<std::size_t>(3, wire.size() - i)));

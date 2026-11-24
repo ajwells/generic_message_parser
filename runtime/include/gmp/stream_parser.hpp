@@ -2,12 +2,12 @@
 // gmp/stream_parser.hpp - incremental frame extraction from an arbitrary byte stream.
 //
 // `Protocol` (normally generated) must provide:
-//     static gmp::FrameScan scan(gmp::bytes_view buffer);
-//     template <class H> static gmp::Error process(gmp::mut_bytes frame, H& handler);
+//     static gmsg::FrameScan scan(gmsg::bytes_view buffer);
+//     template <class H> static gmsg::Error process(gmsg::mut_bytes frame, H& handler);
 //
 // The parser owns a fixed buffer of `Capacity` bytes (no heap). Data can be pushed in chunks of any
 // size; complete frames are validated, matched to a message type and passed to the handler. Garbage and corrupt frames are
-// skipped and reported through `handler(gmp::FrameError{...})` when the handler accepts it.
+// skipped and reported through `handler(gmsg::FrameError{...})` when the handler accepts it.
 //
 // The handler is either passed on every call (`feed(bytes, handler)`, Handler = void) or stored in the parser
 // (`Handler` = its type, or a reference to it): then `feed(bytes)` / `next()` take no handler. Generated protocols
@@ -34,7 +34,7 @@
 #include "gmp/polled.hpp"
 #include "gmp/result.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 /// Delivered to stream handlers when bytes are dropped.
 struct FrameError {
@@ -42,7 +42,7 @@ struct FrameError {
     bytes_view data;  // the offending bytes (valid only during the callback)
 };
 
-/// Build an overload set from lambdas: `gmp::overloaded{[](AView){}, [](BView){}}`.
+/// Build an overload set from lambdas: `gmsg::overloaded{[](AView){}, [](BView){}}`.
 template <class... Ts>
 struct overloaded : Ts... {
     using Ts::operator()...;
@@ -489,4 +489,4 @@ private:
     [[no_unique_address]] Storage handler_{};
 };
 
-} // namespace gmp
+} // namespace gmsg

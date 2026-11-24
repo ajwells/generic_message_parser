@@ -34,7 +34,7 @@
   const state = (name) => (states[name] = states[name] || G.fromYaml(data.schemas[name]));
   const bytes = (hex) => D.parseHex(hex).bytes;
 
-  // ---- checksums: Studio vs gmp::checksum ---------------------------------------------------------
+  // ---- checksums: Studio vs gmsg::checksum ---------------------------------------------------------
   const inputs = [new TextEncoder().encode('123456789'), Uint8Array.from({ length: 256 }, (_, i) => (i * 7 + 3) & 0xFF)];
   for (const c of data.crossref.checksums) {
     T.test(`checksum ${c.algo} (input ${c.input})`, () => {
@@ -44,7 +44,7 @@
     });
   }
 
-  // ---- single messages: decode + gmp::print text ----------------------------------------------------
+  // ---- single messages: decode + gmsg::print text ----------------------------------------------------
   data.crossref.messages.forEach((c, i) => {
     T.test(`message ${c.schema} ${c.target} #${i}`, () => {
       needYaml();
@@ -80,7 +80,7 @@
       T.ok(p, 'protocol not found in the imported schema');
       const r = D.decodeProtocol(s, p, bytes(c.hex));
       const valid = r.items.filter((x) => x.type === 'frame' && !x.errors.length);
-      T.eqList(valid.map((f) => G.printer.frame(s, f, 'multi')), c.frames, 'valid frames (gmp::print text)');
+      T.eqList(valid.map((f) => G.printer.frame(s, f, 'multi')), c.frames, 'valid frames (gmsg::print text)');
     });
   });
 
@@ -126,7 +126,7 @@
       const r = G.exact.decodeProtocol(s, p, bytes(c.hex));
       T.ok(!r.compileErrors, 'gmpc errors: ' + JSON.stringify(r.compileErrors));
       const valid = r.items.filter((x) => x.type === 'frame' && !x.errors.length);
-      T.eqList(valid.map((f) => G.printer.frame(s, f, 'multi')), c.frames, 'valid frames (gmp::print text)');
+      T.eqList(valid.map((f) => G.printer.frame(s, f, 'multi')), c.frames, 'valid frames (gmsg::print text)');
       T.eqList(G.exact.compare(s, D.decodeProtocol(s, p, bytes(c.hex)), r), [], 'Quick and gmpc agree');
     });
   });

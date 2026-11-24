@@ -46,10 +46,10 @@ Bytes stuck_stream() {
 
 struct Recorder {
     std::vector<int> levels;
-    std::vector<gmp::Error> errors;
+    std::vector<gmsg::Error> errors;
     std::vector<std::size_t> error_sizes;
     void operator()(const tel::LogView& v) { levels.push_back(v.level()); }
-    void operator()(const gmp::FrameError& e) {
+    void operator()(const gmsg::FrameError& e) {
         errors.push_back(e.error);
         error_sizes.push_back(e.data.size());
     }
@@ -67,10 +67,10 @@ TEST_CASE("resync gives up an incomplete frame; the frames behind it are deliver
 
     REQUIRE(s.resync(r));
     REQUIRE(r.errors.size() == 1);
-    CHECK(r.errors[0] == gmp::Error::Truncated);
+    CHECK(r.errors[0] == gmsg::Error::Truncated);
     CHECK(r.error_sizes[0] == data.size());  // reported: the bytes of the incomplete frame (all that is buffered)
     CHECK(s.stats().resyncs == 1);
-    CHECK(s.last_error() == gmp::Error::Truncated);
+    CHECK(s.last_error() == gmsg::Error::Truncated);
 
     while (s.next(r)) {}  // resync only drops; the usual calls deliver what became complete
     CHECK(r.levels == std::vector<int>{1, 2});
@@ -97,7 +97,7 @@ TEST_CASE("flush drops everything buffered and reports it once") {
     REQUIRE(s.flush(r));
     CHECK(s.buffered() == 0);
     REQUIRE(r.errors.size() == 1);
-    CHECK(r.errors[0] == gmp::Error::Truncated);
+    CHECK(r.errors[0] == gmsg::Error::Truncated);
     CHECK(r.error_sizes[0] == data.size());
     CHECK(s.stats().flushes == 1);
     CHECK(s.stats().bytes_skipped == data.size());
@@ -123,7 +123,7 @@ TEST_CASE("tick resyncs after the idle timeout, counted from the last bytes; the
     CHECK(r.errors.empty());
     now += 1;
     REQUIRE(s.tick(now, r));  // idle for 100: resync
-    CHECK(r.errors == std::vector<gmp::Error>{gmp::Error::Truncated});
+    CHECK(r.errors == std::vector<gmsg::Error>{gmsg::Error::Truncated});
     while (s.next(r)) {}
     CHECK(r.levels == std::vector<int>{1, 2});
     now += 500;
@@ -153,7 +153,7 @@ TEST_CASE("tick: timeout 0 is off; a stored handler and pull mode get the same r
             ++n;
         }
         CHECK(n == 2);
-        CHECK(s.last_error() == gmp::Error::BadSync);  // the rest of the bad frame was skipped while resyncing
+        CHECK(s.last_error() == gmsg::Error::BadSync);  // the rest of the bad frame was skipped while resyncing
     }
     {
         // stored handler: errors go to it
@@ -163,7 +163,7 @@ TEST_CASE("tick: timeout 0 is off; a stored handler and pull mode get the same r
         (void)s.feed(data);
         CHECK_FALSE(s.tick(0));
         CHECK(s.tick(5));
-        CHECK(r.errors.front() == gmp::Error::Truncated);
+        CHECK(r.errors.front() == gmsg::Error::Truncated);
         while (s.next()) {}
         CHECK(r.levels == std::vector<int>{1, 2});
     }

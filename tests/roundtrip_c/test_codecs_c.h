@@ -50,7 +50,7 @@ static inline gmsg_error test_bcd_time_encode(gmsg_writer* w, const test_time* t
     return GMSG_OK;
 }
 
-/* Print hook (c: { print: test_time_print }): HH:MM:SS, as test::gmp_print. */
+/* Print hook (c: { print: test_time_print }): HH:MM:SS, as test::gmsg_print. */
 static inline void test_time_print(gmsg_printer* p, const test_time* t) {
     const char b[8] = {(char)('0' + t->h / 10 % 10), (char)('0' + t->h % 10), ':',
                        (char)('0' + t->m / 10 % 10), (char)('0' + t->m % 10), ':',

@@ -10,7 +10,7 @@
 
 #include "gmp/result.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 /// Vector with inline storage of N elements. T must be default constructible.
 template <class T, std::size_t N>
@@ -132,4 +132,4 @@ inline std::string_view strip_padding(std::string_view s, char pad) noexcept {
     return s;
 }
 
-} // namespace gmp
+} // namespace gmsg

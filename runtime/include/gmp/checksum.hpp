@@ -4,9 +4,9 @@
 // Every algorithm exposes the same static interface so generated code can use them uniformly:
 //     using value_type = <unsigned type>;
 //     static constexpr std::size_t size;                       // bytes on the wire
-//     static constexpr value_type compute(gmp::bytes_view);    // whole buffer
+//     static constexpr value_type compute(gmsg::bytes_view);    // whole buffer
 //     static constexpr value_type init();                      // incremental API
-//     static constexpr value_type update(value_type, gmp::bytes_view);
+//     static constexpr value_type update(value_type, gmsg::bytes_view);
 //     static constexpr value_type finish(value_type);
 
 #include <array>
@@ -15,7 +15,7 @@
 
 #include "gmp/result.hpp"
 
-namespace gmp::checksum {
+namespace gmsg::checksum {
 
 namespace detail {
 
@@ -220,4 +220,4 @@ struct fletcher8_ubx {
     static constexpr value_type compute(bytes_view d) noexcept { return update(init(), d); }
 };
 
-} // namespace gmp::checksum
+} // namespace gmsg::checksum

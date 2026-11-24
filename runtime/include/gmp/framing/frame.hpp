@@ -8,7 +8,7 @@
 
 #include "gmp/result.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 /// Result of scanning a buffer that starts at the current stream position.
 struct FrameScan {
@@ -69,4 +69,4 @@ constexpr bool matches_at(bytes_view buf, std::size_t at, const Pattern& pat) no
 
 } // namespace detail
 
-} // namespace gmp
+} // namespace gmsg

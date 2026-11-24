@@ -14,7 +14,7 @@ checksums and message selection. `gmpc` turns it into one header (`<schema>.gmp.
 
 The runtime is header-only C++23 (`std::expected`), with **no heap, no exceptions, no RTTI**, so the generated code
 runs on microcontrollers and desktops alike. Keep that in mind: never suggest `std::vector`, `std::string` or
-exceptions in code that works with GMP types; GMP uses `gmp::static_vector`, `gmp::static_string` and `gmp::Result<T>`.
+exceptions in code that works with GMP types; GMP uses `gmsg::static_vector`, `gmsg::static_string` and `gmsg::Result<T>`.
 
 ## Workflow
 
@@ -139,23 +139,23 @@ s.state.armed = true;
 s.state.mode = acme::link::Mode::run;
 s.samples = {1, 2, 3};                         // `count` is derived from the container
 std::array<std::uint8_t, acme::link::Link::max_frame> buf{};
-gmp::Result<std::size_t> n = acme::link::Link::encode(s, buf);
-if (!n) { /* gmp::to_string(n.error()) */ }
+gmsg::Result<std::size_t> n = acme::link::Link::encode(s, buf);
+if (!n) { /* gmsg::to_string(n.error()) */ }
 
 // Whole buffer (datagram): returns a std::variant of views
-if (auto v = acme::link::Link::parse(gmp::bytes_view(buf.data(), *n)))
+if (auto v = acme::link::Link::parse(gmsg::bytes_view(buf.data(), *n)))
     if (auto* st = std::get_if<acme::link::StatusView>(&*v))
         std::printf("%.3f V\n", st->voltage_scaled());
 
 // Byte stream (UART etc.): feed chunks of any size; garbage and bad frames are skipped
 acme::link::Link::Stream<> stream;
-stream.feed(chunk, gmp::overloaded{
+stream.feed(chunk, gmsg::overloaded{
     [](const acme::link::StatusView& v) { /* valid only during this call; to_struct() to keep */ },
-    [](const gmp::FrameError& e) { /* optional: e.error, e.data */ },
+    [](const gmsg::FrameError& e) { /* optional: e.error, e.data */ },
 });
 
 // Store the handler in the parser, so the receive path (UART driver, socket loop) only passes bytes:
-auto bound = acme::link::Link::make_stream(gmp::overloaded{ /* same lambdas */ });   // compile-time, zero cost
+auto bound = acme::link::Link::make_stream(gmsg::overloaded{ /* same lambdas */ });   // compile-time, zero cost
 bound.feed(chunk);
 acme::link::Link::CallbackStream<> link;          // runtime listeners; a named type, usable as a member/global
 link.on<&App::on_status>(app)                     // slot chosen from the last parameter: a View, AnyView or FrameError
@@ -168,19 +168,19 @@ while (auto m = parser.poll()) { std::visit(handlers, *m); }   // also poll_fram
 auto reply = link.poll_for<acme::link::StatusView>();          // (struct copy), poll_event(), poll_for<V>()
 
 // A message on its own, no framing
-auto st = acme::link::Status::decode(bytes);     // gmp::Result<Status>
-auto view = acme::link::StatusView::from(bytes); // gmp::Result<StatusView>
+auto st = acme::link::Status::decode(bytes);     // gmsg::Result<Status>
+auto view = acme::link::StatusView::from(bytes); // gmsg::Result<StatusView>
 ```
 
 **Printing for logs and debugging:** don't hand-write printf chains for every field. Every struct, view and bits group
-has `print_to()`, so `gmp::println(msg, stdout)` dumps all fields, with enums as `run (0x01)` (undeclared values:
+has `print_to()`, so `gmsg::println(msg, stdout)` dumps all fields, with enums as `run (0x01)` (undeclared values:
 `<unknown> (0x07)`), scaled values as `1234 (12.34 V)`, bytes as hex and absent conditional fields as `<absent>`.
-Sinks are `FILE*`, a `char[N]` / `std::span<char>` buffer, `gmp::static_string<N>` or `std::string` (appends), any
-`std::ostream`, or a callable taking `std::string_view`. Use `{.style = gmp::PrintStyle::single_line}` for one line
+Sinks are `FILE*`, a `char[N]` / `std::span<char>` buffer, `gmsg::static_string<N>` or `std::string` (appends), any
+`std::ostream`, or a callable taking `std::string_view`. Use `{.style = gmsg::PrintStyle::single_line}` for one line
 per message. It never allocates. Bounded sinks keep what fits and return `BufferFull`. Custom types print through
-`void gmp_print(gmp::Printer&, const T&)` next to the type. Details: "Printing" in `references/cpp-api.md`.
+`void gmsg_print(gmsg::Printer&, const T&)` next to the type. Details: "Printing" in `references/cpp-api.md`.
 
-Errors are values (`gmp::Result<T>` = `std::expected<T, gmp::Error>`): `Truncated`, `BadSync`, `BadChecksum`,
+Errors are values (`gmsg::Result<T>` = `std::expected<T, gmsg::Error>`): `Truncated`, `BadSync`, `BadChecksum`,
 `BadLength`, `BadDelimiter`, `BadConst`, `OutOfRange`, `UnknownType`, `UnknownEnum`, `ValueOutOfLimits`,
 `BufferFull`, `ParseError`, `MissingField`. Full API and streaming details: `references/cpp-api.md`.
 
@@ -198,12 +198,12 @@ Errors are values (`gmp::Result<T>` = `std::expected<T, gmp::Error>`): `Truncate
 - **Raw vs scaled:** a field with `scale` keeps its raw integer member; use `<name>_scaled()` / `set_<name>_scaled()`.
 - **Name collisions:** field names that clash with C++ keywords or generated members get a `_` suffix (`data` → `data_`).
 - **Views borrow the buffer.** In a stream handler the view points into the parser's buffer and dies after the call.
-- **Escaped protocols unescape in place**, so their `parse` / `decode` take a mutable span (`gmp::mut_bytes`).
+- **Escaped protocols unescape in place**, so their `parse` / `decode` take a mutable span (`gmsg::mut_bytes`).
 - **Expressions** (`when`, `length`, `count`, `computed`) may only reference earlier, non-conditional fields;
   enum constants are written `Mode.fault`. There is no ternary operator.
 - **Lengths with escaping:** a length counts unescaped bytes by default. `counts: wire` (escaped bytes) is only
   allowed with `covers: body` or `body_checksum`, because a length that counts its own escaping cannot always be encoded.
-- **Text protocols** (`format: text`): fields are tokens; view accessors parse on demand and return `gmp::Result<T>`;
+- **Text protocols** (`format: text`): fields are tokens; view accessors parse on demand and return `gmsg::Result<T>`;
   use `optional: true` for fields that may be empty, `width` / `precision` to control encoding.
 - **Strict enums:** by default undeclared enum values decode fine (check with `is_known()`); set `strict: true` on the
   enum or `defaults.strict_enums: true` to reject them.
@@ -224,7 +224,7 @@ Errors are values (`gmp::Result<T>` = `std::expected<T, gmp::Error>`): `Truncate
   `exact_size: true` on the protocol to reject it with `BadLength` (recommended when the checksum doesn't cover the
   length).
 - **Stored handlers:** `make_stream(h)` / `StreamWith<H>` keep a compile-time handler; `CallbackStream` keeps runtime
-  listeners (one per message, plus `AnyView` for every frame and `gmp::FrameError`; registering again replaces).
+  listeners (one per message, plus `AnyView` for every frame and `gmsg::FrameError`; registering again replaces).
   Contexts passed to `on<Fn>(ctx)` must outlive the registration. Messages and enums can't be named `Header`,
   `HeaderView`, `AnyView`, `AnyMessage`, `Frame`, `Stream`, `StreamWith`, `Callbacks`, `CallbackStream` or `Received` (the
   names declared inside each generated protocol struct).

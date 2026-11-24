@@ -1,4 +1,4 @@
-// print.js - mirrors gmp::print (runtime/include/gmp/print.hpp) for the decode tester: the same text the generated
+// print.js - mirrors gmsg::print (runtime/include/gmp/print.hpp) for the decode tester: the same text the generated
 // print_to() methods produce for a decoded message, in multi-line or single-line style.
 (function (G) {
   'use strict';
@@ -64,7 +64,7 @@
         break;
       }
       case 'message': message(p, s, n); break;
-      default: p.put('<?>');  // custom codecs print through a gmp_print() hook in C++
+      default: p.put('<?>');  // custom codecs print through a gmsg_print() hook in C++
     }
   }
 
@@ -95,7 +95,7 @@
   G.printer = {
     fmtGeneral,
     fmtShortest,
-    /** gmp::print output for a decoded frame (null when the frame has errors: C++ decode would fail). */
+    /** gmsg::print output for a decoded frame (null when the frame has errors: C++ decode would fail). */
     frame(s, frame, style) {
       if (frame.errors && frame.errors.length) return null;
       // the gmpc engine (exact.js): the generated code's own print text

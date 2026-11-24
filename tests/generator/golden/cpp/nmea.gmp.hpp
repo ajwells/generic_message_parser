@@ -62,84 +62,84 @@ struct GGA {
     static constexpr std::size_t token_count = 14;
     static constexpr char separator = ',';
 
-    gmp::VoidResult read_text([[maybe_unused]] std::span<const std::string_view> tok) noexcept {
+    gmsg::VoidResult read_text([[maybe_unused]] std::span<const std::string_view> tok) noexcept {
         {
             const std::string_view t0 = 0 < tok.size() ? tok[0] : std::string_view{};
-            auto v = gmp::text::parse_float<double>(t0);
-            if (!v) return gmp::fail(v.error());
+            auto v = gmsg::text::parse_float<double>(t0);
+            if (!v) return gmsg::fail(v.error());
             utc_time = *v;
         }
         {
             const std::string_view t1 = 1 < tok.size() ? tok[1] : std::string_view{};
             if (t1.empty()) { latitude.reset(); } else {
-                auto v = gmp::text::parse_float<double>(t1);
-                if (!v) return gmp::fail(v.error());
+                auto v = gmsg::text::parse_float<double>(t1);
+                if (!v) return gmsg::fail(v.error());
                 latitude = *v;
             }
         }
         {
             const std::string_view t2 = 2 < tok.size() ? tok[2] : std::string_view{};
             if (t2.empty()) { lat_hemi.reset(); } else {
-                auto v = gmp::text::parse_char(t2);
-                if (!v) return gmp::fail(v.error());
+                auto v = gmsg::text::parse_char(t2);
+                if (!v) return gmsg::fail(v.error());
                 lat_hemi = *v;
             }
         }
         {
             const std::string_view t3 = 3 < tok.size() ? tok[3] : std::string_view{};
             if (t3.empty()) { longitude.reset(); } else {
-                auto v = gmp::text::parse_float<double>(t3);
-                if (!v) return gmp::fail(v.error());
+                auto v = gmsg::text::parse_float<double>(t3);
+                if (!v) return gmsg::fail(v.error());
                 longitude = *v;
             }
         }
         {
             const std::string_view t4 = 4 < tok.size() ? tok[4] : std::string_view{};
             if (t4.empty()) { lon_hemi.reset(); } else {
-                auto v = gmp::text::parse_char(t4);
-                if (!v) return gmp::fail(v.error());
+                auto v = gmsg::text::parse_char(t4);
+                if (!v) return gmsg::fail(v.error());
                 lon_hemi = *v;
             }
         }
         {
             const std::string_view t5 = 5 < tok.size() ? tok[5] : std::string_view{};
-            auto v = gmp::text::parse_int<std::uint8_t>(t5, 10).transform([](auto x) { return static_cast<FixQuality>(x); });
-            if (!v) return gmp::fail(v.error());
+            auto v = gmsg::text::parse_int<std::uint8_t>(t5, 10).transform([](auto x) { return static_cast<FixQuality>(x); });
+            if (!v) return gmsg::fail(v.error());
             quality = *v;
         }
         {
             const std::string_view t6 = 6 < tok.size() ? tok[6] : std::string_view{};
-            auto v = gmp::text::parse_int<std::uint8_t>(t6, 10);
-            if (!v) return gmp::fail(v.error());
+            auto v = gmsg::text::parse_int<std::uint8_t>(t6, 10);
+            if (!v) return gmsg::fail(v.error());
             satellites = *v;
         }
         {
             const std::string_view t7 = 7 < tok.size() ? tok[7] : std::string_view{};
             if (t7.empty()) { hdop.reset(); } else {
-                auto v = gmp::text::parse_float<float>(t7);
-                if (!v) return gmp::fail(v.error());
+                auto v = gmsg::text::parse_float<float>(t7);
+                if (!v) return gmsg::fail(v.error());
                 hdop = *v;
             }
         }
         {
             const std::string_view t8 = 8 < tok.size() ? tok[8] : std::string_view{};
             if (t8.empty()) { altitude.reset(); } else {
-                auto v = gmp::text::parse_float<double>(t8);
-                if (!v) return gmp::fail(v.error());
+                auto v = gmsg::text::parse_float<double>(t8);
+                if (!v) return gmsg::fail(v.error());
                 altitude = *v;
             }
         }
         {
             const std::string_view t9 = 9 < tok.size() ? tok[9] : std::string_view{};
             if (t9.empty()) { altitude_unit.reset(); } else {
-                auto v = gmp::text::parse_char(t9);
-                if (!v) return gmp::fail(v.error());
+                auto v = gmsg::text::parse_char(t9);
+                if (!v) return gmsg::fail(v.error());
                 altitude_unit = *v;
             }
         }
         return {};
     }
-    gmp::VoidResult write_text([[maybe_unused]] gmp::text::TextWriter& w) const noexcept {
+    gmsg::VoidResult write_text([[maybe_unused]] gmsg::text::TextWriter& w) const noexcept {
         if (auto e = w.float_token(utc_time, 2, 9); !e) return e;
         if (!latitude) { if (auto e = w.empty_token(); !e) return e; } else {
             if (auto e = w.float_token(*latitude, 4, 9); !e) return e;
@@ -169,43 +169,43 @@ struct GGA {
         }
         return {};
     }
-    static gmp::Result<GGA> decode_text(std::string_view s) noexcept {
+    static gmsg::Result<GGA> decode_text(std::string_view s) noexcept {
         std::array<std::string_view, 14> tok{};
-        const std::size_t n = gmp::text::split(s, separator, tok);
+        const std::size_t n = gmsg::text::split(s, separator, tok);
         GGA m{};
-        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmp::fail(e.error());
+        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmsg::fail(e.error());
         return m;
     }
-    static gmp::Result<GGA> decode(gmp::bytes_view data) noexcept { return decode_text(gmp::as_string_view(data)); }
+    static gmsg::Result<GGA> decode(gmsg::bytes_view data) noexcept { return decode_text(gmsg::as_string_view(data)); }
     /// Like decode_text(s); `extra` receives the number of tokens after the message's own (which decode ignores).
-    static gmp::Result<GGA> decode_text(std::string_view s, std::size_t& extra) noexcept {
+    static gmsg::Result<GGA> decode_text(std::string_view s, std::size_t& extra) noexcept {
         std::array<std::string_view, 14> tok{};
-        const std::size_t n = gmp::text::split(s, separator, tok);
+        const std::size_t n = gmsg::text::split(s, separator, tok);
         GGA m{};
-        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmp::fail(e.error());
+        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmsg::fail(e.error());
         extra = n > token_count ? n - token_count : 0;
         return m;
     }
-    static gmp::Result<GGA> decode(gmp::bytes_view data, std::size_t& extra) noexcept { return decode_text(gmp::as_string_view(data), extra); }
-    gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
-        gmp::text::TextWriter w(out, separator);
-        if (auto e = write_text(w); !e) return gmp::fail(e.error());
+    static gmsg::Result<GGA> decode(gmsg::bytes_view data, std::size_t& extra) noexcept { return decode_text(gmsg::as_string_view(data), extra); }
+    gmsg::Result<std::size_t> encode(gmsg::mut_bytes out) const noexcept {
+        gmsg::text::TextWriter w(out, separator);
+        if (auto e = write_text(w); !e) return gmsg::fail(e.error());
         return w.position();
     }
-    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("GGA");
-        gmp_p.field("utc_time", this->utc_time);
-        gmp_p.field("latitude", this->latitude);
-        gmp_p.field("lat_hemi", this->lat_hemi);
-        gmp_p.field("longitude", this->longitude);
-        gmp_p.field("lon_hemi", this->lon_hemi);
-        gmp_p.field("quality", this->quality);
-        gmp_p.field("satellites", this->satellites);
-        gmp_p.field("hdop", this->hdop);
-        gmp_p.field("altitude", this->altitude);
-        gmp_p.field("altitude_unit", this->altitude_unit);
-        gmp_p.end();
+    /// Human readable dump (see gmp/print.hpp): gmsg::print(msg, stdout).
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("GGA");
+        gmsg_p.field("utc_time", this->utc_time);
+        gmsg_p.field("latitude", this->latitude);
+        gmsg_p.field("lat_hemi", this->lat_hemi);
+        gmsg_p.field("longitude", this->longitude);
+        gmsg_p.field("lon_hemi", this->lon_hemi);
+        gmsg_p.field("quality", this->quality);
+        gmsg_p.field("satellites", this->satellites);
+        gmsg_p.field("hdop", this->hdop);
+        gmsg_p.field("altitude", this->altitude);
+        gmsg_p.field("altitude_unit", this->altitude_unit);
+        gmsg_p.end();
     }
     bool operator==(const GGA&) const = default;
 };
@@ -216,164 +216,164 @@ public:
     static constexpr std::size_t token_count = 14;
     static constexpr char separator = ',';
 
-    [[nodiscard]] static gmp::Result<GGAView> from(std::string_view s) noexcept {
+    [[nodiscard]] static gmsg::Result<GGAView> from(std::string_view s) noexcept {
         GGAView v;
-        v.gmp_text_ = s;
-        v.gmp_ntok_ = gmp::text::split(s, separator, v.gmp_tok_);
+        v.gmsg_text_ = s;
+        v.gmsg_ntok_ = gmsg::text::split(s, separator, v.gmsg_tok_);
         return v;
     }
-    [[nodiscard]] static gmp::Result<GGAView> from(gmp::bytes_view data) noexcept { return from(gmp::as_string_view(data)); }
-    [[nodiscard]] static GGAView unchecked(gmp::bytes_view data) noexcept { return *from(data); }
+    [[nodiscard]] static gmsg::Result<GGAView> from(gmsg::bytes_view data) noexcept { return from(gmsg::as_string_view(data)); }
+    [[nodiscard]] static GGAView unchecked(gmsg::bytes_view data) noexcept { return *from(data); }
 
-    [[nodiscard]] std::string_view raw() const noexcept { return gmp_text_; }
+    [[nodiscard]] std::string_view raw() const noexcept { return gmsg_text_; }
     /// Number of tokens actually present in the record (may differ from token_count).
-    [[nodiscard]] std::size_t present_tokens() const noexcept { return gmp_ntok_; }
+    [[nodiscard]] std::size_t present_tokens() const noexcept { return gmsg_ntok_; }
     /// Tokens after the message's own (ignored; a protocol with exact_size rejects them).
-    [[nodiscard]] std::size_t extra_tokens() const noexcept { return gmp_ntok_ > token_count ? gmp_ntok_ - token_count : 0; }
-    [[nodiscard]] std::string_view token(std::size_t i) const noexcept { return i < token_count ? gmp_tok_[i] : std::string_view{}; }
+    [[nodiscard]] std::size_t extra_tokens() const noexcept { return gmsg_ntok_ > token_count ? gmsg_ntok_ - token_count : 0; }
+    [[nodiscard]] std::string_view token(std::size_t i) const noexcept { return i < token_count ? gmsg_tok_[i] : std::string_view{}; }
 
-    [[nodiscard]] gmp::Result<double> utc_time() const noexcept { return gmp::text::parse_float<double>(gmp_tok_[0]); }
-    [[nodiscard]] gmp::Result<std::optional<double>> latitude() const noexcept {
-        if (gmp_tok_[1].empty()) return std::optional<double>{};
-        auto v = gmp::text::parse_float<double>(gmp_tok_[1]);
-        if (!v) return gmp::fail(v.error());
+    [[nodiscard]] gmsg::Result<double> utc_time() const noexcept { return gmsg::text::parse_float<double>(gmsg_tok_[0]); }
+    [[nodiscard]] gmsg::Result<std::optional<double>> latitude() const noexcept {
+        if (gmsg_tok_[1].empty()) return std::optional<double>{};
+        auto v = gmsg::text::parse_float<double>(gmsg_tok_[1]);
+        if (!v) return gmsg::fail(v.error());
         return std::optional<double>(std::move(*v));
     }
-    [[nodiscard]] gmp::Result<std::optional<char>> lat_hemi() const noexcept {
-        if (gmp_tok_[2].empty()) return std::optional<char>{};
-        auto v = gmp::text::parse_char(gmp_tok_[2]);
-        if (!v) return gmp::fail(v.error());
+    [[nodiscard]] gmsg::Result<std::optional<char>> lat_hemi() const noexcept {
+        if (gmsg_tok_[2].empty()) return std::optional<char>{};
+        auto v = gmsg::text::parse_char(gmsg_tok_[2]);
+        if (!v) return gmsg::fail(v.error());
         return std::optional<char>(std::move(*v));
     }
-    [[nodiscard]] gmp::Result<std::optional<double>> longitude() const noexcept {
-        if (gmp_tok_[3].empty()) return std::optional<double>{};
-        auto v = gmp::text::parse_float<double>(gmp_tok_[3]);
-        if (!v) return gmp::fail(v.error());
+    [[nodiscard]] gmsg::Result<std::optional<double>> longitude() const noexcept {
+        if (gmsg_tok_[3].empty()) return std::optional<double>{};
+        auto v = gmsg::text::parse_float<double>(gmsg_tok_[3]);
+        if (!v) return gmsg::fail(v.error());
         return std::optional<double>(std::move(*v));
     }
-    [[nodiscard]] gmp::Result<std::optional<char>> lon_hemi() const noexcept {
-        if (gmp_tok_[4].empty()) return std::optional<char>{};
-        auto v = gmp::text::parse_char(gmp_tok_[4]);
-        if (!v) return gmp::fail(v.error());
+    [[nodiscard]] gmsg::Result<std::optional<char>> lon_hemi() const noexcept {
+        if (gmsg_tok_[4].empty()) return std::optional<char>{};
+        auto v = gmsg::text::parse_char(gmsg_tok_[4]);
+        if (!v) return gmsg::fail(v.error());
         return std::optional<char>(std::move(*v));
     }
-    [[nodiscard]] gmp::Result<FixQuality> quality() const noexcept { return gmp::text::parse_int<std::uint8_t>(gmp_tok_[5], 10).transform([](auto x) { return static_cast<FixQuality>(x); }); }
-    [[nodiscard]] gmp::Result<std::uint8_t> satellites() const noexcept { return gmp::text::parse_int<std::uint8_t>(gmp_tok_[6], 10); }
-    [[nodiscard]] gmp::Result<std::optional<float>> hdop() const noexcept {
-        if (gmp_tok_[7].empty()) return std::optional<float>{};
-        auto v = gmp::text::parse_float<float>(gmp_tok_[7]);
-        if (!v) return gmp::fail(v.error());
+    [[nodiscard]] gmsg::Result<FixQuality> quality() const noexcept { return gmsg::text::parse_int<std::uint8_t>(gmsg_tok_[5], 10).transform([](auto x) { return static_cast<FixQuality>(x); }); }
+    [[nodiscard]] gmsg::Result<std::uint8_t> satellites() const noexcept { return gmsg::text::parse_int<std::uint8_t>(gmsg_tok_[6], 10); }
+    [[nodiscard]] gmsg::Result<std::optional<float>> hdop() const noexcept {
+        if (gmsg_tok_[7].empty()) return std::optional<float>{};
+        auto v = gmsg::text::parse_float<float>(gmsg_tok_[7]);
+        if (!v) return gmsg::fail(v.error());
         return std::optional<float>(std::move(*v));
     }
-    [[nodiscard]] gmp::Result<std::optional<double>> altitude() const noexcept {
-        if (gmp_tok_[8].empty()) return std::optional<double>{};
-        auto v = gmp::text::parse_float<double>(gmp_tok_[8]);
-        if (!v) return gmp::fail(v.error());
+    [[nodiscard]] gmsg::Result<std::optional<double>> altitude() const noexcept {
+        if (gmsg_tok_[8].empty()) return std::optional<double>{};
+        auto v = gmsg::text::parse_float<double>(gmsg_tok_[8]);
+        if (!v) return gmsg::fail(v.error());
         return std::optional<double>(std::move(*v));
     }
-    [[nodiscard]] gmp::Result<std::optional<char>> altitude_unit() const noexcept {
-        if (gmp_tok_[9].empty()) return std::optional<char>{};
-        auto v = gmp::text::parse_char(gmp_tok_[9]);
-        if (!v) return gmp::fail(v.error());
+    [[nodiscard]] gmsg::Result<std::optional<char>> altitude_unit() const noexcept {
+        if (gmsg_tok_[9].empty()) return std::optional<char>{};
+        auto v = gmsg::text::parse_char(gmsg_tok_[9]);
+        if (!v) return gmsg::fail(v.error());
         return std::optional<char>(std::move(*v));
     }
 
     /// Human readable dump (see gmp/print.hpp); same output as the struct.
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("GGA");
-        gmp_p.field("utc_time", this->utc_time());
-        gmp_p.field("latitude", this->latitude());
-        gmp_p.field("lat_hemi", this->lat_hemi());
-        gmp_p.field("longitude", this->longitude());
-        gmp_p.field("lon_hemi", this->lon_hemi());
-        gmp_p.field("quality", this->quality());
-        gmp_p.field("satellites", this->satellites());
-        gmp_p.field("hdop", this->hdop());
-        gmp_p.field("altitude", this->altitude());
-        gmp_p.field("altitude_unit", this->altitude_unit());
-        gmp_p.end();
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("GGA");
+        gmsg_p.field("utc_time", this->utc_time());
+        gmsg_p.field("latitude", this->latitude());
+        gmsg_p.field("lat_hemi", this->lat_hemi());
+        gmsg_p.field("longitude", this->longitude());
+        gmsg_p.field("lon_hemi", this->lon_hemi());
+        gmsg_p.field("quality", this->quality());
+        gmsg_p.field("satellites", this->satellites());
+        gmsg_p.field("hdop", this->hdop());
+        gmsg_p.field("altitude", this->altitude());
+        gmsg_p.field("altitude_unit", this->altitude_unit());
+        gmsg_p.end();
     }
 
-    [[nodiscard]] gmp::Result<GGA> to_struct() const noexcept { return GGA::decode_text(gmp_text_); }
+    [[nodiscard]] gmsg::Result<GGA> to_struct() const noexcept { return GGA::decode_text(gmsg_text_); }
 
 private:
-    std::string_view gmp_text_{};
-    std::array<std::string_view, 14> gmp_tok_{};
-    std::size_t gmp_ntok_ = 0;
+    std::string_view gmsg_text_{};
+    std::array<std::string_view, 14> gmsg_tok_{};
+    std::size_t gmsg_ntok_ = 0;
 };
 
 struct TXT {
     std::uint8_t total{};
     std::uint8_t number{};
     std::uint8_t severity{};
-    gmp::static_string<61> text{};
+    gmsg::static_string<61> text{};
 
     static constexpr std::size_t token_count = 4;
     static constexpr char separator = ',';
 
-    gmp::VoidResult read_text([[maybe_unused]] std::span<const std::string_view> tok) noexcept {
+    gmsg::VoidResult read_text([[maybe_unused]] std::span<const std::string_view> tok) noexcept {
         {
             const std::string_view t0 = 0 < tok.size() ? tok[0] : std::string_view{};
-            auto v = gmp::text::parse_int<std::uint8_t>(t0, 10);
-            if (!v) return gmp::fail(v.error());
+            auto v = gmsg::text::parse_int<std::uint8_t>(t0, 10);
+            if (!v) return gmsg::fail(v.error());
             total = *v;
         }
         {
             const std::string_view t1 = 1 < tok.size() ? tok[1] : std::string_view{};
-            auto v = gmp::text::parse_int<std::uint8_t>(t1, 10);
-            if (!v) return gmp::fail(v.error());
+            auto v = gmsg::text::parse_int<std::uint8_t>(t1, 10);
+            if (!v) return gmsg::fail(v.error());
             number = *v;
         }
         {
             const std::string_view t2 = 2 < tok.size() ? tok[2] : std::string_view{};
-            auto v = gmp::text::parse_int<std::uint8_t>(t2, 10);
-            if (!v) return gmp::fail(v.error());
+            auto v = gmsg::text::parse_int<std::uint8_t>(t2, 10);
+            if (!v) return gmsg::fail(v.error());
             severity = *v;
         }
         {
             const std::string_view t3 = 3 < tok.size() ? tok[3] : std::string_view{};
-            if (!text.assign(t3)) return gmp::fail(gmp::Error::OutOfRange);
+            if (!text.assign(t3)) return gmsg::fail(gmsg::Error::OutOfRange);
         }
         return {};
     }
-    gmp::VoidResult write_text([[maybe_unused]] gmp::text::TextWriter& w) const noexcept {
+    gmsg::VoidResult write_text([[maybe_unused]] gmsg::text::TextWriter& w) const noexcept {
         if (auto e = w.int_token(total, 10, 2); !e) return e;
         if (auto e = w.int_token(number, 10, 2); !e) return e;
         if (auto e = w.int_token(severity, 10, 2); !e) return e;
         if (auto e = w.token(std::string_view(text)); !e) return e;
         return {};
     }
-    static gmp::Result<TXT> decode_text(std::string_view s) noexcept {
+    static gmsg::Result<TXT> decode_text(std::string_view s) noexcept {
         std::array<std::string_view, 4> tok{};
-        const std::size_t n = gmp::text::split(s, separator, tok);
+        const std::size_t n = gmsg::text::split(s, separator, tok);
         TXT m{};
-        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmp::fail(e.error());
+        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmsg::fail(e.error());
         return m;
     }
-    static gmp::Result<TXT> decode(gmp::bytes_view data) noexcept { return decode_text(gmp::as_string_view(data)); }
+    static gmsg::Result<TXT> decode(gmsg::bytes_view data) noexcept { return decode_text(gmsg::as_string_view(data)); }
     /// Like decode_text(s); `extra` receives the number of tokens after the message's own (which decode ignores).
-    static gmp::Result<TXT> decode_text(std::string_view s, std::size_t& extra) noexcept {
+    static gmsg::Result<TXT> decode_text(std::string_view s, std::size_t& extra) noexcept {
         std::array<std::string_view, 4> tok{};
-        const std::size_t n = gmp::text::split(s, separator, tok);
+        const std::size_t n = gmsg::text::split(s, separator, tok);
         TXT m{};
-        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmp::fail(e.error());
+        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmsg::fail(e.error());
         extra = n > token_count ? n - token_count : 0;
         return m;
     }
-    static gmp::Result<TXT> decode(gmp::bytes_view data, std::size_t& extra) noexcept { return decode_text(gmp::as_string_view(data), extra); }
-    gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
-        gmp::text::TextWriter w(out, separator);
-        if (auto e = write_text(w); !e) return gmp::fail(e.error());
+    static gmsg::Result<TXT> decode(gmsg::bytes_view data, std::size_t& extra) noexcept { return decode_text(gmsg::as_string_view(data), extra); }
+    gmsg::Result<std::size_t> encode(gmsg::mut_bytes out) const noexcept {
+        gmsg::text::TextWriter w(out, separator);
+        if (auto e = write_text(w); !e) return gmsg::fail(e.error());
         return w.position();
     }
-    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("TXT");
-        gmp_p.field("total", this->total);
-        gmp_p.field("number", this->number);
-        gmp_p.field("severity", this->severity);
-        gmp_p.field("text", this->text);
-        gmp_p.end();
+    /// Human readable dump (see gmp/print.hpp): gmsg::print(msg, stdout).
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("TXT");
+        gmsg_p.field("total", this->total);
+        gmsg_p.field("number", this->number);
+        gmsg_p.field("severity", this->severity);
+        gmsg_p.field("text", this->text);
+        gmsg_p.end();
     }
     bool operator==(const TXT&) const = default;
 };
@@ -384,43 +384,43 @@ public:
     static constexpr std::size_t token_count = 4;
     static constexpr char separator = ',';
 
-    [[nodiscard]] static gmp::Result<TXTView> from(std::string_view s) noexcept {
+    [[nodiscard]] static gmsg::Result<TXTView> from(std::string_view s) noexcept {
         TXTView v;
-        v.gmp_text_ = s;
-        v.gmp_ntok_ = gmp::text::split(s, separator, v.gmp_tok_);
+        v.gmsg_text_ = s;
+        v.gmsg_ntok_ = gmsg::text::split(s, separator, v.gmsg_tok_);
         return v;
     }
-    [[nodiscard]] static gmp::Result<TXTView> from(gmp::bytes_view data) noexcept { return from(gmp::as_string_view(data)); }
-    [[nodiscard]] static TXTView unchecked(gmp::bytes_view data) noexcept { return *from(data); }
+    [[nodiscard]] static gmsg::Result<TXTView> from(gmsg::bytes_view data) noexcept { return from(gmsg::as_string_view(data)); }
+    [[nodiscard]] static TXTView unchecked(gmsg::bytes_view data) noexcept { return *from(data); }
 
-    [[nodiscard]] std::string_view raw() const noexcept { return gmp_text_; }
+    [[nodiscard]] std::string_view raw() const noexcept { return gmsg_text_; }
     /// Number of tokens actually present in the record (may differ from token_count).
-    [[nodiscard]] std::size_t present_tokens() const noexcept { return gmp_ntok_; }
+    [[nodiscard]] std::size_t present_tokens() const noexcept { return gmsg_ntok_; }
     /// Tokens after the message's own (ignored; a protocol with exact_size rejects them).
-    [[nodiscard]] std::size_t extra_tokens() const noexcept { return gmp_ntok_ > token_count ? gmp_ntok_ - token_count : 0; }
-    [[nodiscard]] std::string_view token(std::size_t i) const noexcept { return i < token_count ? gmp_tok_[i] : std::string_view{}; }
+    [[nodiscard]] std::size_t extra_tokens() const noexcept { return gmsg_ntok_ > token_count ? gmsg_ntok_ - token_count : 0; }
+    [[nodiscard]] std::string_view token(std::size_t i) const noexcept { return i < token_count ? gmsg_tok_[i] : std::string_view{}; }
 
-    [[nodiscard]] gmp::Result<std::uint8_t> total() const noexcept { return gmp::text::parse_int<std::uint8_t>(gmp_tok_[0], 10); }
-    [[nodiscard]] gmp::Result<std::uint8_t> number() const noexcept { return gmp::text::parse_int<std::uint8_t>(gmp_tok_[1], 10); }
-    [[nodiscard]] gmp::Result<std::uint8_t> severity() const noexcept { return gmp::text::parse_int<std::uint8_t>(gmp_tok_[2], 10); }
-    [[nodiscard]] std::string_view text() const noexcept { return gmp_tok_[3]; }
+    [[nodiscard]] gmsg::Result<std::uint8_t> total() const noexcept { return gmsg::text::parse_int<std::uint8_t>(gmsg_tok_[0], 10); }
+    [[nodiscard]] gmsg::Result<std::uint8_t> number() const noexcept { return gmsg::text::parse_int<std::uint8_t>(gmsg_tok_[1], 10); }
+    [[nodiscard]] gmsg::Result<std::uint8_t> severity() const noexcept { return gmsg::text::parse_int<std::uint8_t>(gmsg_tok_[2], 10); }
+    [[nodiscard]] std::string_view text() const noexcept { return gmsg_tok_[3]; }
 
     /// Human readable dump (see gmp/print.hpp); same output as the struct.
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("TXT");
-        gmp_p.field("total", this->total());
-        gmp_p.field("number", this->number());
-        gmp_p.field("severity", this->severity());
-        gmp_p.field("text", this->text());
-        gmp_p.end();
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("TXT");
+        gmsg_p.field("total", this->total());
+        gmsg_p.field("number", this->number());
+        gmsg_p.field("severity", this->severity());
+        gmsg_p.field("text", this->text());
+        gmsg_p.end();
     }
 
-    [[nodiscard]] gmp::Result<TXT> to_struct() const noexcept { return TXT::decode_text(gmp_text_); }
+    [[nodiscard]] gmsg::Result<TXT> to_struct() const noexcept { return TXT::decode_text(gmsg_text_); }
 
 private:
-    std::string_view gmp_text_{};
-    std::array<std::string_view, 4> gmp_tok_{};
-    std::size_t gmp_ntok_ = 0;
+    std::string_view gmsg_text_{};
+    std::array<std::string_view, 4> gmsg_tok_{};
+    std::size_t gmsg_ntok_ = 0;
 };
 
 struct Nmea {
@@ -435,99 +435,99 @@ struct Nmea {
     using AnyMessage = std::variant<GGA, TXT>;
     /// Incremental parser; Capacity must be >= max_frame. Pass the handler on each feed()/next() call.
     template <std::size_t Capacity = max_frame>
-    using Stream = gmp::StreamParser<Nmea, Capacity>;
+    using Stream = gmsg::StreamParser<Nmea, Capacity>;
     /// Incremental parser that stores its handler (a named type): feed(bytes) / next() without a handler.
     template <class Handler, std::size_t Capacity = max_frame>
-    using StreamWith = gmp::StreamParser<Nmea, Capacity, Handler>;
-    /// StreamWith for any handler, e.g. make_stream(gmp::overloaded{[](const AView&) {}, ...}).
+    using StreamWith = gmsg::StreamParser<Nmea, Capacity, Handler>;
+    /// StreamWith for any handler, e.g. make_stream(gmsg::overloaded{[](const AView&) {}, ...}).
     template <std::size_t Capacity = max_frame, class Handler>
     static auto make_stream(Handler&& h) { return StreamWith<std::decay_t<Handler>, Capacity>(std::forward<Handler>(h)); }
     /// A frame returned by Stream::poll_frame(). Views point into the parser buffer (valid until its next call).
     struct Received {
         AnyView message;
-        gmp::bytes_view bytes{};  ///< the whole frame as received
+        gmsg::bytes_view bytes{};  ///< the whole frame as received
         std::size_t extra = 0;  ///< tokens in the frame after the message (ignored)
     };
 
-    static constexpr gmp::DelimitedConfig framing_config{gmp::Pattern{{0x24}, 1}, gmp::Pattern{{0x0D, 0x0A}, 2}, gmp::EscapeConfig{}, max_frame};
-    static constexpr gmp::FrameScan scan(gmp::bytes_view b) noexcept { return gmp::scan_delimited(b, framing_config); }
+    static constexpr gmsg::DelimitedConfig framing_config{gmsg::Pattern{{0x24}, 1}, gmsg::Pattern{{0x0D, 0x0A}, 2}, gmsg::EscapeConfig{}, max_frame};
+    static constexpr gmsg::FrameScan scan(gmsg::bytes_view b) noexcept { return gmsg::scan_delimited(b, framing_config); }
 
     /// A validated frame split into its parts (views into the input buffer).
     struct Frame {
         std::string_view type_id{};  // text: the first token
-        gmp::bytes_view body{};
+        gmsg::bytes_view body{};
     };
 
     /// Validate one complete frame (as delimited by scan()) and split it into header and body.
-    [[nodiscard]] static gmp::Result<Frame> open(gmp::bytes_view frame) noexcept {
-        if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmp::fail(gmp::Error::Truncated);
-        const gmp::bytes_view interior = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
-        std::string_view text = gmp::as_string_view(interior);
+    [[nodiscard]] static gmsg::Result<Frame> open(gmsg::bytes_view frame) noexcept {
+        if (frame.size() < prefix_size + header_size + trailer_size + suffix_size) return gmsg::fail(gmsg::Error::Truncated);
+        const gmsg::bytes_view interior = frame.subspan(prefix_size, frame.size() - prefix_size - suffix_size);
+        std::string_view text = gmsg::as_string_view(interior);
         const auto star = text.rfind('*');
         if (star == std::string_view::npos) {
-            return gmp::fail(gmp::Error::BadChecksum);
+            return gmsg::fail(gmsg::Error::BadChecksum);
         } else {
             const std::string_view hex = text.substr(star + 1);
-            if (hex.size() != 2) return gmp::fail(gmp::Error::BadChecksum);
+            if (hex.size() != 2) return gmsg::fail(gmsg::Error::BadChecksum);
             std::uint64_t stored = 0;
             for (std::size_t i = 0; i < 1; ++i) {
-                auto b = gmp::text::parse_hex_byte(hex.substr(2 * i, 2));
-                if (!b) return gmp::fail(gmp::Error::BadChecksum);
+                auto b = gmsg::text::parse_hex_byte(hex.substr(2 * i, 2));
+                if (!b) return gmsg::fail(gmsg::Error::BadChecksum);
                 stored = (stored << 8) | *b;
             }
-            const auto computed = static_cast<std::uint64_t>(gmp::checksum::xor8::compute(gmp::as_bytes(text.data(), star)));
-            if (stored != computed) return gmp::fail(gmp::Error::BadChecksum);
+            const auto computed = static_cast<std::uint64_t>(gmsg::checksum::xor8::compute(gmsg::as_bytes(text.data(), star)));
+            if (stored != computed) return gmsg::fail(gmsg::Error::BadChecksum);
             text = text.substr(0, star);
         }
         Frame f;
         const auto p = text.find(',');
         f.type_id = text.substr(0, p);
         const std::string_view rest = p == std::string_view::npos ? std::string_view{} : text.substr(p + 1);
-        f.body = gmp::as_bytes(rest.data(), rest.size());
+        f.body = gmsg::as_bytes(rest.data(), rest.size());
         return f;
     }
 
     /// Decode the message view selected by the frame's type id (message_type) and pass it to fn(view).
     template <class F>
-    static gmp::Error visit_frame(const Frame& f, F&& fn) noexcept {
+    static gmsg::Error visit_frame(const Frame& f, F&& fn) noexcept {
         if (f.type_id == "GPGGA") {
             auto v = GGAView::from(f.body);
             if (!v) return v.error();
             fn(*v);
-            return gmp::Error::None;
+            return gmsg::Error::None;
         }
         if (f.type_id == "GPTXT") {
             auto v = TXTView::from(f.body);
             if (!v) return v.error();
             fn(*v);
-            return gmp::Error::None;
+            return gmsg::Error::None;
         }
-        return gmp::Error::UnknownType;
+        return gmsg::Error::UnknownType;
     }
 
-    [[nodiscard]] static gmp::Result<AnyView> select_message(const Frame& f) noexcept {
-        gmp::Result<AnyView> out = gmp::fail(gmp::Error::UnknownType);
-        const gmp::Error e = visit_frame(f, [&](const auto& v) { out = AnyView(v); });
-        if (e != gmp::Error::None) return gmp::fail(e);
+    [[nodiscard]] static gmsg::Result<AnyView> select_message(const Frame& f) noexcept {
+        gmsg::Result<AnyView> out = gmsg::fail(gmsg::Error::UnknownType);
+        const gmsg::Error e = visit_frame(f, [&](const auto& v) { out = AnyView(v); });
+        if (e != gmsg::Error::None) return gmsg::fail(e);
         return out;
     }
 
     /// Parse one frame located at the start of `buffer` (whole-buffer / datagram mode).
-    [[nodiscard]] static gmp::Result<AnyView> parse(gmp::bytes_view buffer) noexcept {
-        const gmp::FrameScan s = scan(buffer);
-        if (s.kind == gmp::FrameScan::Kind::need_more) return gmp::fail(gmp::Error::Truncated);
-        if (s.kind == gmp::FrameScan::Kind::skip) return gmp::fail(s.error == gmp::Error::None ? gmp::Error::BadSync : s.error);
+    [[nodiscard]] static gmsg::Result<AnyView> parse(gmsg::bytes_view buffer) noexcept {
+        const gmsg::FrameScan s = scan(buffer);
+        if (s.kind == gmsg::FrameScan::Kind::need_more) return gmsg::fail(gmsg::Error::Truncated);
+        if (s.kind == gmsg::FrameScan::Kind::skip) return gmsg::fail(s.error == gmsg::Error::None ? gmsg::Error::BadSync : s.error);
         auto f = open(buffer.first(s.size));
-        if (!f) return gmp::fail(f.error());
+        if (!f) return gmsg::fail(f.error());
         return select_message(*f);
     }
     /// Parse one frame and decode it into the eager message struct.
-    [[nodiscard]] static gmp::Result<AnyMessage> decode(gmp::bytes_view buffer) noexcept {
+    [[nodiscard]] static gmsg::Result<AnyMessage> decode(gmsg::bytes_view buffer) noexcept {
         auto v = parse(buffer);
-        if (!v) return gmp::fail(v.error());
-        return std::visit([](const auto& view) -> gmp::Result<AnyMessage> {
+        if (!v) return gmsg::fail(v.error());
+        return std::visit([](const auto& view) -> gmsg::Result<AnyMessage> {
             auto m = view.to_struct();
-            if (!m) return gmp::fail(m.error());
+            if (!m) return gmsg::fail(m.error());
             return AnyMessage(std::move(*m));
         }, *v);
     }
@@ -537,32 +537,32 @@ struct Nmea {
     /// whichever it accepts; message types it does not accept are ignored. `extra` (if given) receives the
     /// tokens after the message in the frame.
     template <class H>
-    static gmp::Error process(gmp::mut_bytes frame, H& handler, std::size_t* extra = nullptr) {
+    static gmsg::Error process(gmsg::mut_bytes frame, H& handler, std::size_t* extra = nullptr) {
         auto f = open(frame);
         if (!f) return f.error();
         return visit_frame(*f, [&](const auto& v) {
             using V = std::decay_t<decltype(v)>;
-            if (extra) *extra = gmp::extra_of(v);
+            if (extra) *extra = gmsg::extra_of(v);
             if constexpr (std::invocable<H&, const V&>) handler(v);
         });
     }
 
     /// Runtime callbacks for CallbackStream: one listener per message, one for every frame (AnyView) and one
-    /// for dropped data (gmp::FrameError). on<Fn>(ctx) picks the slot from Fn's last parameter.
+    /// for dropped data (gmsg::FrameError). on<Fn>(ctx) picks the slot from Fn's last parameter.
     class Callbacks {
     public:
         /// Register Fn with context `ctx`: a member function of C, or a function taking C& / C* first.
         template <auto Fn, class C>
-        Callbacks& on(C& ctx) noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(ctx); return *this; }
+        Callbacks& on(C& ctx) noexcept { slot<gmsg::callback_message_t<decltype(Fn)>>().template bind<Fn>(ctx); return *this; }
         /// Register Fn that takes no context.
         template <auto Fn>
-        Callbacks& on() noexcept { slot<gmp::callback_message_t<decltype(Fn)>>().template bind<Fn>(); return *this; }
+        Callbacks& on() noexcept { slot<gmsg::callback_message_t<decltype(Fn)>>().template bind<Fn>(); return *this; }
         /// Register a function pointer chosen at run time, called as fn(ctx, ...) (C-style void* or a typed pointer).
         template <class F, class C> requires std::is_function_v<F>
-        Callbacks& on(F* fn, C* ctx) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn, ctx); return *this; }
+        Callbacks& on(F* fn, C* ctx) noexcept { slot<gmsg::callback_message_t<F*>>().bind(fn, ctx); return *this; }
         template <class F> requires std::is_function_v<F>
-        Callbacks& on(F* fn) noexcept { slot<gmp::callback_message_t<F*>>().bind(fn); return *this; }
-        /// Remove the listener of V (a message view, AnyView or gmp::FrameError).
+        Callbacks& on(F* fn) noexcept { slot<gmsg::callback_message_t<F*>>().bind(fn); return *this; }
+        /// Remove the listener of V (a message view, AnyView or gmsg::FrameError).
         template <class V>
         Callbacks& off() noexcept { slot<V>().reset(); return *this; }
         template <class V>
@@ -570,31 +570,31 @@ struct Nmea {
         void clear() noexcept { *this = Callbacks{}; }
 
         // handler interface used by the stream parser: the message listener first, then the every-frame listener
-        void operator()(const GGAView& v) const { gmp_on_GGA_(v); if (gmp_on_frame_) gmp_on_frame_(AnyView(v)); }
-        void operator()(const TXTView& v) const { gmp_on_TXT_(v); if (gmp_on_frame_) gmp_on_frame_(AnyView(v)); }
-        void operator()(const gmp::FrameError& e) const { gmp_on_error_(e); }
+        void operator()(const GGAView& v) const { gmsg_on_GGA_(v); if (gmsg_on_frame_) gmsg_on_frame_(AnyView(v)); }
+        void operator()(const TXTView& v) const { gmsg_on_TXT_(v); if (gmsg_on_frame_) gmsg_on_frame_(AnyView(v)); }
+        void operator()(const gmsg::FrameError& e) const { gmsg_on_error_(e); }
 
     private:
         template <class V>
         auto& slot() noexcept {
-            if constexpr (std::is_same_v<V, GGAView>) return gmp_on_GGA_;
-            else if constexpr (std::is_same_v<V, TXTView>) return gmp_on_TXT_;
-            else if constexpr (std::is_same_v<V, AnyView>) return gmp_on_frame_;
-            else if constexpr (std::is_same_v<V, gmp::FrameError>) return gmp_on_error_;
-            else static_assert(gmp::detail::always_false<V>, "Nmea::Callbacks: the callback's last parameter must be one of this protocol's message views, AnyView or gmp::FrameError");
+            if constexpr (std::is_same_v<V, GGAView>) return gmsg_on_GGA_;
+            else if constexpr (std::is_same_v<V, TXTView>) return gmsg_on_TXT_;
+            else if constexpr (std::is_same_v<V, AnyView>) return gmsg_on_frame_;
+            else if constexpr (std::is_same_v<V, gmsg::FrameError>) return gmsg_on_error_;
+            else static_assert(gmsg::detail::always_false<V>, "Nmea::Callbacks: the callback's last parameter must be one of this protocol's message views, AnyView or gmsg::FrameError");
         }
 
-        gmp::CallbackSlot<const GGAView&> gmp_on_GGA_;
-        gmp::CallbackSlot<const TXTView&> gmp_on_TXT_;
-        gmp::CallbackSlot<const AnyView&> gmp_on_frame_;
-        gmp::CallbackSlot<const gmp::FrameError&> gmp_on_error_;
+        gmsg::CallbackSlot<const GGAView&> gmsg_on_GGA_;
+        gmsg::CallbackSlot<const TXTView&> gmsg_on_TXT_;
+        gmsg::CallbackSlot<const AnyView&> gmsg_on_frame_;
+        gmsg::CallbackSlot<const gmsg::FrameError&> gmsg_on_error_;
     };
 
     /// Stream parser with runtime callbacks: register with on<&App::fn>(app), then feed(bytes).
     template <std::size_t Capacity = max_frame>
-    class CallbackStream : private Callbacks, public gmp::StreamParser<Nmea, Capacity, Callbacks&> {
+    class CallbackStream : private Callbacks, public gmsg::StreamParser<Nmea, Capacity, Callbacks&> {
     public:
-        CallbackStream() noexcept : Callbacks(), gmp::StreamParser<Nmea, Capacity, Callbacks&>(static_cast<Callbacks&>(*this)) {}
+        CallbackStream() noexcept : Callbacks(), gmsg::StreamParser<Nmea, Capacity, Callbacks&>(static_cast<Callbacks&>(*this)) {}
         CallbackStream(const CallbackStream&) = delete;
         CallbackStream& operator=(const CallbackStream&) = delete;
         using Callbacks::on;
@@ -604,56 +604,56 @@ struct Nmea {
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
 
-    static gmp::Result<std::size_t> encode(const GGA& m, gmp::mut_bytes out) noexcept {
+    static gmsg::Result<std::size_t> encode(const GGA& m, gmsg::mut_bytes out) noexcept {
         std::size_t pos = 0;
-        if (out.size() < prefix_size) return gmp::fail(gmp::Error::BufferFull);
+        if (out.size() < prefix_size) return gmsg::fail(gmsg::Error::BufferFull);
         std::copy(prefix.begin(), prefix.end(), out.begin());
         pos = prefix_size;
         {
-            gmp::text::TextWriter w(out.subspan(pos), ',');
-            if (auto e = w.token(std::string_view("GPGGA")); !e) return gmp::fail(e.error());
-            if (auto e = m.write_text(w); !e) return gmp::fail(e.error());
+            gmsg::text::TextWriter w(out.subspan(pos), ',');
+            if (auto e = w.token(std::string_view("GPGGA")); !e) return gmsg::fail(e.error());
+            if (auto e = m.write_text(w); !e) return gmsg::fail(e.error());
             pos += w.position();
         }
-        const auto cs = static_cast<std::uint64_t>(gmp::checksum::xor8::compute(gmp::bytes_view(out.data() + prefix_size, pos - prefix_size)));
-        if (out.size() - pos < 3) return gmp::fail(gmp::Error::BufferFull);
+        const auto cs = static_cast<std::uint64_t>(gmsg::checksum::xor8::compute(gmsg::bytes_view(out.data() + prefix_size, pos - prefix_size)));
+        if (out.size() - pos < 3) return gmsg::fail(gmsg::Error::BufferFull);
         out[pos++] = static_cast<std::uint8_t>('*');
         for (int k = 0; k >= 0; --k) {
             const auto b = static_cast<unsigned>((cs >> (8 * k)) & 0xFFu);
-            out[pos++] = static_cast<std::uint8_t>(gmp::text::hex_digit(b >> 4));
-            out[pos++] = static_cast<std::uint8_t>(gmp::text::hex_digit(b & 0xFu));
+            out[pos++] = static_cast<std::uint8_t>(gmsg::text::hex_digit(b >> 4));
+            out[pos++] = static_cast<std::uint8_t>(gmsg::text::hex_digit(b & 0xFu));
         }
-        if (out.size() - pos < suffix_size) return gmp::fail(gmp::Error::BufferFull);
+        if (out.size() - pos < suffix_size) return gmsg::fail(gmsg::Error::BufferFull);
         std::copy(suffix.begin(), suffix.end(), out.begin() + static_cast<std::ptrdiff_t>(pos));
         pos += suffix_size;
         return pos;
     }
-    static gmp::Result<std::size_t> encode(const TXT& m, gmp::mut_bytes out) noexcept {
+    static gmsg::Result<std::size_t> encode(const TXT& m, gmsg::mut_bytes out) noexcept {
         std::size_t pos = 0;
-        if (out.size() < prefix_size) return gmp::fail(gmp::Error::BufferFull);
+        if (out.size() < prefix_size) return gmsg::fail(gmsg::Error::BufferFull);
         std::copy(prefix.begin(), prefix.end(), out.begin());
         pos = prefix_size;
         {
-            gmp::text::TextWriter w(out.subspan(pos), ',');
-            if (auto e = w.token(std::string_view("GPTXT")); !e) return gmp::fail(e.error());
-            if (auto e = m.write_text(w); !e) return gmp::fail(e.error());
+            gmsg::text::TextWriter w(out.subspan(pos), ',');
+            if (auto e = w.token(std::string_view("GPTXT")); !e) return gmsg::fail(e.error());
+            if (auto e = m.write_text(w); !e) return gmsg::fail(e.error());
             pos += w.position();
         }
-        const auto cs = static_cast<std::uint64_t>(gmp::checksum::xor8::compute(gmp::bytes_view(out.data() + prefix_size, pos - prefix_size)));
-        if (out.size() - pos < 3) return gmp::fail(gmp::Error::BufferFull);
+        const auto cs = static_cast<std::uint64_t>(gmsg::checksum::xor8::compute(gmsg::bytes_view(out.data() + prefix_size, pos - prefix_size)));
+        if (out.size() - pos < 3) return gmsg::fail(gmsg::Error::BufferFull);
         out[pos++] = static_cast<std::uint8_t>('*');
         for (int k = 0; k >= 0; --k) {
             const auto b = static_cast<unsigned>((cs >> (8 * k)) & 0xFFu);
-            out[pos++] = static_cast<std::uint8_t>(gmp::text::hex_digit(b >> 4));
-            out[pos++] = static_cast<std::uint8_t>(gmp::text::hex_digit(b & 0xFu));
+            out[pos++] = static_cast<std::uint8_t>(gmsg::text::hex_digit(b >> 4));
+            out[pos++] = static_cast<std::uint8_t>(gmsg::text::hex_digit(b & 0xFu));
         }
-        if (out.size() - pos < suffix_size) return gmp::fail(gmp::Error::BufferFull);
+        if (out.size() - pos < suffix_size) return gmsg::fail(gmsg::Error::BufferFull);
         std::copy(suffix.begin(), suffix.end(), out.begin() + static_cast<std::ptrdiff_t>(pos));
         pos += suffix_size;
         return pos;
     }
     /// Encode any message of this protocol.
-    static gmp::Result<std::size_t> encode(const AnyMessage& m, gmp::mut_bytes out) noexcept {
+    static gmsg::Result<std::size_t> encode(const AnyMessage& m, gmsg::mut_bytes out) noexcept {
         return std::visit([&](const auto& x) { return encode(x, out); }, m);
     }
 };

@@ -7,7 +7,7 @@ from typing import NoReturn
 
 
 class Err(enum.IntEnum):
-    """Error codes: the same values and order as gmp::Error (C++), gmsg_error (C) and gmsg.Err (JavaScript)."""
+    """Error codes: the same values and order as gmsg::Error (C++), gmsg_error (C) and gmsg.Err (JavaScript)."""
 
     NONE = 0
     TRUNCATED = 1
@@ -35,7 +35,7 @@ _TEXT = (
 
 
 def error_text(code: int) -> str:
-    """Text of an error code, as gmp::to_string(Error): 'bad checksum'."""
+    """Text of an error code, as gmsg::to_string(Error): 'bad checksum'."""
     return _TEXT[code] if 0 <= code < len(_TEXT) else "unknown"
 
 
@@ -55,7 +55,7 @@ class GmpError(Exception):
 
     @property
     def text(self) -> str:
-        """The gmp::to_string text of the code, without the detail."""
+        """The gmsg::to_string text of the code, without the detail."""
         return error_text(self.code)
 
 

@@ -1,5 +1,5 @@
 // Cross-check of the generated JavaScript (gmpc --lang js) against the generated C++: the reference results come from
-// js_crossref (tests/roundtrip_js/js_crossref.cpp). Every case must give the same errors, the same gmp::print text
+// js_crossref (tests/roundtrip_js/js_crossref.cpp). Every case must give the same errors, the same gmsg::print text
 // and the same re-encoded bytes.
 //
 //   node tests/roundtrip_js/test_generated.js <js_crossref executable> <directory with the generated .gmp.js> [-v]

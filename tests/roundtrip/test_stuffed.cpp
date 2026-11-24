@@ -24,7 +24,7 @@ Data make_data(std::size_t n, std::uint8_t seed) {
 }
 
 /// 0x80 may appear only as the sync byte at the start of each frame.
-void check_no_reserved(gmp::bytes_view wire) {
+void check_no_reserved(gmsg::bytes_view wire) {
     REQUIRE(wire.size() > 0);
     CHECK(wire[0] == 0x80);
     for (std::size_t i = 1; i < wire.size(); ++i) CHECK(wire[i] != 0x80);
@@ -36,8 +36,8 @@ void roundtrip(const M& m) {
     auto n = P::encode(m, buf);
     REQUIRE(n);
     REQUIRE(*n <= P::max_frame);
-    check_no_reserved(gmp::bytes_view(buf.data(), *n));
-    auto d = P::decode(gmp::mut_bytes(buf.data(), *n));
+    check_no_reserved(gmsg::bytes_view(buf.data(), *n));
+    auto d = P::decode(gmsg::mut_bytes(buf.data(), *n));
     REQUIRE(d);
     REQUIRE(std::holds_alternative<M>(*d));
     CHECK(std::get<M>(*d) == m);
@@ -67,7 +67,7 @@ TEST_CASE("SyncLink wire format: escape byte + index byte") {
     REQUIRE(n);
     // unescaped: 80 | 02 04 | 80 81 82 83 | crc16
     const std::array<std::uint8_t, 6> covered{0x02, 0x04, 0x80, 0x81, 0x82, 0x83};
-    const auto crc = gmp::checksum::crc16_ccitt::compute(covered);
+    const auto crc = gmsg::checksum::crc16_ccitt::compute(covered);
     std::vector<std::uint8_t> expect{0x80, 0x02, 0x04, 0x81, 0x00, 0x81, 0x01, 0x82, 0x83};
     for (auto b : {static_cast<std::uint8_t>(crc >> 8), static_cast<std::uint8_t>(crc & 0xFF)}) {
         if (b == 0x80) expect.insert(expect.end(), {0x81, 0x00});
@@ -79,7 +79,7 @@ TEST_CASE("SyncLink wire format: escape byte + index byte") {
     // unknown index after the escape byte
     std::vector<std::uint8_t> bad = expect;
     bad[4] = 0x07;
-    CHECK(SyncLink::parse(gmp::mut_bytes(bad)).error() == gmp::Error::InvalidValue);
+    CHECK(SyncLink::parse(gmsg::mut_bytes(bad)).error() == gmsg::Error::InvalidValue);
 }
 
 TEMPLATE_TEST_CASE("Stuffed streams resync on the reserved sync byte", "", SyncLink, WireChecksum, WireLength, CrcLength, WireCrcLength,
@@ -103,10 +103,10 @@ TEMPLATE_TEST_CASE("Stuffed streams resync on the reserved sync byte", "", SyncL
     int datas = 0, pings = 0, errors = 0;
     typename TestType::template Stream<> stream;
     for (auto b : wire) {
-        stream.feed(gmp::bytes_view(&b, 1), gmp::overloaded{
+        stream.feed(gmsg::bytes_view(&b, 1), gmsg::overloaded{
                                                 [&](const DataView&) { ++datas; },
                                                 [&](const PingView& p) { CHECK(p.seq() == 0x80818283u); ++pings; },
-                                                [&](const gmp::FrameError&) { ++errors; },
+                                                [&](const gmsg::FrameError&) { ++errors; },
                                             });
     }
     CHECK(datas == 2);
@@ -153,9 +153,9 @@ TEST_CASE("WireLength: the length field counts body bytes on the wire") {
     }
     // a frame whose length points into the middle of an escape pair is rejected
     // body: n=1, data 80 -> wire 01 81 00 (3 bytes); claim 2
-    const auto crc = gmp::checksum::crc16_ccitt::compute(std::array<std::uint8_t, 5>{0x01, 0x02, 0x01, 0x80, 0x00});
+    const auto crc = gmsg::checksum::crc16_ccitt::compute(std::array<std::uint8_t, 5>{0x01, 0x02, 0x01, 0x80, 0x00});
     std::vector<std::uint8_t> bad{0x80, 0x01, 0x02, 0x01, 0x81, 0x00, static_cast<std::uint8_t>(crc >> 8), static_cast<std::uint8_t>(crc)};
-    CHECK_FALSE(WireLength::parse(gmp::mut_bytes(bad)));
+    CHECK_FALSE(WireLength::parse(gmsg::mut_bytes(bad)));
 }
 
 namespace {

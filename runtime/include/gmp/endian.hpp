@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <type_traits>
 
-namespace gmp {
+namespace gmsg {
 
 enum class Endian : std::uint8_t { big, little };
 
@@ -82,4 +82,4 @@ constexpr std::int64_t to_int(T v) noexcept {
     else return static_cast<std::int64_t>(v);
 }
 
-} // namespace gmp
+} // namespace gmsg

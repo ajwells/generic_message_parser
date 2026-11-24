@@ -89,35 +89,35 @@ void checksum_cases(std::mt19937& rng, std::string_view name) {
         raw(",");
         bytes(b);
         raw(",\"");
-        num(static_cast<std::uint64_t>(A::compute(gmp::bytes_view(b.data(), b.size()))));
+        num(static_cast<std::uint64_t>(A::compute(gmsg::bytes_view(b.data(), b.size()))));
         raw("\"]");
     }
 }
 
 void checksums(std::mt19937& rng) {
     begin_array("checksums");
-    checksum_cases<gmp::checksum::crc8>(rng, "crc8");
-    checksum_cases<gmp::checksum::crc8_maxim>(rng, "crc8_maxim");
-    checksum_cases<gmp::checksum::crc8_autosar>(rng, "crc8_autosar");
-    checksum_cases<gmp::checksum::crc8_nrsc5>(rng, "crc8_nrsc5");
-    checksum_cases<gmp::checksum::crc15_can>(rng, "crc15_can");
-    checksum_cases<gmp::checksum::crc16_ccitt>(rng, "crc16_ccitt");
-    checksum_cases<gmp::checksum::crc16_xmodem>(rng, "crc16_xmodem");
-    checksum_cases<gmp::checksum::crc16_kermit>(rng, "crc16_kermit");
-    checksum_cases<gmp::checksum::crc16_x25>(rng, "crc16_x25");
-    checksum_cases<gmp::checksum::crc16_modbus>(rng, "crc16_modbus");
-    checksum_cases<gmp::checksum::crc16_arc>(rng, "crc16_arc");
-    checksum_cases<gmp::checksum::crc24_openpgp>(rng, "crc24_openpgp");
-    checksum_cases<gmp::checksum::crc32>(rng, "crc32");
-    checksum_cases<gmp::checksum::crc32c>(rng, "crc32c");
-    checksum_cases<gmp::checksum::crc32_mpeg2>(rng, "crc32_mpeg2");
-    checksum_cases<gmp::checksum::crc64_ecma>(rng, "crc64_ecma");
-    checksum_cases<gmp::checksum::xor8>(rng, "xor8");
-    checksum_cases<gmp::checksum::sum8>(rng, "sum8");
-    checksum_cases<gmp::checksum::lrc8>(rng, "lrc8");
-    checksum_cases<gmp::checksum::sum16>(rng, "sum16");
-    checksum_cases<gmp::checksum::fletcher16>(rng, "fletcher16");
-    checksum_cases<gmp::checksum::fletcher8_ubx>(rng, "fletcher8_ubx");
+    checksum_cases<gmsg::checksum::crc8>(rng, "crc8");
+    checksum_cases<gmsg::checksum::crc8_maxim>(rng, "crc8_maxim");
+    checksum_cases<gmsg::checksum::crc8_autosar>(rng, "crc8_autosar");
+    checksum_cases<gmsg::checksum::crc8_nrsc5>(rng, "crc8_nrsc5");
+    checksum_cases<gmsg::checksum::crc15_can>(rng, "crc15_can");
+    checksum_cases<gmsg::checksum::crc16_ccitt>(rng, "crc16_ccitt");
+    checksum_cases<gmsg::checksum::crc16_xmodem>(rng, "crc16_xmodem");
+    checksum_cases<gmsg::checksum::crc16_kermit>(rng, "crc16_kermit");
+    checksum_cases<gmsg::checksum::crc16_x25>(rng, "crc16_x25");
+    checksum_cases<gmsg::checksum::crc16_modbus>(rng, "crc16_modbus");
+    checksum_cases<gmsg::checksum::crc16_arc>(rng, "crc16_arc");
+    checksum_cases<gmsg::checksum::crc24_openpgp>(rng, "crc24_openpgp");
+    checksum_cases<gmsg::checksum::crc32>(rng, "crc32");
+    checksum_cases<gmsg::checksum::crc32c>(rng, "crc32c");
+    checksum_cases<gmsg::checksum::crc32_mpeg2>(rng, "crc32_mpeg2");
+    checksum_cases<gmsg::checksum::crc64_ecma>(rng, "crc64_ecma");
+    checksum_cases<gmsg::checksum::xor8>(rng, "xor8");
+    checksum_cases<gmsg::checksum::sum8>(rng, "sum8");
+    checksum_cases<gmsg::checksum::lrc8>(rng, "lrc8");
+    checksum_cases<gmsg::checksum::sum16>(rng, "sum16");
+    checksum_cases<gmsg::checksum::fletcher16>(rng, "fletcher16");
+    checksum_cases<gmsg::checksum::fletcher8_ubx>(rng, "fletcher8_ubx");
     end_array();
 
     // generic CRCs with random parameters (the C runtime's run-time CRC, checked against C++ elsewhere)
@@ -162,12 +162,12 @@ void bits(std::mt19937& rng) {
         const auto b = random_bytes(rng, 9);
         const unsigned n = 1 + rng() % 64;
         const std::size_t off = rng() % (72 - n + 1);
-        const auto order = (rng() & 1u) ? gmp::BitOrder::lsb_first : gmp::BitOrder::msb_first;
-        const std::uint64_t v = gmp::extract_bits(b.data(), off, n, order);
-        const std::int64_t sv = gmp::sign_extend(v, n);
+        const auto order = (rng() & 1u) ? gmsg::BitOrder::lsb_first : gmsg::BitOrder::msb_first;
+        const std::uint64_t v = gmsg::extract_bits(b.data(), off, n, order);
+        const std::int64_t sv = gmsg::sign_extend(v, n);
         const std::uint64_t value = (std::uint64_t{rng()} << 32) | rng();
         Bytes w = b;
-        gmp::set_bits<std::uint64_t>(w.data(), off, n, value, order);
+        gmsg::set_bits<std::uint64_t>(w.data(), off, n, value, order);
         sep();
         raw("[");
         bytes(b);
@@ -175,7 +175,7 @@ void bits(std::mt19937& rng) {
         num(off);
         raw(",");
         num(n);
-        raw(order == gmp::BitOrder::lsb_first ? ",\"lsb_first\",\"" : ",\"msb_first\",\"");
+        raw(order == gmsg::BitOrder::lsb_first ? ",\"lsb_first\",\"" : ",\"msb_first\",\"");
         num(v);
         raw("\",\"");
         out += std::to_string(sv);
@@ -265,8 +265,8 @@ void floats(std::mt19937& rng) {
     begin_array("float_parse");  // [text, f64 error, f64 bits, f32 error, f32 bits]
     for (int i = 0; i < 6000; ++i) {
         const std::string s = random_number_text(rng);
-        const auto d = gmp::text::parse_float<double>(s);
-        const auto f = gmp::text::parse_float<float>(s);
+        const auto d = gmsg::text::parse_float<double>(s);
+        const auto f = gmsg::text::parse_float<float>(s);
         sep();
         raw("[");
         str(s);
@@ -286,7 +286,7 @@ void floats(std::mt19937& rng) {
 // ---- integer text ------------------------------------------------------------------------------------------
 template <class T>
 void int_parse_case(std::string_view type, std::string_view s, int base) {
-    const auto r = gmp::text::parse_int<T>(s, base);
+    const auto r = gmsg::text::parse_int<T>(s, base);
     sep();
     raw("[");
     str(type);
@@ -328,7 +328,7 @@ void ints(std::mt19937& rng) {
     begin_array("text_writer");  // [kind, value, base | precision, width, upper, text]
     for (int i = 0; i < 2000; ++i) {
         std::array<std::uint8_t, 1024> buf{};  // room for the longest fixed text (|v| near 1e308 with a precision)
-        gmp::text::TextWriter w(gmp::mut_bytes(buf.data(), buf.size()), ',');
+        gmsg::text::TextWriter w(gmsg::mut_bytes(buf.data(), buf.size()), ',');
         bool ok = true;
         sep();
         if (rng() & 1u) {
@@ -377,28 +377,28 @@ void ints(std::mt19937& rng) {
 }
 
 // ---- framing (the same configs as tests/runtime_c/test_framing_c_vs_cpp.cpp) -------------------------------
-const gmp::EscapeConfig& escape_cfg(int which) {
-    static const gmp::EscapeConfig xor_cfg = gmp::make_xor_escape(0x7D, 0x20, {0x7E});
-    static const gmp::EscapeConfig index_cfg = gmp::make_index_escape(0x81, {0x80, 0x81});
-    static const gmp::EscapeConfig map_cfg = gmp::make_map_escape(0xDB, {0xC0, 0xDB}, {0xDC, 0xDD});
+const gmsg::EscapeConfig& escape_cfg(int which) {
+    static const gmsg::EscapeConfig xor_cfg = gmsg::make_xor_escape(0x7D, 0x20, {0x7E});
+    static const gmsg::EscapeConfig index_cfg = gmsg::make_index_escape(0x81, {0x80, 0x81});
+    static const gmsg::EscapeConfig map_cfg = gmsg::make_map_escape(0xDB, {0xC0, 0xDB}, {0xDC, 0xDD});
     return which == 0 ? xor_cfg : which == 1 ? index_cfg : map_cfg;
 }
 
 constexpr int kScanConfigs = 9;
-gmp::FrameScan cpp_scan(int which, gmp::bytes_view b) {
-    const gmp::Pattern aa55{{0xAA, 0x55}, 2}, flag{{0x7E}, 1}, dollar{{0x24}, 1}, crlf{{0x0D, 0x0A}, 2}, x80{{0x80}, 1};
+gmsg::FrameScan cpp_scan(int which, gmsg::bytes_view b) {
+    const gmsg::Pattern aa55{{0xAA, 0x55}, 2}, flag{{0x7E}, 1}, dollar{{0x24}, 1}, crlf{{0x0D, 0x0A}, 2}, x80{{0x80}, 1};
     switch (which) {
-        case 0: return gmp::scan_fixed(b, gmp::FixedFrameConfig{aa55, 6});
-        case 1: return gmp::scan_fixed(b, gmp::FixedFrameConfig{gmp::Pattern{}, 4});
-        case 2: return gmp::scan_fixed(b, gmp::FixedFrameConfig{x80, 5, escape_cfg(1), 0});
-        case 3: return gmp::scan_length_prefixed(b, gmp::LengthPrefixedConfig{aa55, 2, 1, gmp::Endian::big, 5, 5, 24});
-        case 4: return gmp::scan_length_prefixed(b, gmp::LengthPrefixedConfig{gmp::Pattern{}, 0, 2, gmp::Endian::little, -1, 3, 20});
-        case 5: return gmp::scan_length_prefixed(b, gmp::LengthPrefixedConfig{flag, 1, 1, gmp::Endian::big, 4, 4, 32, escape_cfg(0), 0});
+        case 0: return gmsg::scan_fixed(b, gmsg::FixedFrameConfig{aa55, 6});
+        case 1: return gmsg::scan_fixed(b, gmsg::FixedFrameConfig{gmsg::Pattern{}, 4});
+        case 2: return gmsg::scan_fixed(b, gmsg::FixedFrameConfig{x80, 5, escape_cfg(1), 0});
+        case 3: return gmsg::scan_length_prefixed(b, gmsg::LengthPrefixedConfig{aa55, 2, 1, gmsg::Endian::big, 5, 5, 24});
+        case 4: return gmsg::scan_length_prefixed(b, gmsg::LengthPrefixedConfig{gmsg::Pattern{}, 0, 2, gmsg::Endian::little, -1, 3, 20});
+        case 5: return gmsg::scan_length_prefixed(b, gmsg::LengthPrefixedConfig{flag, 1, 1, gmsg::Endian::big, 4, 4, 32, escape_cfg(0), 0});
         case 6:
-            return gmp::scan_length_prefixed(
-                b, gmp::LengthPrefixedConfig{flag, 1, 1, gmp::Endian::big, 0, 4, 32, escape_cfg(0), 0, true, 2, 1, false});
-        case 7: return gmp::scan_delimited(b, gmp::DelimitedConfig{flag, flag, escape_cfg(0), 24});
-        default: return gmp::scan_delimited(b, gmp::DelimitedConfig{dollar, crlf, gmp::EscapeConfig{}, 16});
+            return gmsg::scan_length_prefixed(
+                b, gmsg::LengthPrefixedConfig{flag, 1, 1, gmsg::Endian::big, 0, 4, 32, escape_cfg(0), 0, true, 2, 1, false});
+        case 7: return gmsg::scan_delimited(b, gmsg::DelimitedConfig{flag, flag, escape_cfg(0), 24});
+        default: return gmsg::scan_delimited(b, gmsg::DelimitedConfig{dollar, crlf, gmsg::EscapeConfig{}, 16});
     }
 }
 
@@ -428,7 +428,7 @@ void scans(std::mt19937& rng) {
     for (int round = 0; round < 1500; ++round) {
         const auto b = structured(rng, rng() % 40);
         for (int which = 0; which < kScanConfigs; ++which) {
-            const auto s = cpp_scan(which, gmp::bytes_view(b.data(), b.size()));
+            const auto s = cpp_scan(which, gmsg::bytes_view(b.data(), b.size()));
             sep();
             raw("[");
             num(static_cast<unsigned>(which));
@@ -455,15 +455,15 @@ void scans(std::mt19937& rng) {
         for (int which = 0; which < 3; ++which) {
             const auto& cfg = escape_cfg(which);
             auto x = b;
-            const auto r = gmp::unescape_in_place(gmp::mut_bytes(x.data(), x.size()), cfg);
+            const auto r = gmsg::unescape_in_place(gmsg::mut_bytes(x.data(), x.size()), cfg);
             Bytes ex(b.size() * 2 + 2, 0xEE);
             std::copy(b.begin(), b.end(), ex.begin() + 2);
-            const auto er = gmp::escape_in_place(gmp::mut_bytes(ex.data(), ex.size()), 2, b.size(), cfg);
+            const auto er = gmsg::escape_in_place(gmsg::mut_bytes(ex.data(), ex.size()), 2, b.size(), cfg);
             ex.resize(2 + *er);
             const std::size_t count = rng() % 12, pick_at = rng() % 4;
             std::array<std::uint8_t, 4> px{};
-            const auto w = gmp::walk_escaped(gmp::bytes_view(b.data(), b.size()), 0, count, cfg, pick_at,
-                                             gmp::mut_bytes(px.data(), px.size()));
+            const auto w = gmsg::walk_escaped(gmsg::bytes_view(b.data(), b.size()), 0, count, cfg, pick_at,
+                                             gmsg::mut_bytes(px.data(), px.size()));
             sep();
             raw("[");
             num(static_cast<unsigned>(which));
@@ -486,7 +486,7 @@ void scans(std::mt19937& rng) {
             raw(",");
             num(static_cast<unsigned>(w.error));
             raw(",");
-            bytes(w.kind == gmp::EscapeWalk::Kind::done ? Bytes(px.begin(), px.end()) : Bytes{});
+            bytes(w.kind == gmsg::EscapeWalk::Kind::done ? Bytes(px.begin(), px.end()) : Bytes{});
             raw("]");
         }
     }
@@ -497,18 +497,18 @@ void scans(std::mt19937& rng) {
 int g_cfg = 0;
 struct Recorder {
     std::string* ev;
-    void operator()(gmp::bytes_view frame) const { *ev += "F" + std::to_string(frame.size()) + " "; }
-    void operator()(const gmp::FrameError& e) const {
+    void operator()(gmsg::bytes_view frame) const { *ev += "F" + std::to_string(frame.size()) + " "; }
+    void operator()(const gmsg::FrameError& e) const {
         *ev += "E" + std::to_string(static_cast<int>(e.error)) + ":" + std::to_string(e.data.size()) + " ";
     }
 };
 struct TestProtocol {
-    static gmp::FrameScan scan(gmp::bytes_view b) noexcept { return cpp_scan(g_cfg, b); }
+    static gmsg::FrameScan scan(gmsg::bytes_view b) noexcept { return cpp_scan(g_cfg, b); }
     template <class H>
-    static gmp::Error process(gmp::mut_bytes frame, H& h) {
-        if (frame.empty() || (frame.back() & 1u) != 0) return gmp::Error::BadChecksum;
-        h(gmp::bytes_view(frame));
-        return gmp::Error::None;
+    static gmsg::Error process(gmsg::mut_bytes frame, H& h) {
+        if (frame.empty() || (frame.back() & 1u) != 0) return gmsg::Error::BadChecksum;
+        h(gmsg::bytes_view(frame));
+        return gmsg::Error::None;
     }
 };
 
@@ -516,9 +516,9 @@ template <std::size_t Cap>
 void stream_case(int which, const Bytes& data, std::size_t chunk) {
     g_cfg = which;
     std::string ev;
-    gmp::StreamParser<TestProtocol, Cap> p;
+    gmsg::StreamParser<TestProtocol, Cap> p;
     for (std::size_t pos = 0; pos < data.size(); pos += chunk)
-        (void)p.feed(gmp::bytes_view(data.data() + pos, std::min(chunk, data.size() - pos)), Recorder{&ev});
+        (void)p.feed(gmsg::bytes_view(data.data() + pos, std::min(chunk, data.size() - pos)), Recorder{&ev});
     sep();
     raw("[");
     num(static_cast<unsigned>(which));
@@ -561,21 +561,21 @@ constexpr std::string_view to_string(Mode m) { return m == Mode::idle ? "idle" :
 
 struct Inner {
     int id;
-    void print_to(gmp::Printer& p) const {
+    void print_to(gmsg::Printer& p) const {
         p.begin("Inner");
         p.field("id", id);
         p.end();
     }
 };
 struct Empty {
-    void print_to(gmp::Printer& p) const {
+    void print_to(gmsg::Printer& p) const {
         p.begin("Empty");
         p.end();
     }
 };
 
 struct Scenario {
-    void print_to(gmp::Printer& p) const {
+    void print_to(gmsg::Printer& p) const {
         p.begin("Scenario");
         p.field("u", 4000000000u);
         p.field("i", -12);
@@ -602,7 +602,7 @@ struct Scenario {
         p.conversion(0.000012345678901, "");
         p.key("bytes");
         const std::uint8_t b[] = {0, 1, 0xAB, 0xFF, 0x10};
-        p.value(gmp::hex(gmp::bytes_view(b, 5)));
+        p.value(gmsg::hex(gmsg::bytes_view(b, 5)));
         p.key("text");
         p.value(std::string_view("a\"b\\c\n\x01"));
         p.absent("maybe");
@@ -623,7 +623,7 @@ struct Scenario {
         p.end();
         p.computed("total", 42, "ms");
         p.key("err");
-        p.value(gmp::Result<int>(gmp::fail(gmp::Error::ParseError)));
+        p.value(gmsg::Result<int>(gmsg::fail(gmsg::Error::ParseError)));
         p.end();
     }
 };
@@ -635,10 +635,10 @@ void printer() {
             for (std::size_t items : {std::size_t{0}, std::size_t{2}, std::size_t{64}})
                 for (std::size_t mb : {std::size_t{0}, std::size_t{3}, std::size_t{64}})
                     for (int prec : {1, 6, 9, 17}) {
-                        gmp::PrintOptions o{style ? gmp::PrintStyle::single_line : gmp::PrintStyle::multi_line,
+                        gmsg::PrintOptions o{style ? gmsg::PrintStyle::single_line : gmsg::PrintStyle::multi_line,
                                             static_cast<std::uint8_t>(indent), items, mb, prec};
                         std::string text;
-                        (void)gmp::print(Scenario{}, text, o);
+                        (void)gmsg::print(Scenario{}, text, o);
                         sep();
                         raw(style ? "[\"single_line\"," : "[\"multi_line\",");
                         num(indent);

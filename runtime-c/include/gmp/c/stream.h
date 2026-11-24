@@ -1,4 +1,4 @@
-/* gmp/c/stream.h - incremental frame extraction from a byte stream (port of gmp::StreamParser).
+/* gmp/c/stream.h - incremental frame extraction from a byte stream (port of gmsg::StreamParser).
  *
  * The caller owns the buffer (any size >= the protocol's max frame). Generated protocols wrap gmsg_stream in a
  * struct whose first member is the gmsg_stream, and provide the scan / process / on_error functions; the

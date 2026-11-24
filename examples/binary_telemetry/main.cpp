@@ -32,7 +32,7 @@ int main() {
 
     // The parser stores the handler, so the receive path below only passes bytes.
     // (Alternatives: demo::Link::Stream<> with feed(bytes, handler), or CallbackStream with on<&App::fn>(app).)
-    auto parser = demo::Link::make_stream(gmp::overloaded{
+    auto parser = demo::Link::make_stream(gmsg::overloaded{
         [](const demo::StatusView& v) {
             std::printf("Status  uptime=%us voltage=%.3fV mode=%s", static_cast<unsigned>(v.uptime_s()), v.voltage_scaled(),
                         demo::to_string(v.state().mode).data());
@@ -40,15 +40,15 @@ int main() {
             std::printf("\n");
         },
         [](const demo::SamplesView& v) {
-            // gmp::println dumps every field (enum names, units, nested messages); see README "Printing"
-            gmp::println(v, stdout, {.style = gmp::PrintStyle::single_line});
+            // gmsg::println dumps every field (enum names, units, nested messages); see README "Printing"
+            gmsg::println(v, stdout, {.style = gmsg::PrintStyle::single_line});
         },
-        [](const gmp::FrameError& e) {
-            std::printf("dropped %zu byte(s): %s\n", e.data.size(), gmp::to_string(e.error).data());
+        [](const gmsg::FrameError& e) {
+            std::printf("dropped %zu byte(s): %s\n", e.data.size(), gmsg::to_string(e.error).data());
         },
     });
     // Deliver the stream in awkward 5-byte chunks, as a UART driver might.
-    const gmp::bytes_view all(wire);
+    const gmsg::bytes_view all(wire);
     for (std::size_t off = 0; off < all.size(); off += 5)
         parser.feed(all.subspan(off, std::min<std::size_t>(5, all.size() - off)));
 

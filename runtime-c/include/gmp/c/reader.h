@@ -1,4 +1,4 @@
-/* gmp/c/reader.h - bounds-checked forward cursors over caller supplied buffers (gmp::ByteReader / ByteWriter).
+/* gmp/c/reader.h - bounds-checked forward cursors over caller supplied buffers (gmsg::ByteReader / ByteWriter).
  *
  *     gmsg_reader r = gmsg_reader_init(data, size);
  *     uint16_t v;

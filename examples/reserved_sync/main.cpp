@@ -16,7 +16,7 @@ Frame encode(const M& msg) {
     std::array<std::uint8_t, Link::max_frame> buf{};
     auto n = Link::encode(msg, buf);
     if (!n) {
-        std::printf("encode failed: %s\n", gmp::to_string(n.error()).data());
+        std::printf("encode failed: %s\n", gmsg::to_string(n.error()).data());
         return {};
     }
     return Frame(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(*n));
@@ -83,7 +83,7 @@ int main() {
 
     std::printf("\nStream of %zu bytes, fed in 3-byte chunks:\n", wire.size());
     Link::Stream<> parser;
-    auto handler = gmp::overloaded{
+    auto handler = gmsg::overloaded{
         [](const motor::TelemetryView& v) {
             std::printf("  Telemetry seq=%u rpm=%u current=%.2fA temperature=%.1fC\n", v.seq(), v.rpm(), v.current_scaled(),
                         v.temperature_scaled());
@@ -91,11 +91,11 @@ int main() {
         [](const motor::LogView& v) {
             std::printf("  Log \"%.*s\"\n", static_cast<int>(v.text().size()), v.text().data());
         },
-        [](const gmp::FrameError& e) {
-            std::printf("  dropped %zu byte(s): %s\n", e.data.size(), gmp::to_string(e.error).data());
+        [](const gmsg::FrameError& e) {
+            std::printf("  dropped %zu byte(s): %s\n", e.data.size(), gmsg::to_string(e.error).data());
         },
     };
-    const gmp::bytes_view all(wire);
+    const gmsg::bytes_view all(wire);
     for (std::size_t off = 0; off < all.size(); off += 3)
         parser.feed(all.subspan(off, std::min<std::size_t>(3, all.size() - off)), handler);
 

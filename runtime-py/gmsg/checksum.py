@@ -46,7 +46,7 @@ class Checksum:
 
 
 class Crc(Checksum):
-    """Generic CRC in the Rocksoft model (gmp::checksum::Crc): width 1..64, any parameters."""
+    """Generic CRC in the Rocksoft model (gmsg::checksum::Crc): width 1..64, any parameters."""
 
     def __init__(self, width: int, poly: int, init: int = 0, refin: bool = False, refout: bool = False,
                  xorout: int = 0, name: str = "") -> None:

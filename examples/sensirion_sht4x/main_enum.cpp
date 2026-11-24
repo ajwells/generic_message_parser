@@ -46,14 +46,14 @@ int main() {
             case Reply::serial: {
                 const auto rx = simulated_read(c);
                 auto s = sht::SerialNumberView::from(rx);
-                if (!s) { std::printf("bad response: %s\n", gmp::to_string(s.error()).data()); return 1; }
+                if (!s) { std::printf("bad response: %s\n", gmsg::to_string(s.error()).data()); return 1; }
                 std::printf("serial = 0x%08X\n", static_cast<unsigned>(s->serial()));  // computed value
                 break;
             }
             case Reply::measurement: {
                 const auto rx = simulated_read(c);
                 auto m = sht::MeasurementResponse::decode(rx);
-                if (!m) { std::printf("bad response: %s\n", gmp::to_string(m.error()).data()); return 1; }
+                if (!m) { std::printf("bad response: %s\n", gmsg::to_string(m.error()).data()); return 1; }
                 const auto& meas = std::get<sht::Measurement>(*m);
                 std::printf("T = %.2f degC (%.2f degF), RH = %.2f %%RH\n", meas.temperature_scaled(),
                             meas.temperature_degf(), meas.humidity_scaled());
@@ -68,7 +68,7 @@ int main() {
         const std::array<std::uint8_t, 1> rx{b};
         auto f = sht::CommandFrame::decode(rx);
         if (f) std::printf("sniffed %02X -> %s\n", b, sht::to_string(f->command).data());
-        else std::printf("sniffed %02X -> error: %s\n", b, gmp::to_string(f.error()).data());
+        else std::printf("sniffed %02X -> error: %s\n", b, gmsg::to_string(f.error()).data());
     }
     return 0;
 }

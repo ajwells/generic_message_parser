@@ -1,12 +1,12 @@
 // Reference data for the Studio cross-check (tools/schema-studio/tests/crosscheck.html).
 //
 // Encodes messages and noisy frame streams with the generated C++ code, decodes them again and writes JSON:
-//   messages: { schema, target, hex, multi, single }   one message decoded on its own (gmp::print output)
+//   messages: { schema, target, hex, multi, single }   one message decoded on its own (gmsg::print output)
 //   streams:  { schema, target, hex, frames: [...] }   a byte stream with noise and corrupted frames; `frames` is
-//                                                      the gmp::print output of every frame the C++ Stream parser
+//                                                      the gmsg::print output of every frame the C++ Stream parser
 //                                                      delivered, in order
 //   outcomes: { schema, target, hex, error }           whether a (mutated) message decodes: error 0 or the
-//                                                      gmp::Error code (value limits: which inputs are rejected)
+//                                                      gmsg::Error code (value limits: which inputs are rejected)
 // The Studio decoder must produce the same text, which compares every decoded value.
 
 #include <array>
@@ -61,9 +61,9 @@ std::string hex(const Bytes& b) {
 }
 
 template <class T>
-std::string text(const T& v, gmp::PrintStyle style = gmp::PrintStyle::multi_line) {
+std::string text(const T& v, gmsg::PrintStyle style = gmsg::PrintStyle::multi_line) {
     std::string s;
-    (void)gmp::print(v, s, {.style = style});
+    (void)gmsg::print(v, s, {.style = style});
     return s;
 }
 
@@ -82,16 +82,16 @@ void message(const char* schema, const char* target, const M& m) {
     auto n = m.encode(buf);
     if (!n) return fail("encode", target);
     const Bytes bytes(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(*n));
-    auto d = M::decode(gmp::bytes_view(bytes.data(), bytes.size()));
+    auto d = M::decode(gmsg::bytes_view(bytes.data(), bytes.size()));
     if (!d) return fail("decode", target);
     messages.push_back("{\"schema\":" + js(schema) + ",\"target\":" + js(target) + ",\"hex\":" + js(hex(bytes)) +
-                       ",\"multi\":" + js(text(*d)) + ",\"single\":" + js(text(*d, gmp::PrintStyle::single_line)) + "}");
+                       ",\"multi\":" + js(text(*d)) + ",\"single\":" + js(text(*d, gmsg::PrintStyle::single_line)) + "}");
 }
 
 /// Record whether `bytes` decodes as M (0) or the error code.
 template <class M>
 void outcome(const char* schema, const char* target, const Bytes& bytes) {
-    const auto d = M::decode(gmp::bytes_view(bytes.data(), bytes.size()));
+    const auto d = M::decode(gmsg::bytes_view(bytes.data(), bytes.size()));
     outcomes.push_back("{\"schema\":" + js(schema) + ",\"target\":" + js(target) + ",\"hex\":" + js(hex(bytes)) +
                        ",\"error\":" + std::to_string(d ? 0 : static_cast<int>(d.error())) + "}");
 }
@@ -152,9 +152,9 @@ struct Noisy {
     void done() {
         std::vector<std::string> printed;
         typename P::template Stream<> parser;
-        parser.feed(gmp::bytes_view(wire.data(), wire.size()), [&](const auto& v) {
+        parser.feed(gmsg::bytes_view(wire.data(), wire.size()), [&](const auto& v) {
             using V = std::remove_cvref_t<decltype(v)>;
-            if constexpr (!std::is_same_v<V, gmp::FrameError>) printed.push_back(text(v));
+            if constexpr (!std::is_same_v<V, gmsg::FrameError>) printed.push_back(text(v));
         });
         std::string frames;
         for (const auto& p : printed) frames += (frames.empty() ? "" : ",") + js(p);
@@ -388,7 +388,7 @@ int main() {
         const std::string check = "123456789";
         Bytes ramp(256);
         for (std::size_t i = 0; i < ramp.size(); ++i) ramp[i] = static_cast<std::uint8_t>(i * 7 + 3);
-        const gmp::bytes_view inputs[] = {gmp::as_bytes(check.data(), check.size()), gmp::bytes_view(ramp.data(), ramp.size())};
+        const gmsg::bytes_view inputs[] = {gmsg::as_bytes(check.data(), check.size()), gmsg::bytes_view(ramp.data(), ramp.size())};
         auto add = [&]<class C>(const char* name, C) {
             for (std::size_t k = 0; k < 2; ++k) {
                 char v[24];
@@ -396,7 +396,7 @@ int main() {
                 sums.push_back("{\"algo\":" + js(name) + ",\"input\":" + std::to_string(k) + ",\"value\":" + js(v) + "}");
             }
         };
-        namespace c = gmp::checksum;
+        namespace c = gmsg::checksum;
         add("crc8", c::crc8{});
         add("crc8_maxim", c::crc8_maxim{});
         add("crc8_autosar", c::crc8_autosar{});

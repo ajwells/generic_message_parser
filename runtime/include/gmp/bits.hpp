@@ -14,7 +14,7 @@
 #include "gmp/endian.hpp"
 #include "gmp/result.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 /// Extract an unsigned value of `nbits` (1..64) starting at `bit_offset`. Caller ensures bounds.
 constexpr std::uint64_t extract_bits(const std::uint8_t* p, std::size_t bit_offset, unsigned nbits,
@@ -127,4 +127,4 @@ private:
     std::size_t bit_ = 0;
 };
 
-} // namespace gmp
+} // namespace gmsg

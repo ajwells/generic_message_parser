@@ -54,7 +54,7 @@ typedef struct gmsg_print_options {
     int precision;    /* significant digits of scaled / converted values; <= 0 = shortest; default 9 */
 } gmsg_print_options;
 
-/* The defaults (same as gmp::PrintOptions{}). */
+/* The defaults (same as gmsg::PrintOptions{}). */
 GMSG_API gmsg_print_options gmsg_print_defaults(void);
 
 /* Writes s[0..n); returns false when the sink is full (the printer then stops writing). */

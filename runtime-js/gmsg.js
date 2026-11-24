@@ -2,7 +2,7 @@
  *
  * A port of the C++ runtime (runtime/include/gmp) with the same behaviour and the same text output, written the way
  * JavaScript code is normally written:
- *   - errors are thrown as `GmpError` (`.code` is one of `gmsg.Err`, `.message` the same text as gmp::to_string)
+ *   - errors are thrown as `GmpError` (`.code` is one of `gmsg.Err`, `.message` the same text as gmsg::to_string)
  *   - bytes are Uint8Array; strings are JS strings with one character per byte (latin1), so they round-trip exactly
  *   - integers are Numbers, except 64-bit types (u64 / i64), which are BigInt
  *   - encoders return a new Uint8Array (no caller buffer, no BufferFull); printing returns a string
@@ -22,7 +22,7 @@
   // ================================================================================================================
   // errors (gmp/error.hpp)
   // ================================================================================================================
-  /** Error codes, same values and order as gmp::Error / gmsg_error. */
+  /** Error codes, same values and order as gmsg::Error / gmsg_error. */
   const Err = Object.freeze({
     None: 0, Truncated: 1, BadSync: 2, BadChecksum: 3, BadLength: 4, BadDelimiter: 5, BadConst: 6, OutOfRange: 7,
     UnknownType: 8, BufferFull: 9, ParseError: 10, MissingField: 11, InvalidValue: 12, Custom: 13, UnknownEnum: 14,
@@ -33,7 +33,7 @@
     'custom error', 'unknown enum value', 'value out of limits'];
   const ERR_NAME = Object.keys(Err);
 
-  /** Text of an error code (gmp::to_string(Error)). */
+  /** Text of an error code (gmsg::to_string(Error)). */
   const errorText = (code) => ERR_TEXT[code] || 'unknown';
   /** Name of an error code ('BadChecksum'). */
   const errorName = (code) => ERR_NAME[code] || 'Unknown';
@@ -45,7 +45,7 @@
       this.name = 'GmpError';
       this.code = code;
     }
-    /** gmp::to_string text of the code, without the detail. */
+    /** gmsg::to_string text of the code, without the detail. */
     get text() { return errorText(this.code); }
   }
   const fail = (code, detail) => { throw new GmpError(code, detail); };
@@ -108,7 +108,7 @@
     else for (let i = 0; i < n; i++) v = (v << 8n) | BigInt(p[at + i]);
     return v;
   }
-  /** A value of primitive type t ('u16', 'f32', 'bool', 'char', ...) at p[at] (gmp::load). */
+  /** A value of primitive type t ('u16', 'f32', 'bool', 'char', ...) at p[at] (gmsg::load). */
   function load(p, at, t, endian) {
     if (p.length - at < SIZE[t] || at < 0) fail(Err.Truncated);
     const dv = viewOf(p), le = isLittle(endian);
@@ -154,7 +154,7 @@
     if (v < lo || v > hi) fail(Err.OutOfRange, `${what || 'value'} ${v} does not fit ${t}`);
     return v;
   }
-  /** A field value as a 64-bit signed BigInt, as gmp::to_int does for generated expressions: bool -> 0 / 1, char ->
+  /** A field value as a 64-bit signed BigInt, as gmsg::to_int does for generated expressions: bool -> 0 / 1, char ->
    *  its (signed) character code, floats truncated toward zero. */
   function toInt(v) {
     if (typeof v === 'bigint') return BigInt.asIntN(64, v);
@@ -168,7 +168,7 @@
   /** Integer division / remainder of generated expressions (int64, truncating); division by zero fails. */
   function idiv(a, b) { if (b === 0n) fail(Err.InvalidValue, 'division by zero'); return BigInt.asIntN(64, a / b); }
   function imod(a, b) { if (b === 0n) fail(Err.InvalidValue, 'division by zero'); return a % b; }
-  /** Trailing pad characters removed (gmp::strip_padding). */
+  /** Trailing pad characters removed (gmsg::strip_padding). */
   function stripPadding(s, pad) {
     let e = s.length;
     while (e > 0 && s.charCodeAt(e - 1) === pad) e--;
@@ -312,7 +312,7 @@
     const v = signed ? signExtend(raw, n) : raw;
     return is64(t) ? BigInt(v) : Number(v);
   }
-  /** Write a value into a bit field (truncated to n bits, as gmp::set_bits). */
+  /** Write a value into a bit field (truncated to n bits, as gmsg::set_bits). */
   function setBits(p, off, n, order, value) {
     insertBits(p, off, n, typeof value === 'boolean' ? (value ? 1 : 0) : value, order);
   }
@@ -324,7 +324,7 @@
   function reflectN(v, w) { let r = 0; for (let i = 0; i < w; i++) { r = (r * 2) + (v & 1); v >>>= 1; } return r >>> 0; }
   function reflectB(v, w) { let r = 0n; for (let i = 0; i < w; i++) { r = (r << 1n) | (v & 1n); v >>= 1n; } return r; }
 
-  /** Generic CRC (Rocksoft model), the same as gmp::checksum::Crc. Parameters as Numbers (BigInt for width > 32). */
+  /** Generic CRC (Rocksoft model), the same as gmsg::checksum::Crc. Parameters as Numbers (BigInt for width > 32). */
   function crc({ width, poly, init = 0, refin = false, refout = false, xorout = 0, name }) {
     const size = (width + 7) >> 3;
     if (width > 32) return crcBig(width, BigInt(poly), BigInt(init), refin, refout, BigInt(xorout), size, name);
@@ -476,7 +476,7 @@
   const indexEscape = (esc, reserved, base = 0) =>
     makeEscape(esc, 'table', 0x20, [...reserved], [...reserved].map((_, i) => (base + i) & 0xFF));
 
-  /** Walk escaped bytes from `at` until n unescaped bytes are produced (gmp::walk_escaped). Unescaped bytes with
+  /** Walk escaped bytes from `at` until n unescaped bytes are produced (gmsg::walk_escaped). Unescaped bytes with
    *  index in [pickAt, pickAt + pick.length) are copied into `pick`. */
   function walkEscaped(buf, at, n, cfg, pickAt = 0, pick = null) {
     let i = at;
@@ -499,13 +499,13 @@
     return { kind: 'done', wire: i, error: Err.None };
   }
   /** The n header bytes after the sync pattern (`prefix` bytes) at the start of buf, unescaped when `escape` is
-   *  enabled, or null while they have not all arrived / the escaping is invalid (gmp::read_frame_header). */
+   *  enabled, or null while they have not all arrived / the escaping is invalid (gmsg::read_frame_header). */
   function readFrameHeader(buf, prefix, escape, n) {
     if (!escape || !escape.enabled) return buf.length < prefix + n ? null : buf.slice(prefix, prefix + n);
     const out = new Uint8Array(n);
     return walkEscaped(buf, prefix, n, escape, 0, out).kind === 'done' ? out : null;
   }
-  /** Unescape bytes[start, end) in place; returns the new end (gmp::unescape_in_place). */
+  /** Unescape bytes[start, end) in place; returns the new end (gmsg::unescape_in_place). */
   function unescapeInPlace(buf, cfg, start = 0, end = buf.length) {
     let w = start;
     for (let r = start; r < end; r++) {
@@ -557,7 +557,7 @@
   const frameScan = (n, consume, consumeOnError) => ({ kind: 'frame', size: n, consume, consumeOnError, error: Err.None });
   const skip = (n, error = Err.None) => ({ kind: 'skip', size: n, consume: 0, consumeOnError: 0, error });
   const EMPTY = new Uint8Array(0);
-  /** Scan results for custom framers (gmp::FrameScan::need_more / frame / skip). */
+  /** Scan results for custom framers (gmsg::FrameScan::need_more / frame / skip). */
   const FrameScan = Object.freeze({ needMore, frame: frameScan, skip });
 
   /** Locate `pat` at the start of buf: null when matched, otherwise the scan to return. */
@@ -1267,7 +1267,7 @@
   }
   const hexByteText = (b) => '0123456789ABCDEF'[(b >> 4) & 15] + '0123456789ABCDEF'[b & 15];
 
-  /** Builds a text message, inserting separators between tokens (gmp::text::TextWriter). */
+  /** Builds a text message, inserting separators between tokens (gmsg::text::TextWriter). */
   class TextWriter {
     constructor(sep) { this.sep = sep; this.out = ''; this.first = true; }
     beginToken() { if (!this.first) this.out += this.sep; this.first = false; }
@@ -1311,7 +1311,7 @@
   }
   const DEFAULT_PRINT = Object.freeze({ style: 'multi_line', indent: 2, maxItems: 64, maxBytes: 64, precision: 9 });
 
-  /** The printer state machine of gmp::Printer, writing into a string. Options: style ('multi_line' |
+  /** The printer state machine of gmsg::Printer, writing into a string. Options: style ('multi_line' |
    *  'single_line'), indent, maxItems, maxBytes (0 = all), precision (digits of converted values). */
   class Printer {
     constructor(opts) {
@@ -1416,7 +1416,7 @@
     }
   }
 
-  /** Text of a generated struct / view (gmp::print). Options as Printer. */
+  /** Text of a generated struct / view (gmsg::print). Options as Printer. */
   function print(v, opts) {
     const p = new Printer(opts);
     p.value(v);

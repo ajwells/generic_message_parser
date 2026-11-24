@@ -37,7 +37,7 @@ TEST_CASE("SHT4x commands encode to the datasheet bytes (Table 8)") {
     CHECK(command_byte<Heater20mW1s>() == 0x1E);
     CHECK(command_byte<Heater20mW100ms>() == 0x15);
     const std::array<std::uint8_t, 1> wrong{0xFD};
-    CHECK(SoftReset::decode(wrong).error() == gmp::Error::BadConst);
+    CHECK(SoftReset::decode(wrong).error() == gmsg::Error::BadConst);
 }
 
 TEST_CASE("SHT4x measurement: struct, view and protocol agree") {
@@ -69,11 +69,11 @@ TEST_CASE("SHT4x word CRCs are checked in every decode path") {
         INFO("flipped byte " << i);
         auto bad = kMeasurement;
         bad[i] ^= 0x10;
-        CHECK(Measurement::decode(bad).error() == gmp::Error::BadChecksum);
-        CHECK(MeasurementView::from(bad).error() == gmp::Error::BadChecksum);
-        CHECK(MeasurementResponse::parse(bad).error() == gmp::Error::BadChecksum);
+        CHECK(Measurement::decode(bad).error() == gmsg::Error::BadChecksum);
+        CHECK(MeasurementView::from(bad).error() == gmsg::Error::BadChecksum);
+        CHECK(MeasurementResponse::parse(bad).error() == gmsg::Error::BadChecksum);
     }
-    CHECK(Measurement::decode(std::span(kMeasurement).first(5)).error() == gmp::Error::Truncated);
+    CHECK(Measurement::decode(std::span(kMeasurement).first(5)).error() == gmsg::Error::Truncated);
 }
 
 TEST_CASE("SHT4x serial number and setters") {
@@ -140,8 +140,8 @@ TEST_CASE("SHT4x enum variant: every command byte matches the per-message schema
         CHECK_FALSE(en::to_string(back->command).empty());
     }
     const std::array<std::uint8_t, 1> unknown{0x42};
-    CHECK(en::CommandFrame::decode(unknown).error() == gmp::Error::UnknownEnum);  // Command is strict
-    CHECK(en::CommandFrameView::from(unknown).error() == gmp::Error::UnknownEnum);
+    CHECK(en::CommandFrame::decode(unknown).error() == gmsg::Error::UnknownEnum);  // Command is strict
+    CHECK(en::CommandFrameView::from(unknown).error() == gmsg::Error::UnknownEnum);
     CHECK_FALSE(en::is_known(static_cast<en::Command>(0x42)));
 }
 
@@ -158,7 +158,7 @@ TEST_CASE("SHT4x enum variant: responses decode like the per-message schema") {
     CHECK_THAT(mb.temperature_degf(), WithinAbs(77.0, 1e-9));
     auto bad = kMeasurement;
     bad[4] ^= 0x01;
-    CHECK(en::MeasurementResponse::parse(bad).error() == gmp::Error::BadChecksum);
+    CHECK(en::MeasurementResponse::parse(bad).error() == gmsg::Error::BadChecksum);
     auto s = en::SerialNumberView::from(kSerial);
     REQUIRE(s);
     CHECK(s->serial_high() == 0x0F4F);
@@ -167,7 +167,7 @@ TEST_CASE("SHT4x enum variant: responses decode like the per-message schema") {
 TEST_CASE("SHT4x enum variant: encoding an unknown command fails") {
     namespace en = sensirion::sht4x_enum;
     std::array<std::uint8_t, 1> out{};
-    CHECK(en::CommandFrame{static_cast<en::Command>(0x42)}.encode(out).error() == gmp::Error::UnknownEnum);
+    CHECK(en::CommandFrame{static_cast<en::Command>(0x42)}.encode(out).error() == gmsg::Error::UnknownEnum);
 }
 
 TEST_CASE("SHT4x serial number as a computed value, in both schemas") {

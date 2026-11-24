@@ -47,7 +47,7 @@ std::string nmea(std::string_view body) {  // "$" body "*" xor8 "\r\n"
     return "$" + std::string(body) + "*" + hex[x >> 4] + hex[x & 15] + "\r\n";
 }
 
-gmp::bytes_view bv(const std::string& s) { return gmp::as_bytes(s.data(), s.size()); }
+gmsg::bytes_view bv(const std::string& s) { return gmsg::as_bytes(s.data(), s.size()); }
 
 } // namespace
 
@@ -58,7 +58,7 @@ TEST_CASE("binary views and struct decode report the bytes after the message") {
     std::array<std::uint8_t, 16> buf{};
     const auto n = r.encode(buf);
     REQUIRE(n);
-    const gmp::bytes_view exact(buf.data(), *n), longer(buf.data(), *n + 3);
+    const gmsg::bytes_view exact(buf.data(), *n), longer(buf.data(), *n + 3);
     CHECK(fr::ReadingView::from(exact)->extra_bytes() == 0);
     CHECK(fr::ReadingView::from(longer)->extra_bytes() == 3);
     CHECK(fr::ReadingView::unchecked(longer).extra_bytes() == 3);
@@ -75,7 +75,7 @@ TEST_CASE("binary views and struct decode report the bytes after the message") {
     note.n = 3;
     const auto m = note.encode(buf);
     REQUIRE(m);
-    CHECK(fr::NoteView::from(gmp::bytes_view(buf.data(), *m + 2))->extra_bytes() == 2);
+    CHECK(fr::NoteView::from(gmsg::bytes_view(buf.data(), *m + 2))->extra_bytes() == 2);
 }
 
 TEST_CASE("text views and struct decode report the tokens after the message") {
@@ -110,21 +110,21 @@ TEST_CASE("without exact_size, frames with extra data are delivered and counted"
 
     // whole-buffer parse: the view reports it
     Bytes buf = longer;
-    const auto v = fr::Loose::parse(gmp::mut_bytes(buf.data(), buf.size()));
+    const auto v = fr::Loose::parse(gmsg::mut_bytes(buf.data(), buf.size()));
     REQUIRE(v);
-    CHECK(gmp::extra_of(*v) == 3);
+    CHECK(gmsg::extra_of(*v) == 3);
 }
 
 TEST_CASE("exact_size: a frame with data after its message fails with BadLength") {
     const auto good = reading_frame<fr::Exact>(0), longer = reading_frame<fr::Exact>(2);
     Bytes buf = longer;
-    CHECK(fr::Exact::parse(gmp::mut_bytes(buf.data(), buf.size())).error() == gmp::Error::BadLength);
+    CHECK(fr::Exact::parse(gmsg::mut_bytes(buf.data(), buf.size())).error() == gmsg::Error::BadLength);
     buf = good;
-    CHECK(fr::Exact::parse(gmp::mut_bytes(buf.data(), buf.size())));
+    CHECK(fr::Exact::parse(gmsg::mut_bytes(buf.data(), buf.size())));
 
-    std::vector<gmp::Error> errors;
+    std::vector<gmsg::Error> errors;
     int delivered = 0;
-    auto handler = gmp::overloaded{[&](const gmp::FrameError& e) { errors.push_back(e.error); },
+    auto handler = gmsg::overloaded{[&](const gmsg::FrameError& e) { errors.push_back(e.error); },
                                    [&](const auto&...) { ++delivered; }};
     fr::Exact::Stream<> s;
     Bytes wire = good;
@@ -133,7 +133,7 @@ TEST_CASE("exact_size: a frame with data after its message fails with BadLength"
     (void)s.feed(wire, handler);
     CHECK(delivered == 2);
     REQUIRE_FALSE(errors.empty());
-    CHECK(errors.front() == gmp::Error::BadLength);
+    CHECK(errors.front() == gmsg::Error::BadLength);
     CHECK(s.stats().frames_with_extra == 0);
 }
 
@@ -159,8 +159,8 @@ TEST_CASE("length check by message type: an impossible length is rejected as soo
         (void)s.push(header);
         const auto e = s.poll_event();
         REQUIRE(e);
-        REQUIRE(std::holds_alternative<gmp::FrameError>(*e));
-        CHECK(std::get<gmp::FrameError>(*e).error == gmp::Error::BadLength);
+        REQUIRE(std::holds_alternative<gmsg::FrameError>(*e));
+        CHECK(std::get<gmsg::FrameError>(*e).error == gmsg::Error::BadLength);
     }
     // Loose: a longer body is allowed (data after the message), but a Reading body of 2 bytes is impossible
     {
@@ -169,7 +169,7 @@ TEST_CASE("length check by message type: an impossible length is rejected as soo
         (void)s.push(short_len);
         const auto e = s.poll_event();
         REQUIRE(e);
-        CHECK(std::get<gmp::FrameError>(*e).error == gmp::Error::BadLength);
+        CHECK(std::get<gmsg::FrameError>(*e).error == gmsg::Error::BadLength);
         while (s.poll_event()) {}  // the rest of the rejected header is skipped (BadSync)
         CHECK(s.buffered() == 0);
         const std::array<std::uint8_t, 3> long_len{0xB5, 0x01, 30};

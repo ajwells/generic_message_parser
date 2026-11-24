@@ -5,7 +5,7 @@
 
 static void reserve(gmsg_escape_config* c, uint8_t b) { c->mask[b >> 5] |= (uint32_t)1 << (b & 31u); }
 
-/* Same construction as gmp::make_xor_escape / make_index_escape / make_map_escape. */
+/* Same construction as gmsg::make_xor_escape / make_index_escape / make_map_escape. */
 static gmsg_escape_config make_xor(uint8_t esc, uint8_t xm, const uint8_t* reserved, size_t n) {
     gmsg_escape_config c;
     size_t i;

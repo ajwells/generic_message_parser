@@ -32,7 +32,7 @@ TEST_CASE("field CRCs round-trip around variable and conditional fields") {
         REQUIRE(n);
         // state+crc, count, 2 items, level+crc16, [extra+crc], magic+crc
         CHECK(*n == 2 + 1 + 4 + 4 + (st == State::error ? 3u : 0u) + 2);
-        const gmp::bytes_view wire(buf.data(), *n);
+        const gmsg::bytes_view wire(buf.data(), *n);
 
         auto back = Mixed::decode(wire);
         REQUIRE(back);
@@ -53,7 +53,7 @@ TEST_CASE("field CRCs round-trip around variable and conditional fields") {
             INFO("flipped byte " << i);
             auto bad = buf;
             bad[i] ^= 0x01;
-            const gmp::bytes_view b(bad.data(), *n);
+            const gmsg::bytes_view b(bad.data(), *n);
             CHECK_FALSE(Mixed::decode(b));
             CHECK_FALSE(MixedView::from(b));
         }
@@ -68,7 +68,7 @@ TEST_CASE("inline CRC-16 is stored in the field's (little-endian) byte order") {
     CHECK(buf[7] == 0xFA);
     CHECK(buf[8] == 0xFF);
     const std::uint8_t level[] = {0xFA, 0xFF};
-    const auto crc = gmp::checksum::crc16_ccitt::compute(gmp::bytes_view(level, 2));
+    const auto crc = gmsg::checksum::crc16_ccitt::compute(gmsg::bytes_view(level, 2));
     CHECK(buf[9] == (crc & 0xFF));
     CHECK(buf[10] == (crc >> 8));
 }
@@ -84,7 +84,7 @@ TEST_CASE("named conversions on binary and text fields") {
     CHECK(m.level == 4);
 
     constexpr std::string_view rec = "1234";
-    auto v = ReadingView::from(gmp::as_bytes(rec.data(), rec.size()));
+    auto v = ReadingView::from(gmsg::as_bytes(rec.data(), rec.size()));
     REQUIRE(v);
     CHECK_THAT(*v->raw_scaled(), WithinAbs(123.4, 1e-9));
     CHECK_THAT(*v->raw_millis(), WithinAbs(123400.0, 1e-9));

@@ -55,7 +55,7 @@ void put(Bytes& b, std::size_t at, T v) {
 
 /// Decode `b` as struct and view: both succeed, or both fail with ValueOutOfLimits.
 void expect(const Bytes& b, bool ok) {
-    const gmp::bytes_view v(b.data(), b.size());
+    const gmsg::bytes_view v(b.data(), b.size());
     const auto s = Sample::decode(v);
     const auto w = SampleView::from(v);
     if (ok) {
@@ -63,9 +63,9 @@ void expect(const Bytes& b, bool ok) {
         CHECK(w);
     } else {
         REQUIRE_FALSE(s);
-        CHECK(s.error() == gmp::Error::ValueOutOfLimits);
+        CHECK(s.error() == gmsg::Error::ValueOutOfLimits);
         REQUIRE_FALSE(w);
-        CHECK(w.error() == gmp::Error::ValueOutOfLimits);
+        CHECK(w.error() == gmsg::Error::ValueOutOfLimits);
     }
 }
 
@@ -81,7 +81,7 @@ void expect_encode_fails(const Sample& s) {
     std::array<std::uint8_t, 128> buf{};
     const auto n = s.encode(buf);
     REQUIRE_FALSE(n);
-    CHECK(n.error() == gmp::Error::ValueOutOfLimits);
+    CHECK(n.error() == gmsg::Error::ValueOutOfLimits);
 }
 
 } // namespace
@@ -175,11 +175,11 @@ TEST_CASE("array elements, derived lengths and conditional fields are checked") 
     std::array<std::uint8_t, 32> buf{};
     auto n = t.encode(buf);
     REQUIRE(n);
-    CHECK(Tail::decode(gmp::bytes_view(buf.data(), *n)));
+    CHECK(Tail::decode(gmsg::bytes_view(buf.data(), *n)));
     buf[2] = 0x01;  // rest[1] = 501
     buf[3] = 0xF5;
-    CHECK(Tail::decode(gmp::bytes_view(buf.data(), *n)).error() == gmp::Error::ValueOutOfLimits);
-    CHECK(TailView::from(gmp::bytes_view(buf.data(), *n)).error() == gmp::Error::ValueOutOfLimits);
+    CHECK(Tail::decode(gmsg::bytes_view(buf.data(), *n)).error() == gmsg::Error::ValueOutOfLimits);
+    CHECK(TailView::from(gmsg::bytes_view(buf.data(), *n)).error() == gmsg::Error::ValueOutOfLimits);
 }
 
 TEST_CASE("encode rejects values outside the limits") {
@@ -225,16 +225,16 @@ TEST_CASE("text fields: struct, view and encode check the limits") {
         INFO(bad);
         const auto d = Line::decode_text(bad);
         REQUIRE_FALSE(d);
-        CHECK(d.error() == gmp::Error::ValueOutOfLimits);
+        CHECK(d.error() == gmsg::Error::ValueOutOfLimits);
     }
     const std::string_view text = "1,1000,,1";
-    const auto v = LineView::from(gmp::as_bytes(text.data(), text.size()));
+    const auto v = LineView::from(gmsg::as_bytes(text.data(), text.size()));
     REQUIRE(v);  // text views parse on access
-    CHECK(v->count().error() == gmp::Error::ValueOutOfLimits);
+    CHECK(v->count().error() == gmsg::Error::ValueOutOfLimits);
     CHECK(v->speed());
 
     Line l = *ok;
     l.count = 1000;
     std::array<std::uint8_t, 64> buf{};
-    CHECK(l.encode(buf).error() == gmp::Error::ValueOutOfLimits);
+    CHECK(l.encode(buf).error() == gmsg::Error::ValueOutOfLimits);
 }

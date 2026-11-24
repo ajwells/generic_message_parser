@@ -17,7 +17,7 @@
 #include "gmp/endian.hpp"
 #include "gmp/error.hpp"
 
-namespace cs = gmp::checksum;
+namespace cs = gmsg::checksum;
 
 namespace {
 
@@ -28,13 +28,13 @@ using Algos = std::tuple<cs::crc8, cs::crc8_maxim, cs::crc8_autosar, cs::crc8_nr
                          cs::lrc8, cs::sum16, cs::fletcher16, cs::fletcher8_ubx>;
 
 template <std::size_t... I>
-std::uint64_t cpp_checksum_impl(int algo, gmp::bytes_view d, std::index_sequence<I...>) {
+std::uint64_t cpp_checksum_impl(int algo, gmsg::bytes_view d, std::index_sequence<I...>) {
     std::uint64_t out = 0;
     ((algo == static_cast<int>(I) ? (out = static_cast<std::uint64_t>(std::tuple_element_t<I, Algos>::compute(d)), 0) : 0), ...);
     return out;
 }
 
-std::uint64_t cpp_checksum(int algo, gmp::bytes_view d) {
+std::uint64_t cpp_checksum(int algo, gmsg::bytes_view d) {
     return cpp_checksum_impl(algo, d, std::make_index_sequence<std::tuple_size_v<Algos>>{});
 }
 
@@ -45,15 +45,15 @@ std::vector<std::uint8_t> random_bytes(std::mt19937& rng, std::size_t n) {
 }
 
 template <class T>
-std::uint64_t cpp_load_bits(const std::uint8_t* p, gmp::Endian e) {
-    const T v = gmp::load<T>(p, e);
+std::uint64_t cpp_load_bits(const std::uint8_t* p, gmsg::Endian e) {
+    const T v = gmsg::load<T>(p, e);
     if constexpr (std::is_same_v<T, float>) return std::bit_cast<std::uint32_t>(v);
     else if constexpr (std::is_same_v<T, double>) return std::bit_cast<std::uint64_t>(v);
     else if constexpr (std::is_signed_v<T>) return static_cast<std::uint64_t>(static_cast<std::int64_t>(v));
     else return static_cast<std::uint64_t>(v);
 }
 
-std::uint64_t cpp_load(int type, const std::uint8_t* p, gmp::Endian e) {
+std::uint64_t cpp_load(int type, const std::uint8_t* p, gmsg::Endian e) {
     switch (type) {
         case GMPCT_U8: return cpp_load_bits<std::uint8_t>(p, e);
         case GMPCT_U16: return cpp_load_bits<std::uint16_t>(p, e);
@@ -81,7 +81,7 @@ TEST_CASE("C runtime checksums match the C++ runtime") {
     std::mt19937 rng(12345);
     for (int round = 0; round < 300; ++round) {
         const auto data = random_bytes(rng, static_cast<std::size_t>(round % 70));
-        const gmp::bytes_view view(data.data(), data.size());
+        const gmsg::bytes_view view(data.data(), data.size());
         for (int a = 0; a < gmpct_checksum_count(); ++a) {
             INFO("algo " << a << ", length " << data.size());
             const auto expected = cpp_checksum(a, view);
@@ -95,7 +95,7 @@ TEST_CASE("C runtime generic CRC matches C++ for non-preset parameters") {
     std::mt19937 rng(777);
     for (int round = 0; round < 100; ++round) {
         const auto d = random_bytes(rng, static_cast<std::size_t>(round));
-        const gmp::bytes_view v(d.data(), d.size());
+        const gmsg::bytes_view v(d.data(), d.size());
         INFO("length " << d.size());
         // CRC-3/GSM, CRC-5/USB, CRC-7/MMC, CRC-12/UMTS (refin != refout), CRC-64/XZ
         CHECK(gmpct_crc_params(3, false, false, 0x3, 0x0, 0x7, d.data(), d.size()) ==
@@ -118,7 +118,7 @@ TEST_CASE("C runtime endian loads and stores match the C++ runtime") {
         for (int type = GMPCT_U8; type <= GMPCT_F64; ++type) {
             for (const bool big : {true, false}) {
                 INFO("type " << type << (big ? " big" : " little"));
-                const auto e = big ? gmp::Endian::big : gmp::Endian::little;
+                const auto e = big ? gmsg::Endian::big : gmsg::Endian::little;
                 const auto bits = gmpct_load(type, bytes.data(), big ? 1 : 0);
                 CHECK(bits == cpp_load(type, bytes.data(), e));
                 // Storing the loaded value back reproduces the bytes (floats included: NaN payloads are kept).
@@ -138,24 +138,24 @@ TEST_CASE("C runtime bit fields match the C++ runtime") {
         const std::size_t off = rng() % (80 - n + 1);
         for (const bool msb : {true, false}) {
             INFO("offset " << off << ", bits " << n << (msb ? " msb" : " lsb"));
-            const auto order = msb ? gmp::BitOrder::msb_first : gmp::BitOrder::lsb_first;
-            CHECK(gmpct_get_bits(bytes.data(), off, n, msb ? 1 : 0) == gmp::extract_bits(bytes.data(), off, n, order));
+            const auto order = msb ? gmsg::BitOrder::msb_first : gmsg::BitOrder::lsb_first;
+            CHECK(gmpct_get_bits(bytes.data(), off, n, msb ? 1 : 0) == gmsg::extract_bits(bytes.data(), off, n, order));
             CHECK(gmpct_get_bits_signed(bytes.data(), off, n, msb ? 1 : 0) ==
-                  gmp::sign_extend(gmp::extract_bits(bytes.data(), off, n, order), n));
+                  gmsg::sign_extend(gmsg::extract_bits(bytes.data(), off, n, order), n));
 
             const std::uint64_t value = (static_cast<std::uint64_t>(rng()) << 32) | rng();
             auto c_buf = bytes, cpp_buf = bytes;
             gmpct_set_bits(c_buf.data(), off, n, value, msb ? 1 : 0);
-            gmp::set_bits<std::uint64_t>(cpp_buf.data(), off, n, value, order);
+            gmsg::set_bits<std::uint64_t>(cpp_buf.data(), off, n, value, order);
             CHECK(c_buf == cpp_buf);
         }
     }
 }
 
 TEST_CASE("C runtime error codes match the C++ runtime") {
-    REQUIRE(gmpct_error_count() == static_cast<int>(gmp::Error::ValueOutOfLimits) + 1);
+    REQUIRE(gmpct_error_count() == static_cast<int>(gmsg::Error::ValueOutOfLimits) + 1);
     for (int e = 0; e < gmpct_error_count(); ++e) {
         INFO("error " << e);
-        CHECK(std::string_view(gmpct_error_str(e)) == gmp::to_string(static_cast<gmp::Error>(e)));
+        CHECK(std::string_view(gmpct_error_str(e)) == gmsg::to_string(static_cast<gmsg::Error>(e)));
     }
 }

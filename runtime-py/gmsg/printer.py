@@ -1,5 +1,5 @@
 """Human-readable text of messages (gmp/print.hpp). Generated classes have print_to(p) and __str__ (= to_text(self));
-the text is the same as gmp::print in C++, gmsg_print in C and gmsg.print in JavaScript."""
+the text is the same as gmsg::print in C++, gmsg_print in C and gmsg.print in JavaScript."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def _esc_char(c: int, quote: int) -> str:
 
 
 class Printer:
-    """The printer of gmp::Printer, writing into a string. Options: style ('multi_line' | 'single_line'), indent,
+    """The printer of gmsg::Printer, writing into a string. Options: style ('multi_line' | 'single_line'), indent,
     max_items, max_bytes (0 = all), precision (significant digits of converted values)."""
 
     def __init__(self, style: str = "multi_line", indent: int = 2, max_items: int = 64, max_bytes: int = 64,
@@ -227,7 +227,7 @@ class Printer:
 
 
 def to_text(v: Any, **options: Any) -> str:
-    """The text of a generated struct or view (gmp::print). Options as Printer: style, indent, max_items, max_bytes,
+    """The text of a generated struct or view (gmsg::print). Options as Printer: style, indent, max_items, max_bytes,
     precision."""
     p = Printer(**options)
     p.value(v)

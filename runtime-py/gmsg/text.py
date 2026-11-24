@@ -104,7 +104,7 @@ def _to_base(v: int, base: int) -> str:
 
 
 class TextWriter:
-    """Builds a text message, inserting separators between tokens (gmp::text::TextWriter)."""
+    """Builds a text message, inserting separators between tokens (gmsg::text::TextWriter)."""
 
     def __init__(self, sep: str) -> None:
         self.sep = sep

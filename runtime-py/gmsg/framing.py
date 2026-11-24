@@ -1,7 +1,7 @@
 """Byte stuffing and frame scanners (gmp/framing/*.hpp).
 
 A scan returns a FrameScan: kind 'need_more' | 'frame' | 'skip', with size, consume, consume_on_error and error, the
-same fields as gmp::FrameScan. Configs are immutable; the accelerator compiles each one once (cached on the object).
+same fields as gmsg::FrameScan. Configs are immutable; the accelerator compiles each one once (cached on the object).
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ MAX_RESERVED = 16
 
 
 class EscapeConfig:
-    """Reserved bytes and how each is sent as {esc, code} (gmp::EscapeConfig). Use xor_escape / map_escape /
+    """Reserved bytes and how each is sent as {esc, code} (gmsg::EscapeConfig). Use xor_escape / map_escape /
     index_escape; NO_ESCAPE disables stuffing."""
 
     __slots__ = ("enabled", "esc", "style", "xor_mask", "raw", "code", "_set", "_n")
@@ -80,7 +80,7 @@ class EscapeWalk(NamedTuple):
 
 def walk_escaped(buf: BytesLike, at: int, n: int, cfg: EscapeConfig, pick_at: int = 0,
                  pick: bytearray | None = None) -> EscapeWalk:
-    """Walk escaped bytes from `at` until n unescaped bytes are produced (gmp::walk_escaped). Unescaped bytes with
+    """Walk escaped bytes from `at` until n unescaped bytes are produced (gmsg::walk_escaped). Unescaped bytes with
     index in [pick_at, pick_at + len(pick)) are copied into `pick`."""
     nat = _accel.native
     if nat is not None:
@@ -110,7 +110,7 @@ def walk_escaped(buf: BytesLike, at: int, n: int, cfg: EscapeConfig, pick_at: in
 
 def read_frame_header(buf: BytesLike, prefix: int, escape: EscapeConfig | None, n: int) -> bytes | None:
     """The n header bytes after the sync pattern (`prefix` bytes) at the start of buf, unescaped when `escape` is
-    enabled, or None while they have not all arrived / the escaping is invalid (gmp::read_frame_header)."""
+    enabled, or None while they have not all arrived / the escaping is invalid (gmsg::read_frame_header)."""
     if escape is None or not escape.enabled:
         return None if len(buf) < prefix + n else bytes(buf[prefix:prefix + n])
     out = bytearray(n)
@@ -118,7 +118,7 @@ def read_frame_header(buf: BytesLike, prefix: int, escape: EscapeConfig | None, 
 
 
 def unescape(wire: BytesLike, cfg: EscapeConfig) -> bytes:
-    """The unescaped bytes (gmp::unescape_in_place on a copy). Truncated / InvalidValue on a bad escape pair."""
+    """The unescaped bytes (gmsg::unescape_in_place on a copy). Truncated / InvalidValue on a bad escape pair."""
     nat = _accel.native
     if nat is not None:
         r = nat.unescape(cfg.native_handle(), wire)
@@ -205,7 +205,7 @@ def escape(raw: BytesLike, cfg: EscapeConfig) -> bytes:
 # scanners
 # ================================================================================================================
 class FrameScan(NamedTuple):
-    """The result of a scan (gmp::FrameScan)."""
+    """The result of a scan (gmsg::FrameScan)."""
 
     kind: str  # 'need_more' | 'frame' | 'skip'
     size: int = 0
@@ -257,7 +257,7 @@ def matches_at(buf: BytesLike, at: int, pat: bytes) -> bool:
 
 
 class FixedConfig:
-    """Fixed-size frames (gmp::FixedFrameConfig)."""
+    """Fixed-size frames (gmsg::FixedFrameConfig)."""
 
     __slots__ = ("sync", "frame_size", "escape", "suffix_len", "_n")
 
@@ -266,7 +266,7 @@ class FixedConfig:
 
 
 class LengthPrefixedConfig:
-    """Length-prefixed frames (gmp::LengthPrefixedConfig): total frame size = length value + add."""
+    """Length-prefixed frames (gmsg::LengthPrefixedConfig): total frame size = length value + add."""
 
     __slots__ = ("sync", "length_offset", "length_size", "length_endian", "add", "min_frame", "max_frame", "escape",
                  "suffix_len", "counts_wire", "header_len", "trailer_len", "wire_includes_trailer", "_n")
@@ -283,7 +283,7 @@ class LengthPrefixedConfig:
 
 
 class DelimitedConfig:
-    """Frames bounded by start / end delimiters (gmp::DelimitedConfig)."""
+    """Frames bounded by start / end delimiters (gmsg::DelimitedConfig)."""
 
     __slots__ = ("start", "end", "escape", "max_frame", "_n")
 

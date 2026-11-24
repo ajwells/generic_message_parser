@@ -36,7 +36,7 @@ std::string byte_list(const std::vector<std::uint8_t>& v) {
 
 std::string pattern(const std::vector<std::uint8_t>& v) { return "{{" + byte_list(v) + "}, " + sz(v.size()) + "}"; }
 
-/// gmsg_escape_config initializer, built like gmp::make_xor_escape / make_index_escape / make_map_escape.
+/// gmsg_escape_config initializer, built like gmsg::make_xor_escape / make_index_escape / make_map_escape.
 std::string escape_init(const Protocol& p) {
     const auto& e = p.framing.escape;
     if (!e.enabled) return "{false, 0, 0, 0, 0, {0}, {0}, {0}}";

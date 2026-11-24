@@ -106,7 +106,7 @@ int main() {
 
     // The parser stores the handler, so the receive path below only passes bytes.
     // (Alternatives: demo::Link::Stream<> with feed(bytes, handler), or CallbackStream with on<&App::fn>(app).)
-    auto parser = demo::Link::make_stream(gmp::overloaded{
+    auto parser = demo::Link::make_stream(gmsg::overloaded{
         [](const demo::StatusView& v) {
             std::printf("Status  uptime=%us voltage=%.3fV mode=%s", static_cast<unsigned>(v.uptime_s()), v.voltage_scaled(),
                         demo::to_string(v.state().mode).data());
@@ -114,15 +114,15 @@ int main() {
             std::printf("\n");
         },
         [](const demo::SamplesView& v) {
-            // gmp::println dumps every field (enum names, units, nested messages); see README "Printing"
-            gmp::println(v, stdout, {.style = gmp::PrintStyle::single_line});
+            // gmsg::println dumps every field (enum names, units, nested messages); see README "Printing"
+            gmsg::println(v, stdout, {.style = gmsg::PrintStyle::single_line});
         },
-        [](const gmp::FrameError& e) {
-            std::printf("dropped %zu byte(s): %s\n", e.data.size(), gmp::to_string(e.error).data());
+        [](const gmsg::FrameError& e) {
+            std::printf("dropped %zu byte(s): %s\n", e.data.size(), gmsg::to_string(e.error).data());
         },
     });
     // Deliver the stream in awkward 5-byte chunks, as a UART driver might.
-    const gmp::bytes_view all(wire);
+    const gmsg::bytes_view all(wire);
     for (std::size_t off = 0; off < all.size(); off += 5)
         parser.feed(all.subspan(off, std::min<std::size_t>(5, all.size() - off)));
 
@@ -183,7 +183,7 @@ protocols:
 
 - `format: text` in `defaults`; each field is one token, `{ pad: 4 }` skips four tokens.
 - `message_type: { token: 0 }` matches the first token (`GPGGA`) against `type_id`.
-- Text view accessors parse on demand and return `gmp::Result<T>` (optional fields: `Result<std::optional<T>>`).
+- Text view accessors parse on demand and return `gmsg::Result<T>` (optional fields: `Result<std::optional<T>>`).
 
 ```cpp
 // Parse NMEA 0183 sentences (text protocol, XOR checksum, optional fields) and encode one.
@@ -202,10 +202,10 @@ int main() {
         "$GPGGA,000000,,,,,0,00,,,,,,,*66\r\n";
 
     nm::Nmea::Stream<> parser;
-    parser.feed(gmp::as_bytes(log.data(), log.size()),
-                gmp::overloaded{
+    parser.feed(gmsg::as_bytes(log.data(), log.size()),
+                gmsg::overloaded{
                     [](const nm::GGAView& g) {
-                        // Text views parse lazily: each accessor returns gmp::Result<T>.
+                        // Text views parse lazily: each accessor returns gmsg::Result<T>.
                         std::printf("GGA time=%.0f quality=%s sats=%u", g.utc_time().value_or(0.0),
                                     nm::to_string(g.quality().value_or(nm::FixQuality::invalid)).data(),
                                     static_cast<unsigned>(g.satellites().value_or(0)));
@@ -217,7 +217,7 @@ int main() {
                     [](const nm::TXTView& t) {
                         std::printf("TXT \"%.*s\"\n", static_cast<int>(t.text().size()), t.text().data());
                     },
-                    [](const gmp::FrameError& e) { std::printf("rejected: %s\n", gmp::to_string(e.error).data()); },
+                    [](const gmsg::FrameError& e) { std::printf("rejected: %s\n", gmsg::to_string(e.error).data()); },
                 });
 
     nm::TXT txt;
@@ -300,7 +300,7 @@ int main() {
 
     auto view = vc::EngineDataView::from(payload);
     if (!view) {
-        std::printf("invalid frame: %s\n", gmp::to_string(view.error()).data());
+        std::printf("invalid frame: %s\n", gmsg::to_string(view.error()).data());
         return 1;
     }
     const auto s = view->signals();
@@ -449,7 +449,7 @@ namespace sht = sensirion::sht4x;
 
 namespace {
 
-void print_bytes(const char* what, gmp::bytes_view b) {
+void print_bytes(const char* what, gmsg::bytes_view b) {
     std::printf("%-8s", what);
     for (auto x : b) std::printf(" %02X", x);
     std::printf("\n");
@@ -462,14 +462,14 @@ int main() {
 
     // 1. Command: measure T & RH with high precision (write 1 byte to 0x44, then wait 8.3 ms).
     const auto n = sht::MeasureHighPrecision{}.encode(tx);
-    print_bytes("write", gmp::bytes_view(tx.data(), *n));
+    print_bytes("write", gmsg::bytes_view(tx.data(), *n));
 
     // 2. Response: 6 bytes read back = T word, CRC, RH word, CRC.
     const std::array<std::uint8_t, 6> rx{0x66, 0x66, 0x93, 0x7A, 0xE1, 0xA4};
     print_bytes("read", rx);
     auto m = sht::MeasurementResponse::decode(rx);
     if (!m) {
-        std::printf("bad response: %s\n", gmp::to_string(m.error()).data());
+        std::printf("bad response: %s\n", gmsg::to_string(m.error()).data());
         return 1;
     }
     const auto& meas = std::get<sht::Measurement>(*m);
@@ -479,7 +479,7 @@ int main() {
     // A corrupted byte is caught by the word CRC.
     auto bad = rx;
     bad[1] ^= 0x01;
-    std::printf("corrupted: %s\n", gmp::to_string(sht::MeasurementResponse::parse(bad).error()).data());
+    std::printf("corrupted: %s\n", gmsg::to_string(sht::MeasurementResponse::parse(bad).error()).data());
 
     // 3. Serial number (command 0x89, then read 6 bytes), using the zero-copy view.
     const std::array<std::uint8_t, 6> serial_rx{0x0F, 0x4F, 0x0B, 0x5A, 0x3C, 0x30};
@@ -491,13 +491,13 @@ int main() {
     // The struct can also set it: set_serial() splits the value back into serial_high / serial_low.
     sht::SerialNumber sn{};
     sn.set_serial(0x0F4F5A3C);
-    if (auto k = sn.encode(tx)) print_bytes("serial", gmp::bytes_view(tx.data(), *k));
+    if (auto k = sn.encode(tx)) print_bytes("serial", gmsg::bytes_view(tx.data(), *k));
 
     // Encoding a response (e.g. for a sensor simulator) writes the CRCs automatically.
     sht::Measurement sim{};
     sim.set_temperature_scaled(25.0);
     sim.set_humidity_scaled(54.0);
-    if (auto k = sim.encode(tx)) print_bytes("encoded", gmp::bytes_view(tx.data(), *k));
+    if (auto k = sim.encode(tx)) print_bytes("encoded", gmsg::bytes_view(tx.data(), *k));
     return 0;
 }
 ```
@@ -596,7 +596,7 @@ Frame encode(const M& msg) {
     std::array<std::uint8_t, Link::max_frame> buf{};
     auto n = Link::encode(msg, buf);
     if (!n) {
-        std::printf("encode failed: %s\n", gmp::to_string(n.error()).data());
+        std::printf("encode failed: %s\n", gmsg::to_string(n.error()).data());
         return {};
     }
     return Frame(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(*n));
@@ -663,7 +663,7 @@ int main() {
 
     std::printf("\nStream of %zu bytes, fed in 3-byte chunks:\n", wire.size());
     Link::Stream<> parser;
-    auto handler = gmp::overloaded{
+    auto handler = gmsg::overloaded{
         [](const motor::TelemetryView& v) {
             std::printf("  Telemetry seq=%u rpm=%u current=%.2fA temperature=%.1fC\n", v.seq(), v.rpm(), v.current_scaled(),
                         v.temperature_scaled());
@@ -671,11 +671,11 @@ int main() {
         [](const motor::LogView& v) {
             std::printf("  Log \"%.*s\"\n", static_cast<int>(v.text().size()), v.text().data());
         },
-        [](const gmp::FrameError& e) {
-            std::printf("  dropped %zu byte(s): %s\n", e.data.size(), gmp::to_string(e.error).data());
+        [](const gmsg::FrameError& e) {
+            std::printf("  dropped %zu byte(s): %s\n", e.data.size(), gmsg::to_string(e.error).data());
         },
     };
-    const gmp::bytes_view all(wire);
+    const gmsg::bytes_view all(wire);
     for (std::size_t off = 0; off < all.size(); off += 3)
         parser.feed(all.subspan(off, std::min<std::size_t>(3, all.size() - off)), handler);
 
@@ -724,7 +724,7 @@ protocols:
 ```
 
 - The functions are checked at compile time with a clear `static_assert` message if a signature is wrong.
-- Custom-type view accessors return `gmp::Result<T>` because your decoder can fail.
+- Custom-type view accessors return `gmsg::Result<T>` because your decoder can fail.
 
 ```cpp
 // examples/custom_codec/meter_codecs.hpp
@@ -745,23 +745,23 @@ inline int bcd(std::uint8_t b) { return (b >> 4) * 10 + (b & 0x0F); }
 inline std::uint8_t to_bcd(int v) { return static_cast<std::uint8_t>(((v / 10) << 4) | (v % 10)); }
 
 /// YY MM DD hh mm ss, BCD encoded.
-inline gmp::Result<DateTime> decode_bcd(gmp::ByteReader& r) {
+inline gmsg::Result<DateTime> decode_bcd(gmsg::ByteReader& r) {
     auto b = r.read_bytes(6);
-    if (!b) return gmp::fail(b.error());
+    if (!b) return gmsg::fail(b.error());
     const auto& d = *b;
     DateTime t{2000 + bcd(d[0]), bcd(d[1]), bcd(d[2]), bcd(d[3]), bcd(d[4]), bcd(d[5])};
-    if (t.month < 1 || t.month > 12 || t.day < 1 || t.day > 31) return gmp::fail(gmp::Error::InvalidValue);
+    if (t.month < 1 || t.month > 12 || t.day < 1 || t.day > 31) return gmsg::fail(gmsg::Error::InvalidValue);
     return t;
 }
 
-inline gmp::VoidResult encode_bcd(gmp::ByteWriter& w, const DateTime& t) {
+inline gmsg::VoidResult encode_bcd(gmsg::ByteWriter& w, const DateTime& t) {
     for (int v : {t.year - 2000, t.month, t.day, t.hour, t.minute, t.second})
         if (auto e = w.write<std::uint8_t>(to_bcd(v)); !e) return e;
     return {};
 }
 
 /// Custom checksum: modulo-256 sum.
-inline std::uint8_t mod256(gmp::bytes_view d) {
+inline std::uint8_t mod256(gmsg::bytes_view d) {
     unsigned s = 0;
     for (auto b : d) s += b;
     return static_cast<std::uint8_t>(s);
@@ -788,13 +788,13 @@ int main() {
     for (std::size_t i = 0; i < *n; ++i) std::printf(" %02X", frame[i]);
     std::printf("\n");
 
-    auto any = meter::MeterBus::parse(gmp::bytes_view(frame.data(), *n));
+    auto any = meter::MeterBus::parse(gmsg::bytes_view(frame.data(), *n));
     if (!any) {
-        std::printf("parse failed: %s\n", gmp::to_string(any.error()).data());
+        std::printf("parse failed: %s\n", gmsg::to_string(any.error()).data());
         return 1;
     }
     const auto& v = std::get<meter::ReadingView>(*any);
-    const auto ts = v.timestamp();  // custom-type accessors return gmp::Result<T>
+    const auto ts = v.timestamp();  // custom-type accessors return gmsg::Result<T>
     if (!ts) return 1;
     std::printf("%04d-%02d-%02d %02d:%02d:%02d  %.2f kWh\n", ts->year, ts->month, ts->day, ts->hour, ts->minute,
                 ts->second, v.kwh_scaled());

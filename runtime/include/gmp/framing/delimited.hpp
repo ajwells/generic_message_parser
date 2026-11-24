@@ -4,7 +4,7 @@
 #include "gmp/framing/escape.hpp"
 #include "gmp/framing/frame.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 struct DelimitedConfig {
     Pattern start{};       // optional (len 0 = frame begins at the stream position)
@@ -46,4 +46,4 @@ constexpr FrameScan scan_delimited(bytes_view buf, const DelimitedConfig& cfg) n
     return FrameScan::need_more();
 }
 
-} // namespace gmp
+} // namespace gmsg

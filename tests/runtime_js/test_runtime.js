@@ -27,7 +27,7 @@ const attempt = (fn) => {
 // ==================================================================================================================
 // unit checks
 // ==================================================================================================================
-T.test('error codes and texts match gmp::Error', () => {
+T.test('error codes and texts match gmsg::Error', () => {
   T.eq(Err.UnknownEnum, 14);
   T.eq(Err.ValueOutOfLimits, 15);
   T.eq(gmsg.errorText(Err.ValueOutOfLimits), 'value out of limits');
@@ -233,7 +233,7 @@ vectors('float parsing matches std::from_chars', () => {
   }
 });
 
-vectors('integer parsing matches gmp::text::parse_int', () => {
+vectors('integer parsing matches gmsg::text::parse_int', () => {
   for (const [type, s, base, err, value] of V.int_parse) {
     const [c, v] = attempt(() => gmsg.text.parseInt(s, type, base));
     T.eq(c, err, `${type} "${s}" base ${base}`);
@@ -293,7 +293,7 @@ vectors('escaping matches C++', () => {
   }
 });
 
-vectors('stream parser matches gmp::StreamParser (events, resync, statistics)', () => {
+vectors('stream parser matches gmsg::StreamParser (events, resync, statistics)', () => {
   class Frame { static messageName = 'Frame'; constructor(b) { this.b = b; } }
   for (const [which, capacity, chunk, hex, events, stats] of V.stream) {
     const protocol = {
@@ -312,7 +312,7 @@ vectors('stream parser matches gmp::StreamParser (events, resync, statistics)', 
   }
 });
 
-vectors('printer matches gmp::Printer for every option set', () => {
+vectors('printer matches gmsg::Printer for every option set', () => {
   const scenario = (p) => {
     const inner = (id) => ({ printTo(q) { q.begin('Inner'); q.key('id'); q.int(id); q.end(); } });
     p.begin('Scenario');

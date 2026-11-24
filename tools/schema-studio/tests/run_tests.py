@@ -8,7 +8,7 @@ each page with --dump-dom and collects them.
 
 - unit       decoder / printer / expression basics (no network)
 - crosscheck Studio vs the generated C++ (needs --crossref, the gmp_studio_crossref program built by CMake):
-             checksums, decoded values (gmp::print text) of messages and noisy streams, validation and YAML export
+             checksums, decoded values (gmsg::print text) of messages and noisy streams, validation and YAML export
              of every schema in the repository. With --gmpc, every exported schema must generate the same C++
              as the original.
 - ui         index.html: outline, field editors, tooltips on every control, tabs, decode tester, print view

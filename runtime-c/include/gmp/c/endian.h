@@ -4,7 +4,7 @@
  *     t gmsg_load_<t>(const uint8_t* p, gmsg_endian e);     gmsg_load_<t>_be(p) / gmsg_load_<t>_le(p)
  *     void gmsg_store_<t>(uint8_t* p, t v, gmsg_endian e);  gmsg_store_<t>_be(p, v) / gmsg_store_<t>_le(p, v)
  * plus gmsg_load_bool / gmsg_store_bool and gmsg_load_uint / gmsg_store_uint for odd widths (1..8 bytes).
- * No alignment requirement; floats are IEEE 754 bit patterns. Matches gmp::load / gmp::store in C++.
+ * No alignment requirement; floats are IEEE 754 bit patterns. Matches gmsg::load / gmsg::store in C++.
  */
 #ifndef GMSG_C_ENDIAN_H
 #define GMSG_C_ENDIAN_H

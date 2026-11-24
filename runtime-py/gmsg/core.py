@@ -85,7 +85,7 @@ def wrap_int(v: Any, t: str) -> int:
 
 
 def to_int(v: Any) -> int:
-    """A value as gmp::to_int sees it in generated expressions (int64): bool -> 0 / 1, char -> its signed byte,
+    """A value as gmsg::to_int sees it in generated expressions (int64): bool -> 0 / 1, char -> its signed byte,
     floats truncated toward zero."""
     if isinstance(v, bool):
         return int(v)
@@ -125,7 +125,7 @@ def imod(a: int, b: int) -> int:
 
 
 def strip_padding(s: str, pad: int) -> str:
-    """Trailing pad characters removed (gmp::strip_padding)."""
+    """Trailing pad characters removed (gmsg::strip_padding)."""
     return s.rstrip(chr(pad))
 
 
@@ -150,7 +150,7 @@ def _pack(t: str, v: Any, e: str) -> bytes:
 
 # ---- loads and stores -------------------------------------------------------------------------------------------
 def load(p: BytesLike, at: int, t: str, endian: str = BIG) -> Any:
-    """The value of primitive type t at p[at] (gmp::load): int, float, bool, or a one-character str for char."""
+    """The value of primitive type t at p[at] (gmsg::load): int, float, bool, or a one-character str for char."""
     if at < 0 or len(p) - at < SIZE[t]:
         fail(Err.TRUNCATED)
     if t == "bool":
@@ -298,7 +298,7 @@ def check_char(v: Any) -> str:
 
 # ---- bit fields -------------------------------------------------------------------------------------------------
 def extract_bits(p: BytesLike, off: int, n: int, order: str = MSB_FIRST) -> int:
-    """n bits starting at bit `off` (gmp::extract_bits)."""
+    """n bits starting at bit `off` (gmsg::extract_bits)."""
     if order == LSB_FIRST:
         first, last = off >> 3, (off + n - 1) >> 3
         word = int.from_bytes(p[first:last + 1], "little")
@@ -339,7 +339,7 @@ def get_bits(p: BytesLike, off: int, n: int, order: str, t: str) -> Any:
 
 
 def set_bits(p: bytearray, off: int, n: int, order: str, value: Any) -> None:
-    """Write a value into a bit field (truncated to n bits, as gmp::set_bits)."""
+    """Write a value into a bit field (truncated to n bits, as gmsg::set_bits)."""
     insert_bits(p, off, n, (1 if value else 0) if isinstance(value, bool) else int(value), order)
 
 

@@ -49,7 +49,7 @@ std::string lang_value(const ir::LangBlocks& lang, const std::string& key);
 using RefFn = std::function<std::string(const ir::Field&, const ir::BitField*)>;
 std::string expr(const ir::Expr& e, const RefFn& ref);
 
-/// C++ expression naming the checksum algorithm type, e.g. gmp::checksum::crc16_ccitt.
+/// C++ expression naming the checksum algorithm type, e.g. gmsg::checksum::crc16_ccitt.
 /// For custom checksums returns the function name and sets is_function.
 std::string checksum_impl(const ir::ChecksumSpec& c, bool& is_function);
 
@@ -60,7 +60,7 @@ void doc(CodeWriter& w, const std::string& text);
 bool is_derived_length(const ir::Field& f);
 
 /// `print_to` support: unit and engineering conversions printed after scalar value expression `value`
-/// (statements use the printer parameter `gmp_p`).
+/// (statements use the printer parameter `gmsg_p`).
 void emit_print_extras(CodeWriter& w, const ir::Field& f, const std::string& value);
 bool has_print_extras(const ir::Field& f);
 

@@ -16,7 +16,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace gmp {
+namespace gmsg {
 
 namespace detail {
 
@@ -124,7 +124,7 @@ private:
     static constexpr void check() noexcept {
         if constexpr (!detail::ctx_invocable<F, C, Args...>() && !(kTwo && detail::ctx_invocable<F, C, Last>()))
             static_assert(detail::always_false<F>,
-                          "gmp callback: the function cannot be called with this slot's arguments. Expected "
+                          "gmsg callback: the function cannot be called with this slot's arguments. Expected "
                           "(View) or, for protocols with a header, (HeaderView, View), optionally after a context "
                           "parameter (C& or C*), or a member function of the context type.");
     }
@@ -143,4 +143,4 @@ private:
     Invoke invoke_ = nullptr;
 };
 
-} // namespace gmp
+} // namespace gmsg

@@ -49,7 +49,7 @@ enum class State : std::uint8_t {
 struct Mixed {
     State state{};
     std::uint8_t count{};  ///< set automatically from items on encode
-    gmp::static_vector<std::uint16_t, 4> items{};
+    gmsg::static_vector<std::uint16_t, 4> items{};
     std::int16_t level{};
     std::optional<std::uint16_t> extra{};
 
@@ -65,45 +65,45 @@ struct Mixed {
     [[nodiscard]] constexpr double level_centi() const noexcept { return static_cast<double>(level) * 50.0 + 1.0; }
     void set_level_centi(double v) noexcept { level = static_cast<std::int16_t>(std::llround((v - 1.0) / 50.0)); }
 
-    gmp::VoidResult read([[maybe_unused]] gmp::ByteReader& r) noexcept {
+    gmsg::VoidResult read([[maybe_unused]] gmsg::ByteReader& r) noexcept {
         {
             auto b0 = r.read_bytes(2);
-            if (!b0) return gmp::fail(b0.error());
-            if (gmp::load_uint(b0->data() + 1, 1, gmp::Endian::big) != static_cast<std::uint64_t>(gmp::checksum::crc8_nrsc5::compute(b0->first(1)))) return gmp::fail(gmp::Error::BadChecksum);
-            const auto v0 = gmp::load<State>(b0->data(), gmp::Endian::big);
+            if (!b0) return gmsg::fail(b0.error());
+            if (gmsg::load_uint(b0->data() + 1, 1, gmsg::Endian::big) != static_cast<std::uint64_t>(gmsg::checksum::crc8_nrsc5::compute(b0->first(1)))) return gmsg::fail(gmsg::Error::BadChecksum);
+            const auto v0 = gmsg::load<State>(b0->data(), gmsg::Endian::big);
             state = v0;
         }
         {
-            auto v0 = r.read<std::uint8_t>(gmp::Endian::big);
-            if (!v0) return gmp::fail(v0.error());
+            auto v0 = r.read<std::uint8_t>(gmsg::Endian::big);
+            if (!v0) return gmsg::fail(v0.error());
             count = *v0;
         }
         {
-            const std::int64_t n0 = gmp::to_int(this->count);
-            if (n0 < 0 || n0 > 4) return gmp::fail(gmp::Error::OutOfRange);
+            const std::int64_t n0 = gmsg::to_int(this->count);
+            if (n0 < 0 || n0 > 4) return gmsg::fail(gmsg::Error::OutOfRange);
             (void)items.resize(static_cast<std::size_t>(n0));
             for (std::size_t i0 = 0; i0 < items.size(); ++i0) {
                 {
-                    auto v1 = r.read<std::uint16_t>(gmp::Endian::big);
-                    if (!v1) return gmp::fail(v1.error());
+                    auto v1 = r.read<std::uint16_t>(gmsg::Endian::big);
+                    if (!v1) return gmsg::fail(v1.error());
                     items[i0] = *v1;
                 }
             }
         }
         {
             auto b0 = r.read_bytes(4);
-            if (!b0) return gmp::fail(b0.error());
-            if (gmp::load_uint(b0->data() + 2, 2, gmp::Endian::little) != static_cast<std::uint64_t>(gmp::checksum::Crc<std::uint16_t, 16, 0x1021ull, 0xFFFFull, false, false, 0x0ull>::compute(b0->first(2)))) return gmp::fail(gmp::Error::BadChecksum);
-            const auto v0 = gmp::load<std::int16_t>(b0->data(), gmp::Endian::little);
+            if (!b0) return gmsg::fail(b0.error());
+            if (gmsg::load_uint(b0->data() + 2, 2, gmsg::Endian::little) != static_cast<std::uint64_t>(gmsg::checksum::Crc<std::uint16_t, 16, 0x1021ull, 0xFFFFull, false, false, 0x0ull>::compute(b0->first(2)))) return gmsg::fail(gmsg::Error::BadChecksum);
+            const auto v0 = gmsg::load<std::int16_t>(b0->data(), gmsg::Endian::little);
             level = v0;
         }
-        if ((gmp::to_int(this->state) == gmp::to_int(State::error))) {
+        if ((gmsg::to_int(this->state) == gmsg::to_int(State::error))) {
             extra.emplace();
             {
                 auto b0 = r.read_bytes(3);
-                if (!b0) return gmp::fail(b0.error());
-                if (gmp::load_uint(b0->data() + 2, 1, gmp::Endian::big) != static_cast<std::uint64_t>(gmp::checksum::crc8_nrsc5::compute(b0->first(2)))) return gmp::fail(gmp::Error::BadChecksum);
-                const auto v0 = gmp::load<std::uint16_t>(b0->data(), gmp::Endian::big);
+                if (!b0) return gmsg::fail(b0.error());
+                if (gmsg::load_uint(b0->data() + 2, 1, gmsg::Endian::big) != static_cast<std::uint64_t>(gmsg::checksum::crc8_nrsc5::compute(b0->first(2)))) return gmsg::fail(gmsg::Error::BadChecksum);
+                const auto v0 = gmsg::load<std::uint16_t>(b0->data(), gmsg::Endian::big);
                 (*extra) = v0;
             }
         } else {
@@ -111,67 +111,67 @@ struct Mixed {
         }
         {
             auto b0 = r.read_bytes(2);
-            if (!b0) return gmp::fail(b0.error());
-            if (gmp::load_uint(b0->data() + 1, 1, gmp::Endian::big) != static_cast<std::uint64_t>(gmp::checksum::crc8::compute(b0->first(1)))) return gmp::fail(gmp::Error::BadChecksum);
-            const auto v0 = gmp::load<std::uint8_t>(b0->data(), gmp::Endian::big);
-            if (v0 != static_cast<std::uint8_t>(165)) return gmp::fail(gmp::Error::BadConst);
+            if (!b0) return gmsg::fail(b0.error());
+            if (gmsg::load_uint(b0->data() + 1, 1, gmsg::Endian::big) != static_cast<std::uint64_t>(gmsg::checksum::crc8::compute(b0->first(1)))) return gmsg::fail(gmsg::Error::BadChecksum);
+            const auto v0 = gmsg::load<std::uint8_t>(b0->data(), gmsg::Endian::big);
+            if (v0 != static_cast<std::uint8_t>(165)) return gmsg::fail(gmsg::Error::BadConst);
         }
         return {};
     }
-    gmp::VoidResult write([[maybe_unused]] gmp::ByteWriter& w) const noexcept {
-        if (auto e0 = w.write<State>(state, gmp::Endian::big); !e0) return e0;
-        if (auto e0 = w.write_uint(static_cast<std::uint64_t>(gmp::checksum::crc8_nrsc5::compute(w.written().last(1))), 1, gmp::Endian::big); !e0) return e0;
-        if (this->items.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max())) return gmp::fail(gmp::Error::OutOfRange);
-        if (auto e0 = w.write<std::uint8_t>(static_cast<std::uint8_t>(this->items.size()), gmp::Endian::big); !e0) return e0;
+    gmsg::VoidResult write([[maybe_unused]] gmsg::ByteWriter& w) const noexcept {
+        if (auto e0 = w.write<State>(state, gmsg::Endian::big); !e0) return e0;
+        if (auto e0 = w.write_uint(static_cast<std::uint64_t>(gmsg::checksum::crc8_nrsc5::compute(w.written().last(1))), 1, gmsg::Endian::big); !e0) return e0;
+        if (this->items.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max())) return gmsg::fail(gmsg::Error::OutOfRange);
+        if (auto e0 = w.write<std::uint8_t>(static_cast<std::uint8_t>(this->items.size()), gmsg::Endian::big); !e0) return e0;
         for (const auto& x0 : items) {
-            if (auto e1 = w.write<std::uint16_t>(x0, gmp::Endian::big); !e1) return e1;
+            if (auto e1 = w.write<std::uint16_t>(x0, gmsg::Endian::big); !e1) return e1;
         }
-        if (auto e0 = w.write<std::int16_t>(level, gmp::Endian::little); !e0) return e0;
-        if (auto e0 = w.write_uint(static_cast<std::uint64_t>(gmp::checksum::Crc<std::uint16_t, 16, 0x1021ull, 0xFFFFull, false, false, 0x0ull>::compute(w.written().last(2))), 2, gmp::Endian::little); !e0) return e0;
-        if ((gmp::to_int(this->state) == gmp::to_int(State::error))) {
-            if (!extra) return gmp::fail(gmp::Error::MissingField);
-            if (auto e0 = w.write<std::uint16_t>((*extra), gmp::Endian::big); !e0) return e0;
-            if (auto e0 = w.write_uint(static_cast<std::uint64_t>(gmp::checksum::crc8_nrsc5::compute(w.written().last(2))), 1, gmp::Endian::big); !e0) return e0;
+        if (auto e0 = w.write<std::int16_t>(level, gmsg::Endian::little); !e0) return e0;
+        if (auto e0 = w.write_uint(static_cast<std::uint64_t>(gmsg::checksum::Crc<std::uint16_t, 16, 0x1021ull, 0xFFFFull, false, false, 0x0ull>::compute(w.written().last(2))), 2, gmsg::Endian::little); !e0) return e0;
+        if ((gmsg::to_int(this->state) == gmsg::to_int(State::error))) {
+            if (!extra) return gmsg::fail(gmsg::Error::MissingField);
+            if (auto e0 = w.write<std::uint16_t>((*extra), gmsg::Endian::big); !e0) return e0;
+            if (auto e0 = w.write_uint(static_cast<std::uint64_t>(gmsg::checksum::crc8_nrsc5::compute(w.written().last(2))), 1, gmsg::Endian::big); !e0) return e0;
         }
-        if (auto e0 = w.write<std::uint8_t>(static_cast<std::uint8_t>(165), gmp::Endian::big); !e0) return e0;
-        if (auto e0 = w.write_uint(static_cast<std::uint64_t>(gmp::checksum::crc8::compute(w.written().last(1))), 1, gmp::Endian::big); !e0) return e0;
+        if (auto e0 = w.write<std::uint8_t>(static_cast<std::uint8_t>(165), gmsg::Endian::big); !e0) return e0;
+        if (auto e0 = w.write_uint(static_cast<std::uint64_t>(gmsg::checksum::crc8::compute(w.written().last(1))), 1, gmsg::Endian::big); !e0) return e0;
         return {};
     }
-    static gmp::Result<Mixed> decode(gmp::bytes_view data) noexcept {
+    static gmsg::Result<Mixed> decode(gmsg::bytes_view data) noexcept {
         Mixed m{};
-        gmp::ByteReader r(data);
-        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        gmsg::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmsg::fail(e.error());
         return m;
     }
     /// Like decode(data); `extra` receives the number of bytes after the message (which decode ignores).
-    static gmp::Result<Mixed> decode(gmp::bytes_view data, std::size_t& extra) noexcept {
+    static gmsg::Result<Mixed> decode(gmsg::bytes_view data, std::size_t& extra) noexcept {
         Mixed m{};
-        gmp::ByteReader r(data);
-        if (auto e = m.read(r); !e) return gmp::fail(e.error());
+        gmsg::ByteReader r(data);
+        if (auto e = m.read(r); !e) return gmsg::fail(e.error());
         extra = data.size() - r.position();
         return m;
     }
-    gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
-        gmp::ByteWriter w(out);
-        if (auto e = write(w); !e) return gmp::fail(e.error());
+    gmsg::Result<std::size_t> encode(gmsg::mut_bytes out) const noexcept {
+        gmsg::ByteWriter w(out);
+        if (auto e = write(w); !e) return gmsg::fail(e.error());
         return w.position();
     }
-    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("Mixed");
-        gmp_p.field("state", this->state);
-        gmp_p.field("count", this->count);
-        gmp_p.field("items", this->items);
-        gmp_p.field("level", this->level);
-        gmp_p.conversion(static_cast<double>(this->level) * 0.5 + 0.0);
-        gmp_p.conversion(static_cast<double>(this->level) * 0.25 + 0.0, "%");
-        gmp_p.conversion(static_cast<double>(this->level) * 50.0 + 1.0);
+    /// Human readable dump (see gmp/print.hpp): gmsg::print(msg, stdout).
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("Mixed");
+        gmsg_p.field("state", this->state);
+        gmsg_p.field("count", this->count);
+        gmsg_p.field("items", this->items);
+        gmsg_p.field("level", this->level);
+        gmsg_p.conversion(static_cast<double>(this->level) * 0.5 + 0.0);
+        gmsg_p.conversion(static_cast<double>(this->level) * 0.25 + 0.0, "%");
+        gmsg_p.conversion(static_cast<double>(this->level) * 50.0 + 1.0);
         if (this->extra) {
-            gmp_p.field("extra", (*this->extra));
+            gmsg_p.field("extra", (*this->extra));
         } else {
-            gmp_p.absent("extra");
+            gmsg_p.absent("extra");
         }
-        gmp_p.end();
+        gmsg_p.end();
     }
     bool operator==(const Mixed&) const = default;
 };
@@ -182,91 +182,91 @@ public:
     static constexpr std::size_t min_wire_size = 9;
 
     /// Validate `data` and build a view. Trailing bytes beyond the message are ignored.
-    [[nodiscard]] static gmp::Result<MixedView> from(gmp::bytes_view data) noexcept {
+    [[nodiscard]] static gmsg::Result<MixedView> from(gmsg::bytes_view data) noexcept {
         MixedView v;
-        v.gmp_data_ = data;
+        v.gmsg_data_ = data;
         std::size_t pos = 0;
-        v.gmp_off_[0] = static_cast<std::uint32_t>(pos);
-        if (data.size() - pos < 2) return gmp::fail(gmp::Error::Truncated);
-        if (gmp::load_uint(data.data() + pos + 1, 1, gmp::Endian::big) != static_cast<std::uint64_t>(gmp::checksum::crc8_nrsc5::compute(gmp::bytes_view(data.data() + pos, 1)))) return gmp::fail(gmp::Error::BadChecksum);
+        v.gmsg_off_[0] = static_cast<std::uint32_t>(pos);
+        if (data.size() - pos < 2) return gmsg::fail(gmsg::Error::Truncated);
+        if (gmsg::load_uint(data.data() + pos + 1, 1, gmsg::Endian::big) != static_cast<std::uint64_t>(gmsg::checksum::crc8_nrsc5::compute(gmsg::bytes_view(data.data() + pos, 1)))) return gmsg::fail(gmsg::Error::BadChecksum);
         pos += 2;
-        v.gmp_off_[1] = static_cast<std::uint32_t>(pos);
-        if (data.size() - pos < 1) return gmp::fail(gmp::Error::Truncated);
+        v.gmsg_off_[1] = static_cast<std::uint32_t>(pos);
+        if (data.size() - pos < 1) return gmsg::fail(gmsg::Error::Truncated);
         pos += 1;
-        v.gmp_off_[2] = static_cast<std::uint32_t>(pos);
+        v.gmsg_off_[2] = static_cast<std::uint32_t>(pos);
         {
-            const std::int64_t n = gmp::to_int(v.count());
-            if (n < 0) return gmp::fail(gmp::Error::BadLength);
-            if (static_cast<std::uint64_t>(n) * 2 > data.size() - pos) return gmp::fail(gmp::Error::Truncated);
+            const std::int64_t n = gmsg::to_int(v.count());
+            if (n < 0) return gmsg::fail(gmsg::Error::BadLength);
+            if (static_cast<std::uint64_t>(n) * 2 > data.size() - pos) return gmsg::fail(gmsg::Error::Truncated);
             pos += static_cast<std::size_t>(n) * 2;
         }
-        v.gmp_off_[3] = static_cast<std::uint32_t>(pos);
-        if (data.size() - pos < 4) return gmp::fail(gmp::Error::Truncated);
-        if (gmp::load_uint(data.data() + pos + 2, 2, gmp::Endian::little) != static_cast<std::uint64_t>(gmp::checksum::Crc<std::uint16_t, 16, 0x1021ull, 0xFFFFull, false, false, 0x0ull>::compute(gmp::bytes_view(data.data() + pos, 2)))) return gmp::fail(gmp::Error::BadChecksum);
+        v.gmsg_off_[3] = static_cast<std::uint32_t>(pos);
+        if (data.size() - pos < 4) return gmsg::fail(gmsg::Error::Truncated);
+        if (gmsg::load_uint(data.data() + pos + 2, 2, gmsg::Endian::little) != static_cast<std::uint64_t>(gmsg::checksum::Crc<std::uint16_t, 16, 0x1021ull, 0xFFFFull, false, false, 0x0ull>::compute(gmsg::bytes_view(data.data() + pos, 2)))) return gmsg::fail(gmsg::Error::BadChecksum);
         pos += 4;
-        v.gmp_off_[4] = static_cast<std::uint32_t>(pos);
-        if ((gmp::to_int(v.state()) == gmp::to_int(State::error))) {
-            v.gmp_present_ |= std::uint64_t{1} << 0;
-            if (data.size() - pos < 3) return gmp::fail(gmp::Error::Truncated);
-            if (gmp::load_uint(data.data() + pos + 2, 1, gmp::Endian::big) != static_cast<std::uint64_t>(gmp::checksum::crc8_nrsc5::compute(gmp::bytes_view(data.data() + pos, 2)))) return gmp::fail(gmp::Error::BadChecksum);
+        v.gmsg_off_[4] = static_cast<std::uint32_t>(pos);
+        if ((gmsg::to_int(v.state()) == gmsg::to_int(State::error))) {
+            v.gmsg_present_ |= std::uint64_t{1} << 0;
+            if (data.size() - pos < 3) return gmsg::fail(gmsg::Error::Truncated);
+            if (gmsg::load_uint(data.data() + pos + 2, 1, gmsg::Endian::big) != static_cast<std::uint64_t>(gmsg::checksum::crc8_nrsc5::compute(gmsg::bytes_view(data.data() + pos, 2)))) return gmsg::fail(gmsg::Error::BadChecksum);
             pos += 3;
         }
-        v.gmp_off_[5] = static_cast<std::uint32_t>(pos);
-        if (data.size() - pos < 2) return gmp::fail(gmp::Error::Truncated);
-        if (gmp::load_uint(data.data() + pos + 1, 1, gmp::Endian::big) != static_cast<std::uint64_t>(gmp::checksum::crc8::compute(gmp::bytes_view(data.data() + pos, 1)))) return gmp::fail(gmp::Error::BadChecksum);
-        if (gmp::load<std::uint8_t>(data.data() + pos, gmp::Endian::big) != static_cast<std::uint8_t>(165)) return gmp::fail(gmp::Error::BadConst);
+        v.gmsg_off_[5] = static_cast<std::uint32_t>(pos);
+        if (data.size() - pos < 2) return gmsg::fail(gmsg::Error::Truncated);
+        if (gmsg::load_uint(data.data() + pos + 1, 1, gmsg::Endian::big) != static_cast<std::uint64_t>(gmsg::checksum::crc8::compute(gmsg::bytes_view(data.data() + pos, 1)))) return gmsg::fail(gmsg::Error::BadChecksum);
+        if (gmsg::load<std::uint8_t>(data.data() + pos, gmsg::Endian::big) != static_cast<std::uint8_t>(165)) return gmsg::fail(gmsg::Error::BadConst);
         pos += 2;
-        v.gmp_off_[6] = static_cast<std::uint32_t>(pos);
-        v.gmp_data_ = data.first(pos);
-        v.gmp_extra_ = data.size() - pos;
+        v.gmsg_off_[6] = static_cast<std::uint32_t>(pos);
+        v.gmsg_data_ = data.first(pos);
+        v.gmsg_extra_ = data.size() - pos;
         return v;
     }
     /// Build a view over data already validated by from() (no checks).
-    [[nodiscard]] static MixedView unchecked(gmp::bytes_view data) noexcept {
+    [[nodiscard]] static MixedView unchecked(gmsg::bytes_view data) noexcept {
         return *from(data);
     }
 
-    [[nodiscard]] gmp::bytes_view data() const noexcept { return gmp_data_; }
-    [[nodiscard]] std::size_t wire_size() const noexcept { return gmp_data_.size(); }
+    [[nodiscard]] gmsg::bytes_view data() const noexcept { return gmsg_data_; }
+    [[nodiscard]] std::size_t wire_size() const noexcept { return gmsg_data_.size(); }
     /// Bytes after the message in the data given to from() (ignored; a protocol with exact_size rejects them).
-    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmp_extra_; }
+    [[nodiscard]] std::size_t extra_bytes() const noexcept { return gmsg_extra_; }
 
-    [[nodiscard]] State state() const noexcept { return gmp::load<State>(gmp_data_.data() + 0, gmp::Endian::big); }
-    [[nodiscard]] std::uint8_t count() const noexcept { return gmp::load<std::uint8_t>(gmp_data_.data() + 2, gmp::Endian::big); }
-    [[nodiscard]] gmp::ScalarArrayView<std::uint16_t> items() const noexcept { return gmp::ScalarArrayView<std::uint16_t>(gmp_data_.subspan(3, (gmp_off_[3] - gmp_off_[2])), (gmp_off_[3] - gmp_off_[2]) / 2, gmp::Endian::big); }
-    [[nodiscard]] std::int16_t level() const noexcept { return gmp::load<std::int16_t>(gmp_data_.data() + gmp_off_[3], gmp::Endian::little); }
+    [[nodiscard]] State state() const noexcept { return gmsg::load<State>(gmsg_data_.data() + 0, gmsg::Endian::big); }
+    [[nodiscard]] std::uint8_t count() const noexcept { return gmsg::load<std::uint8_t>(gmsg_data_.data() + 2, gmsg::Endian::big); }
+    [[nodiscard]] gmsg::ScalarArrayView<std::uint16_t> items() const noexcept { return gmsg::ScalarArrayView<std::uint16_t>(gmsg_data_.subspan(3, (gmsg_off_[3] - gmsg_off_[2])), (gmsg_off_[3] - gmsg_off_[2]) / 2, gmsg::Endian::big); }
+    [[nodiscard]] std::int16_t level() const noexcept { return gmsg::load<std::int16_t>(gmsg_data_.data() + gmsg_off_[3], gmsg::Endian::little); }
     [[nodiscard]] double level_scaled() const noexcept { return static_cast<double>(level()) * 0.5 + 0.0; }
     /// level in %
     [[nodiscard]] double level_percent() const noexcept { return static_cast<double>(level()) * 0.25 + 0.0; }
     [[nodiscard]] double level_centi() const noexcept { return static_cast<double>(level()) * 50.0 + 1.0; }
-    [[nodiscard]] std::optional<std::uint16_t> extra() const noexcept { if (!((gmp_present_ >> 0) & 1u)) return std::nullopt; return gmp::load<std::uint16_t>(gmp_data_.data() + gmp_off_[4], gmp::Endian::big); }
+    [[nodiscard]] std::optional<std::uint16_t> extra() const noexcept { if (!((gmsg_present_ >> 0) & 1u)) return std::nullopt; return gmsg::load<std::uint16_t>(gmsg_data_.data() + gmsg_off_[4], gmsg::Endian::big); }
 
     /// Human readable dump (see gmp/print.hpp); same output as the struct.
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("Mixed");
-        gmp_p.field("state", this->state());
-        gmp_p.field("count", this->count());
-        gmp_p.field("items", this->items());
-        gmp_p.field("level", this->level());
-        gmp_p.conversion(static_cast<double>(this->level()) * 0.5 + 0.0);
-        gmp_p.conversion(static_cast<double>(this->level()) * 0.25 + 0.0, "%");
-        gmp_p.conversion(static_cast<double>(this->level()) * 50.0 + 1.0);
-        if (const auto gmp_v = this->extra()) {
-            gmp_p.field("extra", (*gmp_v));
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("Mixed");
+        gmsg_p.field("state", this->state());
+        gmsg_p.field("count", this->count());
+        gmsg_p.field("items", this->items());
+        gmsg_p.field("level", this->level());
+        gmsg_p.conversion(static_cast<double>(this->level()) * 0.5 + 0.0);
+        gmsg_p.conversion(static_cast<double>(this->level()) * 0.25 + 0.0, "%");
+        gmsg_p.conversion(static_cast<double>(this->level()) * 50.0 + 1.0);
+        if (const auto gmsg_v = this->extra()) {
+            gmsg_p.field("extra", (*gmsg_v));
         } else {
-            gmp_p.absent("extra");
+            gmsg_p.absent("extra");
         }
-        gmp_p.end();
+        gmsg_p.end();
     }
 
     /// Decode into the eager struct.
-    [[nodiscard]] gmp::Result<Mixed> to_struct() const noexcept { return Mixed::decode(gmp_data_); }
+    [[nodiscard]] gmsg::Result<Mixed> to_struct() const noexcept { return Mixed::decode(gmsg_data_); }
 
 private:
-    gmp::bytes_view gmp_data_{};
-    std::size_t gmp_extra_ = 0;
-    std::array<std::uint32_t, 7> gmp_off_{};
-    std::uint64_t gmp_present_ = 0;
+    gmsg::bytes_view gmsg_data_{};
+    std::size_t gmsg_extra_ = 0;
+    std::array<std::uint32_t, 7> gmsg_off_{};
+    std::uint64_t gmsg_present_ = 0;
 };
 
 struct Reading {
@@ -275,49 +275,49 @@ struct Reading {
     static constexpr std::size_t token_count = 1;
     static constexpr char separator = ',';
 
-    gmp::VoidResult read_text([[maybe_unused]] std::span<const std::string_view> tok) noexcept {
+    gmsg::VoidResult read_text([[maybe_unused]] std::span<const std::string_view> tok) noexcept {
         {
             const std::string_view t0 = 0 < tok.size() ? tok[0] : std::string_view{};
-            auto v = gmp::text::parse_int<std::int32_t>(t0, 10);
-            if (!v) return gmp::fail(v.error());
+            auto v = gmsg::text::parse_int<std::int32_t>(t0, 10);
+            if (!v) return gmsg::fail(v.error());
             raw_ = *v;
         }
         return {};
     }
-    gmp::VoidResult write_text([[maybe_unused]] gmp::text::TextWriter& w) const noexcept {
+    gmsg::VoidResult write_text([[maybe_unused]] gmsg::text::TextWriter& w) const noexcept {
         if (auto e = w.int_token(raw_, 10, 0); !e) return e;
         return {};
     }
-    static gmp::Result<Reading> decode_text(std::string_view s) noexcept {
+    static gmsg::Result<Reading> decode_text(std::string_view s) noexcept {
         std::array<std::string_view, 1> tok{};
-        const std::size_t n = gmp::text::split(s, separator, tok);
+        const std::size_t n = gmsg::text::split(s, separator, tok);
         Reading m{};
-        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmp::fail(e.error());
+        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmsg::fail(e.error());
         return m;
     }
-    static gmp::Result<Reading> decode(gmp::bytes_view data) noexcept { return decode_text(gmp::as_string_view(data)); }
+    static gmsg::Result<Reading> decode(gmsg::bytes_view data) noexcept { return decode_text(gmsg::as_string_view(data)); }
     /// Like decode_text(s); `extra` receives the number of tokens after the message's own (which decode ignores).
-    static gmp::Result<Reading> decode_text(std::string_view s, std::size_t& extra) noexcept {
+    static gmsg::Result<Reading> decode_text(std::string_view s, std::size_t& extra) noexcept {
         std::array<std::string_view, 1> tok{};
-        const std::size_t n = gmp::text::split(s, separator, tok);
+        const std::size_t n = gmsg::text::split(s, separator, tok);
         Reading m{};
-        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmp::fail(e.error());
+        if (auto e = m.read_text(std::span<const std::string_view>(tok.data(), std::min(n, tok.size()))); !e) return gmsg::fail(e.error());
         extra = n > token_count ? n - token_count : 0;
         return m;
     }
-    static gmp::Result<Reading> decode(gmp::bytes_view data, std::size_t& extra) noexcept { return decode_text(gmp::as_string_view(data), extra); }
-    gmp::Result<std::size_t> encode(gmp::mut_bytes out) const noexcept {
-        gmp::text::TextWriter w(out, separator);
-        if (auto e = write_text(w); !e) return gmp::fail(e.error());
+    static gmsg::Result<Reading> decode(gmsg::bytes_view data, std::size_t& extra) noexcept { return decode_text(gmsg::as_string_view(data), extra); }
+    gmsg::Result<std::size_t> encode(gmsg::mut_bytes out) const noexcept {
+        gmsg::text::TextWriter w(out, separator);
+        if (auto e = write_text(w); !e) return gmsg::fail(e.error());
         return w.position();
     }
-    /// Human readable dump (see gmp/print.hpp): gmp::print(msg, stdout).
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("Reading");
-        gmp_p.field("raw", this->raw_);
-        gmp_p.conversion(static_cast<double>(this->raw_) * 0.10000000000000001 + 0.0);
-        gmp_p.conversion(static_cast<double>(this->raw_) * 100.0 + 0.0);
-        gmp_p.end();
+    /// Human readable dump (see gmp/print.hpp): gmsg::print(msg, stdout).
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("Reading");
+        gmsg_p.field("raw", this->raw_);
+        gmsg_p.conversion(static_cast<double>(this->raw_) * 0.10000000000000001 + 0.0);
+        gmsg_p.conversion(static_cast<double>(this->raw_) * 100.0 + 0.0);
+        gmsg_p.end();
     }
     bool operator==(const Reading&) const = default;
 };
@@ -328,43 +328,43 @@ public:
     static constexpr std::size_t token_count = 1;
     static constexpr char separator = ',';
 
-    [[nodiscard]] static gmp::Result<ReadingView> from(std::string_view s) noexcept {
+    [[nodiscard]] static gmsg::Result<ReadingView> from(std::string_view s) noexcept {
         ReadingView v;
-        v.gmp_text_ = s;
-        v.gmp_ntok_ = gmp::text::split(s, separator, v.gmp_tok_);
+        v.gmsg_text_ = s;
+        v.gmsg_ntok_ = gmsg::text::split(s, separator, v.gmsg_tok_);
         return v;
     }
-    [[nodiscard]] static gmp::Result<ReadingView> from(gmp::bytes_view data) noexcept { return from(gmp::as_string_view(data)); }
-    [[nodiscard]] static ReadingView unchecked(gmp::bytes_view data) noexcept { return *from(data); }
+    [[nodiscard]] static gmsg::Result<ReadingView> from(gmsg::bytes_view data) noexcept { return from(gmsg::as_string_view(data)); }
+    [[nodiscard]] static ReadingView unchecked(gmsg::bytes_view data) noexcept { return *from(data); }
 
-    [[nodiscard]] std::string_view raw() const noexcept { return gmp_text_; }
+    [[nodiscard]] std::string_view raw() const noexcept { return gmsg_text_; }
     /// Number of tokens actually present in the record (may differ from token_count).
-    [[nodiscard]] std::size_t present_tokens() const noexcept { return gmp_ntok_; }
+    [[nodiscard]] std::size_t present_tokens() const noexcept { return gmsg_ntok_; }
     /// Tokens after the message's own (ignored; a protocol with exact_size rejects them).
-    [[nodiscard]] std::size_t extra_tokens() const noexcept { return gmp_ntok_ > token_count ? gmp_ntok_ - token_count : 0; }
-    [[nodiscard]] std::string_view token(std::size_t i) const noexcept { return i < token_count ? gmp_tok_[i] : std::string_view{}; }
+    [[nodiscard]] std::size_t extra_tokens() const noexcept { return gmsg_ntok_ > token_count ? gmsg_ntok_ - token_count : 0; }
+    [[nodiscard]] std::string_view token(std::size_t i) const noexcept { return i < token_count ? gmsg_tok_[i] : std::string_view{}; }
 
-    [[nodiscard]] gmp::Result<std::int32_t> raw_() const noexcept { return gmp::text::parse_int<std::int32_t>(gmp_tok_[0], 10); }
-    [[nodiscard]] gmp::Result<double> raw_scaled() const noexcept { return raw_().transform([](auto x) { return static_cast<double>(x) * 0.10000000000000001 + 0.0; }); }
-    [[nodiscard]] gmp::Result<double> raw_millis() const noexcept { return raw_().transform([](auto x) { return static_cast<double>(x) * 100.0 + 0.0; }); }
+    [[nodiscard]] gmsg::Result<std::int32_t> raw_() const noexcept { return gmsg::text::parse_int<std::int32_t>(gmsg_tok_[0], 10); }
+    [[nodiscard]] gmsg::Result<double> raw_scaled() const noexcept { return raw_().transform([](auto x) { return static_cast<double>(x) * 0.10000000000000001 + 0.0; }); }
+    [[nodiscard]] gmsg::Result<double> raw_millis() const noexcept { return raw_().transform([](auto x) { return static_cast<double>(x) * 100.0 + 0.0; }); }
 
     /// Human readable dump (see gmp/print.hpp); same output as the struct.
-    void print_to(gmp::Printer& gmp_p) const noexcept {
-        gmp_p.begin("Reading");
-        gmp_p.field("raw", this->raw_());
-        if (const auto gmp_v = this->raw_()) {
-            gmp_p.conversion(static_cast<double>((*gmp_v)) * 0.10000000000000001 + 0.0);
-            gmp_p.conversion(static_cast<double>((*gmp_v)) * 100.0 + 0.0);
+    void print_to(gmsg::Printer& gmsg_p) const noexcept {
+        gmsg_p.begin("Reading");
+        gmsg_p.field("raw", this->raw_());
+        if (const auto gmsg_v = this->raw_()) {
+            gmsg_p.conversion(static_cast<double>((*gmsg_v)) * 0.10000000000000001 + 0.0);
+            gmsg_p.conversion(static_cast<double>((*gmsg_v)) * 100.0 + 0.0);
         }
-        gmp_p.end();
+        gmsg_p.end();
     }
 
-    [[nodiscard]] gmp::Result<Reading> to_struct() const noexcept { return Reading::decode_text(gmp_text_); }
+    [[nodiscard]] gmsg::Result<Reading> to_struct() const noexcept { return Reading::decode_text(gmsg_text_); }
 
 private:
-    std::string_view gmp_text_{};
-    std::array<std::string_view, 1> gmp_tok_{};
-    std::size_t gmp_ntok_ = 0;
+    std::string_view gmsg_text_{};
+    std::array<std::string_view, 1> gmsg_tok_{};
+    std::size_t gmsg_ntok_ = 0;
 };
 
 } // namespace test::fieldcrc

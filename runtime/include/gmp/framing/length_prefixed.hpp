@@ -15,7 +15,7 @@
 #include "gmp/framing/escape.hpp"
 #include "gmp/framing/frame.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 struct LengthPrefixedConfig {
     Pattern sync{};
@@ -125,4 +125,4 @@ constexpr FrameScan scan_length_prefixed(bytes_view buf, const LengthPrefixedCon
     return FrameScan::frame(n, n, 1);
 }
 
-} // namespace gmp
+} // namespace gmsg

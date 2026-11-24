@@ -7,7 +7,7 @@
 #include "gmp/framing/length_prefixed.hpp"
 #include "gmp/stream_parser.hpp"
 
-using namespace gmp;
+using namespace gmsg;
 
 namespace {
 

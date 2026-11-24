@@ -4,7 +4,7 @@
 
 #include "gmp/bits.hpp"
 
-using namespace gmp;
+using namespace gmsg;
 
 TEST_CASE("msb_first bit extraction") {
     std::array<std::uint8_t, 2> b{0b1011'0011, 0b0100'0000};

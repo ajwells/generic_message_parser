@@ -45,7 +45,7 @@ target_compile_options(gmp_embedded_profile PRIVATE
 target_link_options(gmp_embedded_profile PRIVATE ${GMP_STATIC_LINK})
 add_test(NAME gmp_embedded_profile COMMAND gmp_embedded_profile)
 
-# Reference data for the Schema Studio cross-check (tools/schema-studio/tests): frames and gmp::print output.
+# Reference data for the Schema Studio cross-check (tools/schema-studio/tests): frames and gmsg::print output.
 add_executable(gmp_studio_crossref ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/schema-studio/tests/crossref.cpp)
 target_link_libraries(gmp_studio_crossref PRIVATE gmp_test_schemas)
 target_link_options(gmp_studio_crossref PRIVATE ${GMP_STATIC_LINK})

@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string_view>
 
-namespace gmp {
+namespace gmsg {
 
 enum class Error : std::uint8_t {
     None = 0,
@@ -47,4 +47,4 @@ constexpr std::string_view to_string(Error e) noexcept {
     return "unknown";
 }
 
-} // namespace gmp
+} // namespace gmsg

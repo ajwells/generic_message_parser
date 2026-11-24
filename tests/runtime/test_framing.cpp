@@ -9,7 +9,7 @@
 #include "gmp/framing/fixed.hpp"
 #include "gmp/framing/length_prefixed.hpp"
 
-using namespace gmp;
+using namespace gmsg;
 
 namespace {
 bytes_view bv(const std::vector<std::uint8_t>& v) { return {v.data(), v.size()}; }

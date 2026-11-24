@@ -266,7 +266,7 @@ protocols:
     return esc(code)
       .replace(/(\/\/[^\n]*)/g, '<span class="y-com">$1</span>')
       .replace(/(&quot;[^&\n]*&quot;)/g, '<span class="y-str">$1</span>')
-      .replace(/\b(auto|const|if|return|struct|class|template|using|for|std|gmp|static|constexpr|void|bool|double)\b(?![^<]*<\/span>)/g, '<span class="y-key">$1</span>')
+      .replace(/\b(auto|const|if|return|struct|class|template|using|for|std|gmsg|static|constexpr|void|bool|double)\b(?![^<]*<\/span>)/g, '<span class="y-key">$1</span>')
       .replace(/\b(0x[0-9A-Fa-f]+|\d+(\.\d+)?)\b(?![^<]*<\/span>)/g, '<span class="y-num">$1</span>');
   }
   const code = (text, lang = 'cpp') => `<pre class="yaml g-code">${lang === 'yaml' ? G.highlightYaml(text) : lang === 'cpp' ? highlightCpp(text) : esc(text)}</pre>`;
@@ -325,7 +325,7 @@ protocols:
     printing: {
       title: 'Printing decoded messages', yaml: Y.structure, cards: ['message:Report'],
       decode: [
-        { target: 'message:Report', label: () => ln('gmp::println(report, stdout)', 'guide_report_print(&report, &printer)', 'console.log(String(report))', 'print(report)') + ': enum names with their value, units, nested blocks', input: '5A 02 00 00 00 42 01 6B', view: 'print' },
+        { target: 'message:Report', label: () => ln('gmsg::println(report, stdout)', 'guide_report_print(&report, &printer)', 'console.log(String(report))', 'print(report)') + ': enum names with their value, units, nested blocks', input: '5A 02 00 00 00 42 01 6B', view: 'print' },
         { target: 'message:Report', label: 'single_line style; the conditional Fault block is <absent>', input: '5A 01 00 00', view: 'line' },
       ],
     },
@@ -439,9 +439,9 @@ std::array<std::uint8_t, demo::Link::max_frame> buf;
 auto n = demo::Link::encode(s, buf);
 
 demo::Link::Stream<> stream;    // bytes in any chunk size
-stream.feed(chunk, gmp::overloaded{
+stream.feed(chunk, gmsg::overloaded{
     [](const demo::StatusView& v) { v.voltage_scaled(); },
-    [](const gmp::FrameError& e) { /* skipped bytes */ },
+    [](const gmsg::FrameError& e) { /* skipped bytes */ },
 });`, `demo_status s = {0};
 demo_status_set_voltage_scaled(&s, 12.6);
 s.samples[0] = 1; s.samples[1] = 2; s.samples[2] = 3;
@@ -571,7 +571,7 @@ stream.feed(chunk)`))}</div>
       <div class="g-cols">
         <div><h4>View: zero copy</h4><p>Wraps the input bytes; accessors read on demand. ${ln('<code>from()</code>', '<code>_view_from()</code>', '<code>from()</code>', '<code>from_bytes()</code>')} validates once.</p>
           ${code(ln(`auto v = demo::StatusView::from(bytes);
-if (!v) return v.error();          // gmp::Error
+if (!v) return v.error();          // gmsg::Error
 double volts = v->voltage_scaled();
 for (auto s : v->samples()) use(s);`, `demo_status_view v;
 gmsg_error e = demo_status_view_from(data, size, &v);
@@ -588,7 +588,7 @@ for s in v.samples: use(s)`))}</div>
 s.set_voltage_scaled(12.6);
 s.samples = {1, 2, 3};
 std::array<std::uint8_t, demo::Status::max_wire_size> out;
-auto n = s.encode(out);            // gmp::Result<size_t>`, `demo_status s = {0};
+auto n = s.encode(out);            // gmsg::Result<size_t>`, `demo_status s = {0};
 demo_status_set_voltage_scaled(&s, 12.6);
 s.samples[0] = 1; s.samples[1] = 2; s.samples[2] = 3;
 s.count = 3;
@@ -613,7 +613,7 @@ out = s.encode()                  # bytes; raises gmsg.GmpError`))}</div>
         [kbd('fixed'), '<code>sync</code> + <code>size</code> bytes', 'Every frame is the same size; shorter bodies are zero padded.'],
         [kbd('length_prefixed'), '<code>sync</code> + header with a length', 'The length field (filled in on encode) says how much follows.'],
         [kbd('delimited'), '<code>start</code> … <code>end</code>', 'Search for the end pattern; HDLC-style shared flags allowed.'],
-        [kbd('custom'), 'your framer', ln('<code>static gmp::FrameScan scan(gmp::bytes_view)</code>', '<code>gmsg_frame_scan scan(const uint8_t*, size_t)</code>', '<code>scan(bytes)</code> returning <code>gmsg.FrameScan.*</code>', '<code>scan(buf)</code> returning <code>gmsg.FrameScan.*</code>')],
+        [kbd('custom'), 'your framer', ln('<code>static gmsg::FrameScan scan(gmsg::bytes_view)</code>', '<code>gmsg_frame_scan scan(const uint8_t*, size_t)</code>', '<code>scan(bytes)</code> returning <code>gmsg.FrameScan.*</code>', '<code>scan(buf)</code> returning <code>gmsg.FrameScan.*</code>')],
       ])}
       <h3 id="g-length">What the length counts</h3>
       ${[['body', [0, 0, 1, 0]], ['body_checksum', [0, 0, 1, 1]], ['header_body', [0, 1, 1, 0]], ['all', [1, 1, 1, 1]]].map(([c, on]) =>
@@ -860,10 +860,10 @@ demo_link_stream_poll_for(&parser, DEMO_LINK_STATUS, &m);   // others go to the 
           `<div class="g-flow-s"><span>${i + 1}</span>${t}</div>`).join('<div class="g-arrow">→</div>')}
       </div>
       ${code(`demo::Link::Stream<> parser;
-parser.feed(chunk, gmp::overloaded{
+parser.feed(chunk, gmsg::overloaded{
     [](const demo::Link::HeaderView& h, const demo::StatusView& v) { /* header + message */ },
     [](const demo::SamplesView& v) { /* message only */ },
-    [](const gmp::FrameError& e) { /* optional: e.error, e.data */ },
+    [](const gmsg::FrameError& e) { /* optional: e.error, e.data */ },
 });
 auto& st = parser.stats();   // frames, frame_errors, bytes_skipped, overflows`)}
       <h3>Storing the handler</h3>
@@ -871,7 +871,7 @@ auto& st = parser.stats();   // frames, frame_errors, bytes_skipped, overflows`)
       <code>parser.feed(bytes)</code>. <code>make_stream</code> stores an overload set with no runtime cost.
       <code>CallbackStream</code> holds runtime listeners. Its type doesn't depend on the handlers, so it can be a
       global or a class member, and listeners can be changed while running.</p>
-      ${code(`auto parser = demo::Link::make_stream(gmp::overloaded{   // compile-time handler
+      ${code(`auto parser = demo::Link::make_stream(gmsg::overloaded{   // compile-time handler
     [&](const demo::StatusView& v) { app.on_status(v); },
 });
 parser.feed(chunk);
@@ -880,7 +880,7 @@ demo::Link::CallbackStream<> link;                        // runtime callbacks
 link.on<&App::on_status>(app)      // (StatusView): one listener per message
     .on<&App::on_command>(app)     // (Link::HeaderView, CommandView): header only when asked for
     .on<&App::on_frame>(app)       // (Link::AnyView): every valid frame, after the message listener
-    .on<&App::on_drop>(app);       // (gmp::FrameError): garbage, bad checksums, unknown ids
+    .on<&App::on_drop>(app);       // (gmsg::FrameError): garbage, bad checksums, unknown ids
 link.feed(chunk);`)}
       ${note('The listener is chosen from the function\'s last parameter. Free functions taking <code>(App&amp;, View)</code>, captureless lambdas, and C-style <code>void cb(void* ctx, const View&amp;)</code> pointers work too. Registering again replaces the listener; <code>off&lt;View&gt;()</code> removes it.')}
       <h3>Pulling messages</h3>
@@ -892,31 +892,31 @@ while (auto m = parser.poll()) {                          // empty: more input n
 }
 auto r = parser.poll_frame();      // { header, message, bytes }
 auto s = parser.poll_message();    // decoded struct copy
-auto e = parser.poll_event();      // message or gmp::FrameError, in stream order
+auto e = parser.poll_event();      // message or gmsg::FrameError, in stream order
 auto reply = link.poll_for<demo::StatusView>();   // others go to the listeners meanwhile`)}
       ${demo('stream')}`;
   }
 
   function printing() {
     return `
-      <p>${ln('Every generated struct, view and bit group has <code>print_to()</code>, so <code>gmp::print</code> can dump it',
+      <p>${ln('Every generated struct, view and bit group has <code>print_to()</code>, so <code>gmsg::print</code> can dump it',
              'Every generated struct, view and bit group has <code>_print(&amp;m, &amp;printer)</code> (<code>gmp/c/print.h</code>), with the same text as C++, to dump it',
              'Every generated class, view and bit group has <code>printTo()</code> and <code>toString()</code>, so <code>gmsg.print</code> gives the same text as C++', 'Every generated dataclass, view and bit group has <code>print_to()</code>, <code>to_text()</code> and <code>__str__</code>, so <code>print(m)</code> gives the same text as C++')}
       for a console or a debug log. Enums print as <code>name (0xNN)</code> and undeclared values as
       <code>&lt;unknown&gt; (0x07)</code>, so the raw value is always visible. Scaled fields show the raw value followed
       by the engineering value and unit. Bytes print as hex, strings are quoted and escaped, and missing conditional fields
       print as <code>&lt;absent&gt;</code>. A view prints exactly like its struct.</p>
-      ${code(ln(`gmp::println(status, stdout);                       // FILE*: console or fopen'ed log
-gmp::print(status, std::cout);                         // anything with write(): std::ostream
-char line[256];  gmp::print(status, line);            // char buffer, NUL terminated
-gmp::static_string<256> s;  gmp::print(status, s);    // appends; std::string works too
-gmp::print(status, [](std::string_view t) { uart_log(t); });   // callback
+      ${code(ln(`gmsg::println(status, stdout);                       // FILE*: console or fopen'ed log
+gmsg::print(status, std::cout);                         // anything with write(): std::ostream
+char line[256];  gmsg::print(status, line);            // char buffer, NUL terminated
+gmsg::static_string<256> s;  gmsg::print(status, s);    // appends; std::string works too
+gmsg::print(status, [](std::string_view t) { uart_log(t); });   // callback
 
-gmp::print(status, stdout, {.style = gmp::PrintStyle::single_line});
+gmsg::print(status, stdout, {.style = gmsg::PrintStyle::single_line});
 // options: style, indent, max_items, max_bytes (0 = all), precision (significant digits of scaled values)
 
 // Stream handlers can print the view directly, and Protocol::parse() results print whichever message matched
-stream.feed(chunk, [](const demo::StatusView& v) { gmp::println(v, stdout); });`, `gmsg_printer p;
+stream.feed(chunk, [](const demo::StatusView& v) { gmsg::println(v, stdout); });`, `gmsg_printer p;
 gmsg_printer_init_file(&p, stdout, NULL);           // FILE*: console or fopen'ed log
 demo_status_print(&status, &p);
 gmsg_printer_finish(&p, true, NULL);                // true: end with a newline
@@ -950,7 +950,7 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
         ['array', '<code>[1, 2, 3]</code>; messages one per line; <code>... (+N more)</code> past <code>max_items</code>'],
         ['conditional field', 'its value, or <code>&lt;absent&gt;</code>'],
         ['computed value', '<code>serial: 305419896 (computed)</code>'],
-        ['custom type', ln('your <code>gmp_print(gmp::Printer&amp;, const T&amp;)</code> next to the type, else <code>&lt;?&gt;</code>',
+        ['custom type', ln('your <code>gmsg_print(gmsg::Printer&amp;, const T&amp;)</code> next to the type, else <code>&lt;?&gt;</code>',
                            'the <code>print</code> function of its <code>c:</code> block, <code>void fn(gmsg_printer*, const T*)</code>, else <code>&lt;?&gt;</code>',
                            'the <code>print</code> function of its <code>js:</code> block, <code>print(printer, value)</code>; else numbers and strings print as such, other values as <code>&lt;?&gt;</code>', 'the <code>print</code> function of its <code>python:</code> block, <code>print(printer, value)</code>; else numbers and strings print as such, other values as <code>&lt;?&gt;</code>')],
       ])}
@@ -1010,11 +1010,11 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
         ['<code>struct M</code>', 'Members per field (std::optional when conditional), <code>decode()</code>, <code>encode()</code>, scaled / conversion / computed accessors, <code>operator==</code>.'],
         ['<code>class MView</code>', '<code>from(bytes)</code> validates once; accessors read from the buffer. <code>to_struct()</code> copies out.'],
         ['<code>enum class E</code>', '<code>to_string()</code>, <code>is_known()</code>.'],
-        ['<code>print_to()</code>', 'On structs, views and bit groups: drives <code>gmp::print(msg, sink)</code> (see Printing for logs).'],
+        ['<code>print_to()</code>', 'On structs, views and bit groups: drives <code>gmsg::print(msg, sink)</code> (see Printing for logs).'],
         ['<code>struct P</code>', '<code>parse()</code> → <code>AnyView</code>, <code>decode()</code> → <code>AnyMessage</code>, <code>encode(msg, out)</code>, <code>Stream&lt;&gt;</code>, <code>make_stream()</code> / <code>StreamWith</code>, <code>Callbacks</code> / <code>CallbackStream</code>, layout constants.'],
       ])}
       <h3>Errors</h3>
-      <p>Every fallible call returns <code>gmp::Result&lt;T&gt;</code> (<code>std::expected&lt;T, gmp::Error&gt;</code>).</p>
+      <p>Every fallible call returns <code>gmsg::Result&lt;T&gt;</code> (<code>std::expected&lt;T, gmsg::Error&gt;</code>).</p>
       ${errorTable()}`;
   }
 
@@ -1043,21 +1043,21 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     { id: 'decode', title: 'Decode: bytes → struct',
       intro: 'Validate a whole message and copy every field into a struct you own. Use it when you keep or modify the values.',
       rows: [
-        ['demo::Status::decode(bytes)  →  gmp::Result<Status>', 'gmsg_error demo_status_decode(const uint8_t* data, size_t size, demo_status* out)',
+        ['demo::Status::decode(bytes)  →  gmsg::Result<Status>', 'gmsg_error demo_status_decode(const uint8_t* data, size_t size, demo_status* out)',
           'Decode one message from the start of the buffer (trailing bytes are allowed).'],
         ['demo::Status::decode(bytes, extra)', 'gmsg_error demo_status_decode_extra(const uint8_t* data, size_t size, demo_status* out, size_t* extra)',
           'The same, also reporting how many bytes followed the message (tokens for text messages).'],
-        ['gmp::VoidResult s.read(gmp::ByteReader& r)', 'gmsg_error demo_status_read(gmsg_reader* r, demo_status* m)',
+        ['gmsg::VoidResult s.read(gmsg::ByteReader& r)', 'gmsg_error demo_status_read(gmsg_reader* r, demo_status* m)',
           'Decode from a reader at its current position, e.g. a message embedded in your own format. The reader advances past it.'],
-        ['demo::Link::decode(frame)  →  gmp::Result<AnyMessage>', 'gmsg_error demo_link_decode(const uint8_t* data, size_t size, demo_link_any_message* out)',
+        ['demo::Link::decode(frame)  →  gmsg::Result<AnyMessage>', 'gmsg_error demo_link_decode(const uint8_t* data, size_t size, demo_link_any_message* out)',
           'Decode a whole protocol frame into whichever message it carries (see Protocols).'],
-        ['v.to_struct()  →  gmp::Result<Status>', 'gmsg_error demo_status_view_to_struct(const demo_status_view* v, demo_status* out)',
+        ['v.to_struct()  →  gmsg::Result<Status>', 'gmsg_error demo_status_view_to_struct(const demo_status_view* v, demo_status* out)',
           'Copy a validated view into a struct.'],
       ] },
     { id: 'views', title: 'Views: zero-copy access',
       intro: 'A view checks the message once and then reads each field straight from the buffer when you ask for it. Nothing is copied; the buffer must outlive the view.',
       rows: [
-        ['demo::StatusView::from(bytes)  →  gmp::Result<StatusView>', 'gmsg_error demo_status_view_from(const uint8_t* data, size_t size, demo_status_view* out)',
+        ['demo::StatusView::from(bytes)  →  gmsg::Result<StatusView>', 'gmsg_error demo_status_view_from(const uint8_t* data, size_t size, demo_status_view* out)',
           'Validate lengths, consts, field CRCs and strict enums, and record field offsets.'],
         ['demo::StatusView::unchecked(bytes)', 'demo_status_view demo_status_view_unchecked(const uint8_t* data, size_t size)',
           'A view without validation, for bytes you have already checked.'],
@@ -1080,17 +1080,17 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
         ['s.samples (static_vector), v.samples()  →  size(), [i], range-for', 's.samples[i] with its count field, demo_status_view_samples_count(&v), demo_status_view_samples_at(&v, i)',
           'Arrays. A length / count taken from another field fills that field automatically on encode.'],
         ['s.label (static_string), v.label()  →  std::string_view', 's.label (NUL terminated) + s.label_len, demo_status_view_label(&v)  →  gmsg_str',
-          ['Strings; bytes fields give gmp::bytes_view in views.', 'Strings; bytes fields give gmsg_bytes { data, size } in views.']],
+          ['Strings; bytes fields give gmsg::bytes_view in views.', 'Strings; bytes fields give gmsg_bytes { data, size } in views.']],
         ['s.flags.armed', 's.flags.armed', 'Members of a bits group (see Enums and bit groups).'],
-        ['v.when()  →  gmp::Result<MyTime>', 'gmsg_error demo_status_view_when(const demo_status_view* v, my_time* out)',
+        ['v.when()  →  gmsg::Result<MyTime>', 'gmsg_error demo_status_view_when(const demo_status_view* v, my_time* out)',
           'A custom type in a view is decoded on access, so it can fail.'],
       ] },
     { id: 'encode', title: 'Encode: struct → bytes',
       intro: 'Write a struct to a buffer you provide. Lengths and counts that come from other fields are filled in for you; nothing allocates.',
       rows: [
-        ['s.encode(out)  →  gmp::Result<std::size_t>', 'gmsg_error demo_status_encode(const demo_status* m, uint8_t* out, size_t capacity, size_t* written)',
+        ['s.encode(out)  →  gmsg::Result<std::size_t>', 'gmsg_error demo_status_encode(const demo_status* m, uint8_t* out, size_t capacity, size_t* written)',
           'Encode one message; returns the bytes written (BufferFull when out is too small).'],
-        ['gmp::VoidResult s.write(gmp::ByteWriter& w)', 'gmsg_error demo_status_write(const demo_status* m, gmsg_writer* w)',
+        ['gmsg::VoidResult s.write(gmsg::ByteWriter& w)', 'gmsg_error demo_status_write(const demo_status* m, gmsg_writer* w)',
           'Encode at a writer\'s current position (inside your own format).'],
         ['demo::Link::encode(s, out)', 'demo_link_encode_status(&s, out, capacity, &n)',
           'A complete frame: sync, header (type id and length filled in), message, checksum, escaping.'],
@@ -1105,9 +1105,9 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
         ['demo::Gga::decode(bytes), g.encode(out)', 'demo_gga_decode(data, size, &g), demo_gga_encode(&g, out, capacity, &n)', 'Decode / encode the message tokens.'],
         ['g.read_text(std::span<const std::string_view> tokens)', 'gmsg_error demo_gga_read_text(const gmsg_str* tok, size_t ntok, demo_gga* m)',
           'Fill the struct from tokens you split yourself.'],
-        ['g.write_text(gmp::text::TextWriter& w)', 'gmsg_error demo_gga_write_text(const demo_gga* m, gmsg_text_writer* w)', 'Append the tokens to a text writer.'],
+        ['g.write_text(gmsg::text::TextWriter& w)', 'gmsg_error demo_gga_write_text(const demo_gga* m, gmsg_text_writer* w)', 'Append the tokens to a text writer.'],
         ['demo::GgaView::from(std::string_view or bytes)', 'demo_gga_view_from(data, size, &v)', 'Split into tokens once; fields are parsed when read.'],
-        ['v.latitude()  →  gmp::Result<std::optional<double>>', 'gmsg_error demo_gga_view_latitude(const demo_gga_view* v, double* out), demo_gga_view_has_latitude(&v)',
+        ['v.latitude()  →  gmsg::Result<std::optional<double>>', 'gmsg_error demo_gga_view_latitude(const demo_gga_view* v, double* out), demo_gga_view_has_latitude(&v)',
           ['Parse one token on demand; optional tokens give an empty optional.', 'Parse one token on demand; an empty optional token gives GMSG_ERR_MISSING_FIELD (check _has_ first).']],
         ['g.latitude (std::optional<double>)', 'g.has_latitude + g.latitude', 'Optional tokens in the struct.'],
         [null, 'demo_gga_view_token(&v, i), demo_gga_view_present_tokens(&v)', 'The raw token text and the number of tokens present.'],
@@ -1120,19 +1120,19 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
         ['to_string(Mode)  →  std::string_view', 'const char* demo_mode_to_string(demo_mode v)', ['The value\'s name; empty when undeclared.', 'The value\'s name; NULL when undeclared.']],
         ['is_known(Mode)', 'bool demo_mode_is_known(demo_mode v)', 'True for a declared value.'],
         ['Status_flags::unpack(p), f.pack(p)', 'demo_status_flags_unpack(&f, p), demo_status_flags_pack(&f, p)', 'Read / write the group from / to its bytes.'],
-        ['Status_flags::check(p)  →  gmp::VoidResult', 'gmsg_error demo_status_flags_check(const uint8_t* p)', 'Validate const bits and strict enums in the group.'],
+        ['Status_flags::check(p)  →  gmsg::VoidResult', 'gmsg_error demo_status_flags_check(const uint8_t* p)', 'Validate const bits and strict enums in the group.'],
       ] },
     { id: 'protocols', title: 'Protocols: one frame at a time',
       intro: 'For datagrams, packets from a queue, or any buffer that holds exactly one frame. Framing, checksum and escaping are handled; the message is chosen by its type id.',
       rows: [
-        ['demo::Link::parse(frame)  →  gmp::Result<AnyView>', 'gmsg_error demo_link_parse(const uint8_t* data, size_t size, demo_link_any_view* out)',
+        ['demo::Link::parse(frame)  →  gmsg::Result<AnyView>', 'gmsg_error demo_link_parse(const uint8_t* data, size_t size, demo_link_any_view* out)',
           ['A view of whichever message the frame carries: AnyView is a std::variant of the message views.', 'A view of whichever message the frame carries: out->kind (DEMO_LINK_STATUS, ...) and out->as.status, ...']],
-        ['demo::Link::decode(frame)  →  gmp::Result<AnyMessage>', 'demo_link_decode(data, size, &msg)', 'The same, decoded into a struct (a variant / tagged union).'],
-        ['demo::Link::process(frame, handler)  →  gmp::Error', 'gmsg_error demo_link_process(const uint8_t* data, size_t size, const demo_link_callbacks* cb)',
+        ['demo::Link::decode(frame)  →  gmsg::Result<AnyMessage>', 'demo_link_decode(data, size, &msg)', 'The same, decoded into a struct (a variant / tagged union).'],
+        ['demo::Link::process(frame, handler)  →  gmsg::Error', 'gmsg_error demo_link_process(const uint8_t* data, size_t size, const demo_link_callbacks* cb)',
           ['Call the handler overload for the message (with the header view when it takes one).', 'Call the callback slot for the message, then on_frame.']],
-        ['demo::Link::open(frame)  →  gmp::Result<Frame>, select_message(f), visit_frame(f, fn)', null,
+        ['demo::Link::open(frame)  →  gmsg::Result<Frame>, select_message(f), visit_frame(f, fn)', null,
           'The steps of parse separately: check and unescape the frame, then pick the message.'],
-        ['demo::Link::scan(bytes)  →  gmp::FrameScan', null, 'Find where the next frame starts and ends (what the stream parser uses).'],
+        ['demo::Link::scan(bytes)  →  gmsg::FrameScan', null, 'Find where the next frame starts and ends (what the stream parser uses).'],
         ['Link::Header, Link::HeaderView, Link::AnyView, Link::AnyMessage', 'demo_link_header, demo_link_header_view, demo_link_any_view, demo_link_any_message, demo_link_kind',
           'The protocol\'s types.'],
       ] },
@@ -1166,7 +1166,7 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
         ['parser.poll_frame()  →  { header, message, bytes, extra }', 'bool demo_link_stream_poll_frame(demo_link_stream* s, demo_link_received* out)',
           'The next frame with its header view, raw bytes and the data after its message (extra).'],
         ['parser.poll_message()  →  std::optional<AnyMessage>', 'bool demo_link_stream_poll_message(demo_link_stream* s, demo_link_any_message* out)', 'The next message as a decoded copy.'],
-        ['parser.poll_event()  →  AnyView or gmp::FrameError', 'gmsg_poll demo_link_stream_poll_event(demo_link_stream* s, demo_link_event* out)',
+        ['parser.poll_event()  →  AnyView or gmsg::FrameError', 'gmsg_poll demo_link_stream_poll_event(demo_link_stream* s, demo_link_event* out)',
           ['Messages and errors in stream order.', 'Messages and errors in stream order: GMSG_POLL_MESSAGE, GMSG_POLL_ERROR or GMSG_POLL_NEED_MORE.']],
         ['link.poll_for<StatusView>()', 'bool demo_link_stream_poll_for(demo_link_stream* s, demo_link_kind kind, demo_link_any_view* out)',
           'Wait for one message type; other messages go to the listeners meanwhile.'],
@@ -1175,15 +1175,15 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     { id: 'print', title: 'Printing',
       intro: 'Human-readable text for logs and consoles; the same output in both languages and in the Studio decode tester.',
       rows: [
-        ['gmp::print(v, sink, opts), gmp::println(v, sink, opts)  →  gmp::Result<std::size_t>', 'demo_status_print(&s, &p), demo_status_view_print(&v, &p), demo_status_flags_print(&f, &p)',
+        ['gmsg::print(v, sink, opts), gmsg::println(v, sink, opts)  →  gmsg::Result<std::size_t>', 'demo_status_print(&s, &p), demo_status_view_print(&v, &p), demo_status_flags_print(&f, &p)',
           'Print a struct, view or bits group.'],
         ['sinks: FILE*, std::ostream, char[N], static_string, std::string, callback', 'gmsg_printer_init_file(&p, f, opts), gmsg_printer_init_buffer(&p, buf, cap, opts), gmsg_printer_init(&p, write_fn, ctx, opts)',
           'Where the text goes.'],
         [null, 'gmsg_error gmsg_printer_finish(gmsg_printer* p, bool newline, size_t* written)', 'End printing; GMSG_ERR_BUFFER_FULL when the text was cut.'],
-        ['gmp::print(Link::parse(frame).value(), sink)', 'demo_link_any_view_print(&any, &p), demo_link_any_message_print(&msg, &p)', 'Print whichever message a frame holds.'],
-        ['gmp::PrintOptions{ .style, .indent, .max_items, .max_bytes, .precision }', 'gmsg_print_options o = gmsg_print_defaults();', 'Multi or single line, indent, how much of arrays and bytes, significant digits.'],
-        ['m.print_to(gmp::Printer& p)', null, 'What gmp::print calls; use it to print inside your own printer.'],
-        ['void gmp_print(gmp::Printer&, const MyTime&)', 'c: { print: my_time_print }  →  void my_time_print(gmsg_printer* p, const my_time* v)', 'How a custom type prints (otherwise <?>).'],
+        ['gmsg::print(Link::parse(frame).value(), sink)', 'demo_link_any_view_print(&any, &p), demo_link_any_message_print(&msg, &p)', 'Print whichever message a frame holds.'],
+        ['gmsg::PrintOptions{ .style, .indent, .max_items, .max_bytes, .precision }', 'gmsg_print_options o = gmsg_print_defaults();', 'Multi or single line, indent, how much of arrays and bytes, significant digits.'],
+        ['m.print_to(gmsg::Printer& p)', null, 'What gmsg::print calls; use it to print inside your own printer.'],
+        ['void gmsg_print(gmsg::Printer&, const MyTime&)', 'c: { print: my_time_print }  →  void my_time_print(gmsg_printer* p, const my_time* v)', 'How a custom type prints (otherwise <?>).'],
       ] },
     { id: 'sizes', title: 'Sizes and constants',
       intro: 'Compile-time sizes for buffers and checks.',
@@ -1197,16 +1197,16 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     { id: 'errors', title: 'Errors',
       intro: 'Nothing throws and nothing allocates; every fallible call reports an error code (table in the next section).',
       rows: [
-        ['gmp::Result<T>  (std::expected<T, gmp::Error>)', 'gmsg_error return value + out parameter (GMSG_OK is 0)', 'How results are returned.'],
-        ['gmp::to_string(gmp::Error)', 'const char* gmsg_error_str(gmsg_error e)', 'Short description, e.g. "bad checksum".'],
-        ['gmp::FrameError{ error, data }', 'on_error(ctx, gmsg_error e, const uint8_t* data, size_t size)', 'A dropped frame or skipped bytes, with the reason.'],
+        ['gmsg::Result<T>  (std::expected<T, gmsg::Error>)', 'gmsg_error return value + out parameter (GMSG_OK is 0)', 'How results are returned.'],
+        ['gmsg::to_string(gmsg::Error)', 'const char* gmsg_error_str(gmsg_error e)', 'Short description, e.g. "bad checksum".'],
+        ['gmsg::FrameError{ error, data }', 'on_error(ctx, gmsg_error e, const uint8_t* data, size_t size)', 'A dropped frame or skipped bytes, with the reason.'],
       ] },
     { id: 'checksums', title: 'Checksums (runtime)',
       intro: 'The algorithms protocols use are available directly, e.g. to check a frame by hand or build a reply.',
       rows: [
-        ['gmp::crc32::compute(bytes)', 'uint32_t gmsg_crc32_compute(const uint8_t* data, size_t n)', 'One call over a whole buffer (every preset: crc8 … crc64_ecma, xor8, sum8, lrc8, sum16, fletcher16, fletcher8_ubx).'],
+        ['gmsg::crc32::compute(bytes)', 'uint32_t gmsg_crc32_compute(const uint8_t* data, size_t n)', 'One call over a whole buffer (every preset: crc8 … crc64_ecma, xor8, sum8, lrc8, sum16, fletcher16, fletcher8_ubx).'],
         ['init(), update(state, bytes), finish(state)', 'gmsg_crc32_init(), gmsg_crc32_update(state, data, n), gmsg_crc32_finish(state)', 'Incremental: feed the data in pieces.'],
-        ['gmp::Crc<T, width, poly, init, refin, refout, xorout>', 'gmsg_crc_params p = { width, refin, refout, poly, init, xorout };  gmsg_crc_compute(&p, data, n)', 'Any other CRC from its parameters.'],
+        ['gmsg::Crc<T, width, poly, init, refin, refout, xorout>', 'gmsg_crc_params p = { width, refin, refout, poly, init, xorout };  gmsg_crc_compute(&p, data, n)', 'Any other CRC from its parameters.'],
       ] },
   ];
 
@@ -1214,13 +1214,13 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
   // JavaScript signatures of the API rows above, keyed by the row's C++ signature (or its C signature when the row has
   // no C++ one): [signature or null (no counterpart), optional JavaScript description].
   const API_JS = {
-    'demo::Status::decode(bytes)  →  gmp::Result<Status>': ['demo.Status.decode(bytes)  →  Status', 'Decode one message from the start of the buffer (trailing bytes are allowed). Throws gmsg.GmpError.'],
+    'demo::Status::decode(bytes)  →  gmsg::Result<Status>': ['demo.Status.decode(bytes)  →  Status', 'Decode one message from the start of the buffer (trailing bytes are allowed). Throws gmsg.GmpError.'],
     'demo::Status::decode(bytes, extra)': ['demo.Status.decodeWithExtra(bytes)  →  { message, extra }'],
     'v.extra_bytes()': ['v.extraBytes, v.extraTokens'],
-    'gmp::VoidResult s.read(gmp::ByteReader& r)': ['demo.Status.read(reader)  →  Status', 'Decode from a gmsg.Reader at its current position, e.g. a message embedded in your own format. The reader advances past it.'],
-    'demo::Link::decode(frame)  →  gmp::Result<AnyMessage>': ['demo.Link.decode(frame)  →  Status | …'],
-    'v.to_struct()  →  gmp::Result<Status>': ['v.toStruct()  →  Status'],
-    'demo::StatusView::from(bytes)  →  gmp::Result<StatusView>': ['demo.StatusView.from(bytes)  →  StatusView'],
+    'gmsg::VoidResult s.read(gmsg::ByteReader& r)': ['demo.Status.read(reader)  →  Status', 'Decode from a gmsg.Reader at its current position, e.g. a message embedded in your own format. The reader advances past it.'],
+    'demo::Link::decode(frame)  →  gmsg::Result<AnyMessage>': ['demo.Link.decode(frame)  →  Status | …'],
+    'v.to_struct()  →  gmsg::Result<Status>': ['v.toStruct()  →  Status'],
+    'demo::StatusView::from(bytes)  →  gmsg::Result<StatusView>': ['demo.StatusView.from(bytes)  →  StatusView'],
     'demo::StatusView::unchecked(bytes)': ['demo.StatusView.unchecked(bytes)'],
     'v.voltage()': ['v.voltage', 'Read one field (the raw wire value); fields are getters.'],
     'v.data(), v.wire_size()': ['v.data, v.wireSize', 'The bytes the view covers (a Uint8Array over the input) and its size on the wire.'],
@@ -1233,18 +1233,18 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     's.samples (static_vector), v.samples()  →  size(), [i], range-for': ['s.samples (Array), v.samples  →  Array', 'Arrays. A length / count taken from another field is filled in on encode; more than max elements is OutOfRange.'],
     's.label (static_string), v.label()  →  std::string_view': ['s.label (string), v.label  →  string', 'Strings hold one character per byte (latin1); bytes fields are Uint8Array.'],
     's.flags.armed': ['s.flags.armed'],
-    'v.when()  →  gmp::Result<MyTime>': ['v.when', 'A custom type in a view is decoded on access, so reading it can throw.'],
-    's.encode(out)  →  gmp::Result<std::size_t>': ['s.encode()  →  Uint8Array', 'Encode one message to a new Uint8Array. Values that do not fit their type, or containers past max, throw OutOfRange.'],
-    'gmp::VoidResult s.write(gmp::ByteWriter& w)': ['demo.Status.write(writer, s)', 'Encode with a gmsg.Writer at its current position (inside your own format). Plain objects with the same fields work too.'],
+    'v.when()  →  gmsg::Result<MyTime>': ['v.when', 'A custom type in a view is decoded on access, so reading it can throw.'],
+    's.encode(out)  →  gmsg::Result<std::size_t>': ['s.encode()  →  Uint8Array', 'Encode one message to a new Uint8Array. Values that do not fit their type, or containers past max, throw OutOfRange.'],
+    'gmsg::VoidResult s.write(gmsg::ByteWriter& w)': ['demo.Status.write(writer, s)', 'Encode with a gmsg.Writer at its current position (inside your own format). Plain objects with the same fields work too.'],
     'demo::Link::encode(s, out)': ['demo.Link.encode(s)  →  Uint8Array'],
     'demo::Link::encode(header, s, out)': ['demo.Link.encode(s, { seq: 7 })', 'The same, with header fields you choose (sequence numbers, addresses).'],
     'demo::Link::encode(any_message, out)': [null],
     'demo::Gga::decode_text(std::string_view)': ['demo.Gga.decodeText(string)'],
     'demo::Gga::decode(bytes), g.encode(out)': ['demo.Gga.decode(bytes), g.encode()  →  Uint8Array, g.encodeText()  →  string'],
     'g.read_text(std::span<const std::string_view> tokens)': ['demo.Gga.readText(tokens)  →  Gga', 'Build the message from tokens (strings) you split yourself.'],
-    'g.write_text(gmp::text::TextWriter& w)': ['demo.Gga.writeText(textWriter, g)', 'Append the tokens to a gmsg.text.TextWriter.'],
+    'g.write_text(gmsg::text::TextWriter& w)': ['demo.Gga.writeText(textWriter, g)', 'Append the tokens to a gmsg.text.TextWriter.'],
     'demo::GgaView::from(std::string_view or bytes)': ['demo.GgaView.from(string or bytes)'],
-    'v.latitude()  →  gmp::Result<std::optional<double>>': ['v.latitude  →  number | undefined', 'Parse one token on access (throws GmpError when it does not parse); an empty optional token gives undefined.'],
+    'v.latitude()  →  gmsg::Result<std::optional<double>>': ['v.latitude  →  number | undefined', 'Parse one token on access (throws GmpError when it does not parse); an empty optional token gives undefined.'],
     'g.latitude (std::optional<double>)': ['g.latitude (undefined when empty)'],
     'demo_gga_view_token(&v, i), demo_gga_view_present_tokens(&v)': ['v.token(i), v.presentTokens'],
     'Gga::token_count, Gga::separator': ['demo.Gga.tokenCount, demo.Gga.separator'],
@@ -1252,12 +1252,12 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     'to_string(Mode)  →  std::string_view': ['demo.Mode.nameOf(v)  →  string'],
     'is_known(Mode)': ['demo.Mode.isKnown(v)'],
     'Status_flags::unpack(p), f.pack(p)': ['demo.Status_flags.unpack(bytes, at), demo.Status_flags.pack(f, bytes, at)'],
-    'Status_flags::check(p)  →  gmp::VoidResult': ['demo.Status_flags.check(bytes, at)', 'Validate const bits and strict enums in the group (throws GmpError).'],
-    'demo::Link::parse(frame)  →  gmp::Result<AnyView>': ['demo.Link.parse(frame)  →  StatusView | …', 'A view of whichever message the frame carries (check it with instanceof).'],
-    'demo::Link::decode(frame)  →  gmp::Result<AnyMessage>_': [null],
-    'demo::Link::process(frame, handler)  →  gmp::Error': ['demo.Link.process(frame)  →  { header, message }', "The frame's header view and message view (what the stream parser calls)."],
-    'demo::Link::open(frame)  →  gmp::Result<Frame>, select_message(f), visit_frame(f, fn)': ['demo.Link.open(frame)  →  { header, body }, demo.Link.select(f)'],
-    'demo::Link::scan(bytes)  →  gmp::FrameScan': ['demo.Link.scan(bytes)  →  { kind, size, consume, consumeOnError, error }'],
+    'Status_flags::check(p)  →  gmsg::VoidResult': ['demo.Status_flags.check(bytes, at)', 'Validate const bits and strict enums in the group (throws GmpError).'],
+    'demo::Link::parse(frame)  →  gmsg::Result<AnyView>': ['demo.Link.parse(frame)  →  StatusView | …', 'A view of whichever message the frame carries (check it with instanceof).'],
+    'demo::Link::decode(frame)  →  gmsg::Result<AnyMessage>_': [null],
+    'demo::Link::process(frame, handler)  →  gmsg::Error': ['demo.Link.process(frame)  →  { header, message }', "The frame's header view and message view (what the stream parser calls)."],
+    'demo::Link::open(frame)  →  gmsg::Result<Frame>, select_message(f), visit_frame(f, fn)': ['demo.Link.open(frame)  →  { header, body }, demo.Link.select(f)'],
+    'demo::Link::scan(bytes)  →  gmsg::FrameScan': ['demo.Link.scan(bytes)  →  { kind, size, consume, consumeOnError, error }'],
     'Link::Header, Link::HeaderView, Link::AnyView, Link::AnyMessage': ['demo.Link.Header, demo.Link.HeaderView, demo.Link.views, demo.Link.messages'],
     'demo::Link::Stream<> parser;': ['const parser = demo.Link.stream()', 'A gmsg.StreamParser with a buffer of maxFrame bytes (pass { capacity } to change it).'],
     'parser.feed(chunk, handler)  →  frames delivered': ['parser.feed(chunk)  →  frames delivered', 'Push the bytes and call the listeners for every complete frame.'],
@@ -1274,27 +1274,27 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     'parser.poll()  →  Polled<AnyView>': ['parser.poll()  →  view | null'],
     'parser.poll_frame()  →  { header, message, bytes, extra }': ['parser.pollFrame()  →  { header, message, bytes, offset, extra } | null'],
     'parser.poll_message()  →  std::optional<AnyMessage>': ['parser.pollMessage()  →  Status | … | null'],
-    'parser.poll_event()  →  AnyView or gmp::FrameError': ['parser.pollEvent()  →  { message, header, bytes, offset } | { error, offset } | null'],
+    'parser.poll_event()  →  AnyView or gmsg::FrameError': ['parser.pollEvent()  →  { message, header, bytes, offset } | { error, offset } | null'],
     'link.poll_for<StatusView>()': ["parser.pollFor('Status')  →  StatusView | null"],
     'uint32_t demo_link_stream_generation(const demo_link_stream* s)': [null],
-    'gmp::print(v, sink, opts), gmp::println(v, sink, opts)  →  gmp::Result<std::size_t>': ['gmsg.print(v, opts)  →  string, v.toString(opts)'],
+    'gmsg::print(v, sink, opts), gmsg::println(v, sink, opts)  →  gmsg::Result<std::size_t>': ['gmsg.print(v, opts)  →  string, v.toString(opts)'],
     'sinks: FILE*, std::ostream, char[N], static_string, std::string, callback': [null],
     'gmsg_error gmsg_printer_finish(gmsg_printer* p, bool newline, size_t* written)': [null],
-    'gmp::print(Link::parse(frame).value(), sink)': ['gmsg.print(demo.Link.parse(frame))'],
-    'gmp::PrintOptions{ .style, .indent, .max_items, .max_bytes, .precision }': ["{ style: 'single_line', indent, maxItems, maxBytes, precision }"],
-    'm.print_to(gmp::Printer& p)': ['m.printTo(printer)', 'What gmsg.print calls; use it to print inside your own gmsg.Printer.'],
-    'void gmp_print(gmp::Printer&, const MyTime&)': ['js: { print: printTime }  →  printTime(printer, value)', 'How a custom type prints (otherwise numbers and strings as such, else <?>).'],
+    'gmsg::print(Link::parse(frame).value(), sink)': ['gmsg.print(demo.Link.parse(frame))'],
+    'gmsg::PrintOptions{ .style, .indent, .max_items, .max_bytes, .precision }': ["{ style: 'single_line', indent, maxItems, maxBytes, precision }"],
+    'm.print_to(gmsg::Printer& p)': ['m.printTo(printer)', 'What gmsg.print calls; use it to print inside your own gmsg.Printer.'],
+    'void gmsg_print(gmsg::Printer&, const MyTime&)': ['js: { print: printTime }  →  printTime(printer, value)', 'How a custom type prints (otherwise numbers and strings as such, else <?>).'],
     'Status::min_wire_size, Status::max_wire_size': ['demo.Status.minWireSize, demo.Status.maxWireSize'],
     'Status::wire_size': ['demo.Status.wireSize'],
     'Status::magic_value': ['demo.Status.magic_value'],
     'Link::max_frame': ['demo.Link.maxFrame'],
     'Link::prefix_size, header_size, trailer_size, suffix_size, prefix': ['demo.Link.prefixSize, headerSize, trailerSize, suffixSize, prefix, suffix'],
-    'gmp::Result<T>  (std::expected<T, gmp::Error>)': ['throw new gmsg.GmpError(code)', 'Failures throw a gmsg.GmpError; e.code is a gmsg.Err value.'],
-    'gmp::to_string(gmp::Error)': ['gmsg.errorText(code), e.message'],
-    'gmp::FrameError{ error, data }': ["parser.on('error', (e) => …): e.code, e.bytes, e.offset"],
-    'gmp::crc32::compute(bytes)': ['gmsg.checksum.crc32.compute(bytes)'],
+    'gmsg::Result<T>  (std::expected<T, gmsg::Error>)': ['throw new gmsg.GmpError(code)', 'Failures throw a gmsg.GmpError; e.code is a gmsg.Err value.'],
+    'gmsg::to_string(gmsg::Error)': ['gmsg.errorText(code), e.message'],
+    'gmsg::FrameError{ error, data }': ["parser.on('error', (e) => …): e.code, e.bytes, e.offset"],
+    'gmsg::crc32::compute(bytes)': ['gmsg.checksum.crc32.compute(bytes)'],
     'init(), update(state, bytes), finish(state)': ['init(), update(state, bytes), finish(state)'],
-    'gmp::Crc<T, width, poly, init, refin, refout, xorout>': ['gmsg.checksum.crc({ width, poly, init, refin, refout, xorout })'],
+    'gmsg::Crc<T, width, poly, init, refin, refout, xorout>': ['gmsg.checksum.crc({ width, poly, init, refin, refout, xorout })'],
   };
   // rows only JavaScript has: [null, null, description, signature]
   const API_JS_EXTRA = {
@@ -1303,13 +1303,13 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
 
   // Python names of the API rows, keyed like API_JS: [signature, description (optional)]
   const API_PY = {
-    'demo::Status::decode(bytes)  →  gmp::Result<Status>': ['demo.Status.decode(data)  →  Status', 'Decode one message from the start of the buffer (trailing bytes are allowed). Raises gmsg.GmpError.'],
+    'demo::Status::decode(bytes)  →  gmsg::Result<Status>': ['demo.Status.decode(data)  →  Status', 'Decode one message from the start of the buffer (trailing bytes are allowed). Raises gmsg.GmpError.'],
     'demo::Status::decode(bytes, extra)': ['demo.Status.decode_with_extra(data)  →  (Status, extra)'],
     'v.extra_bytes()': ['v.extra_bytes, v.extra_tokens'],
-    'gmp::VoidResult s.read(gmp::ByteReader& r)': ['demo.Status.read(reader)  →  Status', 'Decode from a gmsg.Reader at its current position, e.g. a message embedded in your own format. The reader advances past it.'],
-    'demo::Link::decode(frame)  →  gmp::Result<AnyMessage>': ['demo.Link.decode(frame)  →  Status | …'],
-    'v.to_struct()  →  gmp::Result<Status>': ['v.to_struct()  →  Status'],
-    'demo::StatusView::from(bytes)  →  gmp::Result<StatusView>': ['demo.StatusView.from_bytes(data)  →  StatusView'],
+    'gmsg::VoidResult s.read(gmsg::ByteReader& r)': ['demo.Status.read(reader)  →  Status', 'Decode from a gmsg.Reader at its current position, e.g. a message embedded in your own format. The reader advances past it.'],
+    'demo::Link::decode(frame)  →  gmsg::Result<AnyMessage>': ['demo.Link.decode(frame)  →  Status | …'],
+    'v.to_struct()  →  gmsg::Result<Status>': ['v.to_struct()  →  Status'],
+    'demo::StatusView::from(bytes)  →  gmsg::Result<StatusView>': ['demo.StatusView.from_bytes(data)  →  StatusView'],
     'demo::StatusView::unchecked(bytes)': ['demo.StatusView.unchecked(data)'],
     'v.voltage()': ['v.voltage', 'Read one field (the raw wire value); fields are properties.'],
     'v.data(), v.wire_size()': ['v.data, v.wire_size', 'The bytes the view covers (a memoryview over the input) and its size on the wire.'],
@@ -1322,18 +1322,18 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     's.samples (static_vector), v.samples()  →  size(), [i], range-for': ['s.samples (list), v.samples  →  list', 'Arrays. A length / count taken from another field is filled in on encode; more than max elements is OUT_OF_RANGE.'],
     's.label (static_string), v.label()  →  std::string_view': ['s.label (str), v.label  →  str', 'Strings hold one character per byte (latin-1); bytes fields are bytes (a memoryview in views).'],
     's.flags.armed': ['s.flags.armed'],
-    'v.when()  →  gmp::Result<MyTime>': ['v.when', 'A custom type in a view is decoded on access, so reading it can raise.'],
-    's.encode(out)  →  gmp::Result<std::size_t>': ['s.encode()  →  bytes', 'Encode one message. Values that do not fit their type, or containers past max, raise OUT_OF_RANGE.'],
-    'gmp::VoidResult s.write(gmp::ByteWriter& w)': ['demo.Status.write(writer, s)', 'Encode with a gmsg.Writer at its current position (inside your own format).'],
+    'v.when()  →  gmsg::Result<MyTime>': ['v.when', 'A custom type in a view is decoded on access, so reading it can raise.'],
+    's.encode(out)  →  gmsg::Result<std::size_t>': ['s.encode()  →  bytes', 'Encode one message. Values that do not fit their type, or containers past max, raise OUT_OF_RANGE.'],
+    'gmsg::VoidResult s.write(gmsg::ByteWriter& w)': ['demo.Status.write(writer, s)', 'Encode with a gmsg.Writer at its current position (inside your own format).'],
     'demo::Link::encode(s, out)': ['demo.Link.encode(s)  →  bytes'],
     'demo::Link::encode(header, s, out)': ["demo.Link.encode(s, {'seq': 7})", 'The same, with header fields you choose (a dict or a Header instance).'],
     'demo::Link::encode(any_message, out)': [null],
     'demo::Gga::decode_text(std::string_view)': ['demo.Gga.decode_text(s)'],
     'demo::Gga::decode(bytes), g.encode(out)': ['demo.Gga.decode(data), g.encode()  →  bytes, g.encode_text()  →  str'],
     'g.read_text(std::span<const std::string_view> tokens)': ['demo.Gga.read_text(tokens)  →  Gga', 'Build the message from tokens (strings) you split yourself.'],
-    'g.write_text(gmp::text::TextWriter& w)': ['demo.Gga.write_text(text_writer, g)', 'Append the tokens to a gmsg.text.TextWriter.'],
+    'g.write_text(gmsg::text::TextWriter& w)': ['demo.Gga.write_text(text_writer, g)', 'Append the tokens to a gmsg.text.TextWriter.'],
     'demo::GgaView::from(std::string_view or bytes)': ['demo.GgaView.from_text(str or bytes)'],
-    'v.latitude()  →  gmp::Result<std::optional<double>>': ['v.latitude  →  float | None', 'Parse one token on access (raises GmpError when it does not parse); an empty optional token gives None.'],
+    'v.latitude()  →  gmsg::Result<std::optional<double>>': ['v.latitude  →  float | None', 'Parse one token on access (raises GmpError when it does not parse); an empty optional token gives None.'],
     'g.latitude (std::optional<double>)': ['g.latitude (None when empty)'],
     'demo_gga_view_token(&v, i), demo_gga_view_present_tokens(&v)': ['v.token(i), v.present_tokens'],
     'Gga::token_count, Gga::separator': ['demo.Gga.token_count, demo.Gga.separator'],
@@ -1341,12 +1341,12 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     'to_string(Mode)  →  std::string_view': ['demo.Mode.name_of(v)  →  str'],
     'is_known(Mode)': ['demo.Mode.is_known(v), demo.Mode.of(v)'],
     'Status_flags::unpack(p), f.pack(p)': ['demo.Status_flags.unpack(data, at), demo.Status_flags.pack(f, buf, at)'],
-    'Status_flags::check(p)  →  gmp::VoidResult': ['demo.Status_flags.check(data, at)', 'Validate const bits and strict enums in the group (raises GmpError).'],
-    'demo::Link::parse(frame)  →  gmp::Result<AnyView>': ['demo.Link.parse(frame)  →  StatusView | …', 'A view of whichever message the frame carries (check it with isinstance).'],
-    'demo::Link::decode(frame)  →  gmp::Result<AnyMessage>_': [null],
-    'demo::Link::process(frame, handler)  →  gmp::Error': ['demo.Link.process(frame)  →  gmsg.Received(message, header)', "The frame's message view and header view (what the stream parser calls)."],
-    'demo::Link::open(frame)  →  gmp::Result<Frame>, select_message(f), visit_frame(f, fn)': ['demo.Link.open(frame)  →  gmsg.Opened(body, header), demo.Link.select(f)'],
-    'demo::Link::scan(bytes)  →  gmp::FrameScan': ['demo.Link.scan(buf)  →  gmsg.FrameScan(kind, size, consume, consume_on_error, error)'],
+    'Status_flags::check(p)  →  gmsg::VoidResult': ['demo.Status_flags.check(data, at)', 'Validate const bits and strict enums in the group (raises GmpError).'],
+    'demo::Link::parse(frame)  →  gmsg::Result<AnyView>': ['demo.Link.parse(frame)  →  StatusView | …', 'A view of whichever message the frame carries (check it with isinstance).'],
+    'demo::Link::decode(frame)  →  gmsg::Result<AnyMessage>_': [null],
+    'demo::Link::process(frame, handler)  →  gmsg::Error': ['demo.Link.process(frame)  →  gmsg.Received(message, header)', "The frame's message view and header view (what the stream parser calls)."],
+    'demo::Link::open(frame)  →  gmsg::Result<Frame>, select_message(f), visit_frame(f, fn)': ['demo.Link.open(frame)  →  gmsg.Opened(body, header), demo.Link.select(f)'],
+    'demo::Link::scan(bytes)  →  gmsg::FrameScan': ['demo.Link.scan(buf)  →  gmsg.FrameScan(kind, size, consume, consume_on_error, error)'],
     'Link::Header, Link::HeaderView, Link::AnyView, Link::AnyMessage': ['demo.Link.Header, demo.Link.HeaderView, demo.Link.views, demo.Link.messages'],
     'demo::Link::Stream<> parser;': ['parser = demo.Link.stream()', 'A gmsg.StreamParser with a buffer of max_frame bytes (pass capacity= to change it).'],
     'parser.feed(chunk, handler)  →  frames delivered': ['parser.feed(chunk)  →  frames delivered', 'Push the bytes and call the listeners for every complete frame.'],
@@ -1363,27 +1363,27 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     'parser.poll()  →  Polled<AnyView>': ['parser.poll()  →  view | None'],
     'parser.poll_frame()  →  { header, message, bytes, extra }': ['parser.poll_frame()  →  gmsg.Received(message, header, bytes, offset, extra) | None'],
     'parser.poll_message()  →  std::optional<AnyMessage>': ['parser.poll_message()  →  Status | … | None'],
-    'parser.poll_event()  →  AnyView or gmp::FrameError': ['parser.poll_event()  →  gmsg.Received | gmsg.GmpError | None'],
+    'parser.poll_event()  →  AnyView or gmsg::FrameError': ['parser.poll_event()  →  gmsg.Received | gmsg.GmpError | None'],
     'link.poll_for<StatusView>()': ['parser.poll_for(demo.Status)  →  StatusView | None'],
     'uint32_t demo_link_stream_generation(const demo_link_stream* s)': [null],
-    'gmp::print(v, sink, opts), gmp::println(v, sink, opts)  →  gmp::Result<std::size_t>': ['str(v), v.to_text(**opts), gmsg.to_text(v, **opts)  →  str'],
+    'gmsg::print(v, sink, opts), gmsg::println(v, sink, opts)  →  gmsg::Result<std::size_t>': ['str(v), v.to_text(**opts), gmsg.to_text(v, **opts)  →  str'],
     'sinks: FILE*, std::ostream, char[N], static_string, std::string, callback': [null],
     'gmsg_error gmsg_printer_finish(gmsg_printer* p, bool newline, size_t* written)': [null],
-    'gmp::print(Link::parse(frame).value(), sink)': ['print(demo.Link.parse(frame))'],
-    'gmp::PrintOptions{ .style, .indent, .max_items, .max_bytes, .precision }': ["to_text(style='single_line', indent=2, max_items=64, max_bytes=64, precision=9)"],
-    'm.print_to(gmp::Printer& p)': ['m.print_to(printer)', 'What gmsg.to_text calls; use it to print inside your own gmsg.Printer.'],
-    'void gmp_print(gmp::Printer&, const MyTime&)': ['python: { print: print_time }  →  print_time(printer, value)', 'How a custom type prints (otherwise numbers and strings as such, else <?>).'],
+    'gmsg::print(Link::parse(frame).value(), sink)': ['print(demo.Link.parse(frame))'],
+    'gmsg::PrintOptions{ .style, .indent, .max_items, .max_bytes, .precision }': ["to_text(style='single_line', indent=2, max_items=64, max_bytes=64, precision=9)"],
+    'm.print_to(gmsg::Printer& p)': ['m.print_to(printer)', 'What gmsg.to_text calls; use it to print inside your own gmsg.Printer.'],
+    'void gmsg_print(gmsg::Printer&, const MyTime&)': ['python: { print: print_time }  →  print_time(printer, value)', 'How a custom type prints (otherwise numbers and strings as such, else <?>).'],
     'Status::min_wire_size, Status::max_wire_size': ['demo.Status.min_wire_size, demo.Status.max_wire_size'],
     'Status::wire_size': ['demo.Status.wire_size'],
     'Status::magic_value': ['demo.Status.magic_value'],
     'Link::max_frame': ['demo.Link.max_frame'],
     'Link::prefix_size, header_size, trailer_size, suffix_size, prefix': ['demo.Link.prefix_size, header_size, trailer_size, suffix_size, prefix, suffix'],
-    'gmp::Result<T>  (std::expected<T, gmp::Error>)': ['raise gmsg.GmpError(code)', 'Failures raise a gmsg.GmpError; e.code is a gmsg.Err (IntEnum).'],
-    'gmp::to_string(gmp::Error)': ['gmsg.error_text(code), str(e)'],
-    'gmp::FrameError{ error, data }': ["parser.on('error', lambda e: …): e.code, e.data, e.offset"],
-    'gmp::crc32::compute(bytes)': ['gmsg.checksum.crc32.compute(data)'],
+    'gmsg::Result<T>  (std::expected<T, gmsg::Error>)': ['raise gmsg.GmpError(code)', 'Failures raise a gmsg.GmpError; e.code is a gmsg.Err (IntEnum).'],
+    'gmsg::to_string(gmsg::Error)': ['gmsg.error_text(code), str(e)'],
+    'gmsg::FrameError{ error, data }': ["parser.on('error', lambda e: …): e.code, e.data, e.offset"],
+    'gmsg::crc32::compute(bytes)': ['gmsg.checksum.crc32.compute(data)'],
     'init(), update(state, bytes), finish(state)': ['init(), update(state, data), finish(state)'],
-    'gmp::Crc<T, width, poly, init, refin, refout, xorout>': ['gmsg.checksum.crc(width, poly, init, refin, refout, xorout)'],
+    'gmsg::Crc<T, width, poly, init, refin, refout, xorout>': ['gmsg.checksum.crc(width, poly, init, refin, refout, xorout)'],
   };
   // rows only Python has: [null, null, description, signature]
   const API_PY_EXTRA = {

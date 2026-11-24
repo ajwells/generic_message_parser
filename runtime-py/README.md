@@ -28,7 +28,7 @@ The API and every result are the same with and without it; the GMP test suite ru
 
 | module | contents |
 |--------|----------|
-| `gmsg.errors` | `Err` (IntEnum, same codes as `gmp::Error`), `GmpError`, `fail`, `error_text` |
+| `gmsg.errors` | `Err` (IntEnum, same codes as `gmsg::Error`), `GmpError`, `fail`, `error_text` |
 | `gmsg.core` | `Reader`, `Writer`, integer checks and C++ conversions, bit fields, `to_f32` |
 | `gmsg.checksum` | presets (`crc32`, `crc16_ccitt`, `xor8`, ...), `crc(width, poly, ...)`, `PRESETS` |
 | `gmsg.framing` | escape configurations, `FrameScan`, `scan_fixed` / `scan_length_prefixed` / `scan_delimited` |

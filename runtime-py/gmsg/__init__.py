@@ -2,7 +2,7 @@
 
 A port of the C++ runtime (runtime/include/gmp) with the same behaviour and the same text output, written the way
 Python code is normally written:
-  - errors are raised as GmpError (`.code` is an Err, `str(e)` the same text as gmp::to_string)
+  - errors are raised as GmpError (`.code` is an Err, `str(e)` the same text as gmsg::to_string)
   - bytes are bytes / bytearray / memoryview; strings hold one character per byte (latin-1), so they round-trip
   - integers are Python ints of any width, checked against their wire type when encoded
   - encoders return bytes; printing returns a string

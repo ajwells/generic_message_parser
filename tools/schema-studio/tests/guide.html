@@ -46,14 +46,14 @@
     const sec = () => d.getElementById('cpp');
     T.ok(btn('cpp') && btn('c'), 'language buttons');
     try { w.localStorage.removeItem('gmp-guide-lang'); } catch (_) { /* file:// */ }
-    T.ok(/gmp::println/.test(codeText()) && btn('cpp').classList.contains('on'), 'C++ by default');
+    T.ok(/gmsg::println/.test(codeText()) && btn('cpp').classList.contains('on'), 'C++ by default');
     btn('c').click();
     await T.until(() => /Generated C and errors/.test(sec().textContent), 3000, 'C section title');
     T.ok(btn('c').classList.contains('on') && !btn('cpp').classList.contains('on'), 'C selected');
     const c = codeText();
     for (const want of ['gmsg_printer_init_file', 'demo_link_stream_init', 'demo_status_view_from', 'LANG c', 'demo_link_stream_poll'])
       T.ok(c.includes(want), `C sample has ${want}`);
-    T.ok(!/gmp::|std::/.test(c), 'no C++ left in the code samples');
+    T.ok(!/gmsg::|std::/.test(c), 'no C++ left in the code samples');
     T.ok(sec().textContent.includes('GMSG_ERR_BAD_CHECKSUM'), 'C error names');
     T.ok(/C99 or later/.test(sec().textContent) && sec().textContent.includes('C_RUNTIME library'), 'C99 and the compiled runtime are described');
     T.ok(d.querySelector('#guide-nav').textContent.includes('Generated C and errors'), 'nav title');
@@ -66,7 +66,7 @@
     T.eq(saved, 'c', 'choice remembered');
     btn('cpp').click();
     await T.until(() => /Generated C\+\+ and errors/.test(sec().textContent), 3000, 'C++ section title');
-    T.ok(/gmp::println/.test(codeText()) && !/gmsg_printer_init_file/.test(codeText()), 'C++ samples again');
+    T.ok(/gmsg::println/.test(codeText()) && !/gmsg_printer_init_file/.test(codeText()), 'C++ samples again');
     T.eq(errors.join('\n'), '', 'JavaScript errors');
   });
 
@@ -80,7 +80,7 @@
     const want = ['decode', 'views', 'fields', 'encode', 'text', 'enums', 'protocols', 'stream', 'poll', 'print', 'sizes', 'errors', 'checksums'];
     T.eq(groups().map((g) => g.dataset.apiGroup).join(','), want.join(','), 'C++ groups');
     const cppText = sec().textContent;
-    for (const x of ['Status::decode(bytes)', 's.encode(out)', 'Link::parse(frame)', 'parser.poll_event()', 'gmp::println', 'CallbackStream'])
+    for (const x of ['Status::decode(bytes)', 's.encode(out)', 'Link::parse(frame)', 'parser.poll_event()', 'gmsg::println', 'CallbackStream'])
       T.ok(cppText.includes(x), `C++ reference has ${x}`);
     T.ok(!/gmsg_printer_init|demo_status_decode/.test(cppText), 'no C names in the C++ reference');
     T.ok(!/\bnull\b|undefined/.test(cppText), 'no missing cells (C++)');
@@ -106,7 +106,7 @@
     const cText = sec().textContent;
     for (const x of ['demo_status_decode', 'demo_status_view_from', 'demo_link_encode_status_with_header', 'demo_link_stream_poll_event', 'gmsg_printer_finish', 'gmsg_crc32_compute', 'DEMO_LINK_MAX_FRAME'])
       T.ok(cText.includes(x), `C reference has ${x}`);
-    T.ok(!/gmp::|std::/.test(cText), 'no C++ names in the C reference');
+    T.ok(!/gmsg::|std::/.test(cText), 'no C++ names in the C reference');
     T.ok(!/\bnull\b|undefined/.test(cText), 'no missing cells (C)');
     btn('cpp').click();
     await T.until(() => /Status::decode/.test(sec().textContent), 3000, 'back to C++');
@@ -124,12 +124,12 @@
     const c = codeText();
     for (const want of ['demo.Link.stream()', 'gmsg.print', 'demo.StatusView.from(bytes)', '--lang js', 'parser.pollEvent()', "parser.on('Status'"])
       T.ok(c.includes(want), `JavaScript sample has ${want}`);
-    T.ok(!/gmp::|std::|gmsg_\w+\(/.test(c), 'no C++ or C left in the code samples');
+    T.ok(!/gmsg::|std::|gmsg_\w+\(/.test(c), 'no C++ or C left in the code samples');
     T.ok(d.getElementById('cpp').textContent.includes('gmsg.Err.BadChecksum'), 'JavaScript error names');
     const api = d.getElementById('api').textContent;
     for (const x of ['demo.Status.decode(bytes)', 's.encode()', 'demo.Link.parse(frame)', 'parser.pollEvent()', 'gmsg.checksum.crc32.compute(bytes)', 'demo.Link.maxFrame', 'parser.messages(chunk)'])
       T.ok(api.includes(x), `JavaScript reference has ${x}`);
-    T.ok(!/gmp::|std::|demo_status_/.test(api), 'no C++ or C names in the JavaScript reference');
+    T.ok(!/gmsg::|std::|demo_status_/.test(api), 'no C++ or C names in the JavaScript reference');
     T.ok(!/\bnull\b|undefined</.test(api), 'no missing cells (JavaScript)');
     const demos = () => Array.from(d.querySelectorAll('[data-demo]'));
     await T.until(() => demos().length && demos().every((el) => el.querySelector('.g-demo-head, .callout')), 10000, 'demos after the switch');
@@ -149,7 +149,7 @@
     for (const want of ['demo.Link.stream()', 'import link_gmp as demo', 'demo.StatusView.from_bytes(data)', '--lang python', 'parser.poll_event()',
       'parser.on(demo.Status', "status.to_text(style='single_line')", 'pip install ./runtime-py'])
       T.ok(c.includes(want), `Python sample has ${want}`);
-    T.ok(!/gmp::|std::|gmsg_\w+\(|console\.log|=>/.test(c), 'no C++, C or JavaScript left in the code samples');
+    T.ok(!/gmsg::|std::|gmsg_\w+\(|console\.log|=>/.test(c), 'no C++, C or JavaScript left in the code samples');
     const gen = d.getElementById('cpp').textContent;
     T.ok(gen.includes('gmsg.Err.BAD_CHECKSUM') && gen.includes('gmsg.Err.PARSE_ERROR') && gen.includes('gmsg.Err.VALUE_OUT_OF_LIMITS'), 'Python error names');
     T.ok(gen.includes('@dataclass class M'), 'Python generated-code table');
@@ -157,7 +157,7 @@
     for (const x of ['demo.Status.decode(data)', 's.encode()', 'demo.Link.parse(frame)', 'parser.poll_event()', 'gmsg.checksum.crc32.compute(data)',
       'demo.Link.max_frame', 'parser.messages(chunk)', 'gmsg.use_native(False)', 'demo.Mode.name_of(v)'])
       T.ok(api.includes(x), `Python reference has ${x}`);
-    T.ok(!/gmp::|std::|demo_status_|pollEvent|toStruct/.test(api), 'no C++, C or JavaScript names in the Python reference');
+    T.ok(!/gmsg::|std::|demo_status_|pollEvent|toStruct/.test(api), 'no C++, C or JavaScript names in the Python reference');
     T.ok(!/\bnull\b|undefined</.test(api), 'no missing cells (Python)');
     const demos = () => Array.from(d.querySelectorAll('[data-demo]'));
     await T.until(() => demos().length && demos().every((el) => el.querySelector('.g-demo-head, .callout')), 10000, 'demos after the switch');

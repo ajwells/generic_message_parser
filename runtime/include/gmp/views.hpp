@@ -8,7 +8,7 @@
 #include "gmp/endian.hpp"
 #include "gmp/result.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 /// Random-access view of `count` packed scalars of type T stored with the given endianness.
 template <class T>
@@ -122,4 +122,4 @@ private:
     bytes_view data_{};
 };
 
-} // namespace gmp
+} // namespace gmsg

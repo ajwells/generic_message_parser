@@ -8,7 +8,7 @@
 
 #include "gmp/error.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 template <class T>
 using Result = std::expected<T, Error>;
@@ -27,4 +27,4 @@ inline bytes_view as_bytes(const char* data, std::size_t n) noexcept {
     return {reinterpret_cast<const std::uint8_t*>(data), n};
 }
 
-} // namespace gmp
+} // namespace gmsg

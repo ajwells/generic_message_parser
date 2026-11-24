@@ -13,7 +13,7 @@ using Catch::Matchers::WithinAbs;
 namespace {
 constexpr std::string_view kGGA = "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n";
 constexpr std::string_view kTXT = "$GPTXT,01,01,02,ANTSTATUS=OK*3B\r\n";
-gmp::bytes_view bv(std::string_view s) { return gmp::as_bytes(s.data(), s.size()); }
+gmsg::bytes_view bv(std::string_view s) { return gmsg::as_bytes(s.data(), s.size()); }
 } // namespace
 
 TEST_CASE("parse a real GGA sentence (lazy view)") {
@@ -46,12 +46,12 @@ TEST_CASE("empty optional fields and struct decode") {
 TEST_CASE("checksum and unknown message type errors") {
     std::string bad(kGGA);
     bad[10] = '9';
-    CHECK(Nmea::parse(bv(bad)).error() == gmp::Error::BadChecksum);
+    CHECK(Nmea::parse(bv(bad)).error() == gmsg::Error::BadChecksum);
     constexpr std::string_view unknown = "$GPXYZ,1*51\r\n";  // valid checksum, unknown type id
     auto u = Nmea::parse(bv(unknown));
     REQUIRE_FALSE(u);
-    CHECK(u.error() == gmp::Error::UnknownType);
-    CHECK(gmp::to_string(u.error()) == "unknown message type");
+    CHECK(u.error() == gmsg::Error::UnknownType);
+    CHECK(gmsg::to_string(u.error()) == "unknown message type");
 }
 
 TEST_CASE("string field and encode round trip") {
@@ -83,7 +83,7 @@ TEST_CASE("GGA encode then parse") {
     REQUIRE(n);
     const std::string_view s(reinterpret_cast<const char*>(out.data()), *n);
     CHECK(s.starts_with("$GPGGA,123519.00,4807.0380,N,01131.0000,E,1,08,0.9,545.4,M,,,,*"));
-    auto back = Nmea::decode(gmp::bytes_view(out.data(), *n));
+    auto back = Nmea::decode(gmsg::bytes_view(out.data(), *n));
     REQUIRE(back);
     CHECK(std::get<GGA>(*back) == g);
 }
@@ -96,12 +96,12 @@ TEST_CASE("NMEA stream with noise and truncated sentences") {
     stream += kGGA;
     int gga = 0, txt = 0, errors = 0;
     Nmea::Stream<> sp;
-    auto h = gmp::overloaded{
+    auto h = gmsg::overloaded{
         [&](const GGAView&) { ++gga; },
         [&](const TXTView& v) { CHECK(v.text() == "ANTSTATUS=OK"); ++txt; },
-        [&](const gmp::FrameError&) { ++errors; },
+        [&](const gmsg::FrameError&) { ++errors; },
     };
-    for (char c : stream) sp.feed(gmp::as_bytes(&c, 1), h);
+    for (char c : stream) sp.feed(gmsg::as_bytes(&c, 1), h);
     CHECK(gga == 2);
     CHECK(txt == 1);
     CHECK(errors >= 2);
@@ -109,7 +109,7 @@ TEST_CASE("NMEA stream with noise and truncated sentences") {
 
 TEST_CASE("open + select_message building blocks expose the type id") {
     std::string frame(kGGA);
-    auto f = Nmea::open(gmp::as_bytes(frame.data(), frame.size()));
+    auto f = Nmea::open(gmsg::as_bytes(frame.data(), frame.size()));
     REQUIRE(f);
     CHECK(f->type_id == "GPGGA");
     auto v = Nmea::select_message(*f);

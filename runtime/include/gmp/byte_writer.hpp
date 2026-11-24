@@ -8,7 +8,7 @@
 #include "gmp/endian.hpp"
 #include "gmp/result.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 class ByteWriter {
 public:
@@ -74,4 +74,4 @@ private:
     std::size_t pos_ = 0;
 };
 
-} // namespace gmp
+} // namespace gmsg

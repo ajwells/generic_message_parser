@@ -50,12 +50,12 @@ TEST_CASE("HDLC: escaping, custom codec, nested variable-size array") {
         CHECK(frame[*len - 1] == 0x7E);
 
         auto copy = frame;  // parse unescapes in place
-        auto any = Hdlc::decode(gmp::mut_bytes(copy.data(), *len));
+        auto any = Hdlc::decode(gmsg::mut_bytes(copy.data(), *len));
         REQUIRE(any);
         CHECK(std::get<Batch>(*any) == with_derived(b));
 
         copy = frame;
-        auto view = Hdlc::parse(gmp::mut_bytes(copy.data(), *len));
+        auto view = Hdlc::parse(gmsg::mut_bytes(copy.data(), *len));
         REQUIRE(view);
         const auto& bv = std::get<BatchView>(*view);
         CHECK(*bv.when() == test::Time{12, 34, 56});
@@ -80,9 +80,9 @@ TEST_CASE("HDLC: header const and checksum are validated") {
     CHECK(frame[1] == 0xFF);  // const address
     auto copy = frame;
     copy[1] = 0xFE;
-    auto bad = Hdlc::parse(gmp::mut_bytes(copy.data(), *len));
+    auto bad = Hdlc::parse(gmsg::mut_bytes(copy.data(), *len));
     REQUIRE_FALSE(bad);
-    CHECK(bad.error() == gmp::Error::BadChecksum);
+    CHECK(bad.error() == gmsg::Error::BadChecksum);
 }
 
 TEST_CASE("HDLC stream: shared flags between frames") {
@@ -98,7 +98,7 @@ TEST_CASE("HDLC stream: shared flags between frames") {
     }
     int pings = 0, batches = 0;
     Hdlc::Stream<> sp;
-    sp.feed(stream, gmp::overloaded{[&](const PingView&) { ++pings; }, [&](const BatchView&) { ++batches; }});
+    sp.feed(stream, gmsg::overloaded{[&](const PingView&) { ++pings; }, [&](const BatchView&) { ++batches; }});
     CHECK(pings == 10);
     CHECK(batches == 10);
 }
@@ -112,7 +112,7 @@ TEST_CASE("SLIP style map escaping with custom checksum") {
     auto len = Summed::encode(p, frame);
     REQUIRE(len);
     for (std::size_t i = 1; i + 1 < *len; ++i) REQUIRE(frame[i] != 0xC0);
-    auto any = Summed::decode(gmp::mut_bytes(frame.data(), *len));
+    auto any = Summed::decode(gmsg::mut_bytes(frame.data(), *len));
     REQUIRE(any);
     CHECK(std::get<Ping>(*any) == p);
 }
@@ -147,7 +147,7 @@ TEST_CASE("CAN: lsb_first signals with scale/offset and const") {
     CHECK(s.counter == 9);
 
     frame[5] ^= 0x10;  // break the const version
-    CHECK(Can::parse(frame).error() == gmp::Error::BadConst);
+    CHECK(Can::parse(frame).error() == gmsg::Error::BadConst);
 }
 
 TEST_CASE("fixed framing with sync, padding and inline CRC parameters") {
@@ -163,8 +163,8 @@ TEST_CASE("fixed framing with sync, padding and inline CRC parameters") {
     CHECK(frame[1] == 0xA5);
     // CRC-8/SAE-J1850 of "123456789" is 0x4B
     constexpr std::uint8_t check[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
-    using J1850 = gmp::checksum::Crc<std::uint8_t, 8, 0x1D, 0xFF, false, false, 0xFF>;
-    static_assert(J1850::compute(gmp::bytes_view(check)) == 0x4B);
+    using J1850 = gmsg::checksum::Crc<std::uint8_t, 8, 0x1D, 0xFF, false, false, 0xFF>;
+    static_assert(J1850::compute(gmsg::bytes_view(check)) == 0x4B);
 
     std::vector<std::uint8_t> stream{0x01, 0xA5};
     stream.insert(stream.end(), frame.begin(), frame.begin() + 10);

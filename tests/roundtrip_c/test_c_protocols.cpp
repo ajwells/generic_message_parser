@@ -46,7 +46,7 @@ namespace {
 
 using Bytes = std::vector<std::uint8_t>;
 
-int code(gmp::Error e) { return static_cast<int>(e); }
+int code(gmsg::Error e) { return static_cast<int>(e); }
 
 /// First members of every generated C view: { data, size }.
 struct Head {
@@ -222,16 +222,16 @@ auto cpp_recorder(std::vector<Event>& out) {
         ev.message = view_bytes(v);
         out.push_back(std::move(ev));
     };
-    auto error = [&out](const gmp::FrameError& e) {
+    auto error = [&out](const gmsg::FrameError& e) {
         out.push_back(Event{1, code(e.error), {}, bytes_of(e.data.data(), e.data.size())});
     };
     if constexpr (has_header<P>)
-        return gmp::overloaded{error, [record, &out](const typename P::HeaderView& h, const auto& v) {
+        return gmsg::overloaded{error, [record, &out](const typename P::HeaderView& h, const auto& v) {
                                    record(v);
                                    out.back().header = bytes_of(h.data().data(), h.data().size());
                                }};
     else
-        return gmp::overloaded{error, record};
+        return gmsg::overloaded{error, record};
 }
 
 /// Messages of every type of the protocol, found by decoding random bodies (plus value-initialised ones).
@@ -256,7 +256,7 @@ std::vector<typename P::AnyMessage> sample_messages(std::mt19937& rng, std::inde
                 x = static_cast<std::uint8_t>(!special.empty() && rng() % 4 == 0 ? special[rng() % special.size()]
                                               : rng() % 3 == 0                    ? rng() % 4
                                                                                   : rng());
-            if (auto m = M::decode(gmp::bytes_view(b.data(), b.size()))) {
+            if (auto m = M::decode(gmsg::bytes_view(b.data(), b.size()))) {
                 out.emplace_back(*m);
                 ++found;
             }
@@ -265,7 +265,7 @@ std::vector<typename P::AnyMessage> sample_messages(std::mt19937& rng, std::inde
         for (int k = 0; k < 20000 && found < 6; ++k) {
             Bytes b(rng() % 40);
             for (auto& x : b) x = static_cast<std::uint8_t>(text_chars[rng() % text_chars.size()]);
-            if (auto m = M::decode(gmp::bytes_view(b.data(), b.size()))) {
+            if (auto m = M::decode(gmsg::bytes_view(b.data(), b.size()))) {
                 out.emplace_back(*m);
                 ++found;
             }
@@ -336,7 +336,7 @@ void check_whole_buffer(const std::vector<Bytes>& valid, unsigned seed) {
         INFO("input size " << in.size());
         // parse (escaped protocols unescape in place: every call gets its own copy)
         Bytes a = in, b = in;
-        const auto cpp = P::parse(gmp::mut_bytes(a.data(), a.size()));
+        const auto cpp = P::parse(gmsg::mut_bytes(a.data(), a.size()));
         typename T::AnyView v;
         const auto ce = T::parse(b.data(), b.size(), &v);
         REQUIRE(static_cast<int>(ce) == (cpp ? 0 : code(cpp.error())));
@@ -364,7 +364,7 @@ void check_whole_buffer(const std::vector<Bytes>& valid, unsigned seed) {
         if constexpr (T::structs) {
         // decode and re-encode
         Bytes a2 = in, b2 = in;
-        const auto cpp_m = P::decode(gmp::mut_bytes(a2.data(), a2.size()));
+        const auto cpp_m = P::decode(gmsg::mut_bytes(a2.data(), a2.size()));
         typename T::AnyMessage m;
         const auto de = T::decode(b2.data(), b2.size(), &m);
         REQUIRE(static_cast<int>(de) == (cpp_m ? 0 : code(cpp_m.error())));
@@ -379,7 +379,7 @@ void check_whole_buffer(const std::vector<Bytes>& valid, unsigned seed) {
             if (n) {
                 REQUIRE(cn == *n);
                 CHECK(std::memcmp(x.data(), y.data(), cn) == 0);
-                const auto small = P::encode(*cpp_m, gmp::mut_bytes(x.data(), *n - 1));
+                const auto small = P::encode(*cpp_m, gmsg::mut_bytes(x.data(), *n - 1));
                 CHECK(static_cast<int>(T::encode(&m, y.data(), cn - 1, nullptr)) == (small ? 0 : code(small.error())));
             }
         }
@@ -425,7 +425,7 @@ void check_stream(const std::vector<Bytes>& valid, unsigned seed) {
             typename P::template Stream<> cpp;
             auto handler = cpp_recorder<P>(expected);
             for (std::size_t pos = 0; pos < data.size(); pos += chunk)
-                (void)cpp.feed(gmp::bytes_view(data.data() + pos, std::min(chunk, data.size() - pos)), handler);
+                (void)cpp.feed(gmsg::bytes_view(data.data() + pos, std::min(chunk, data.size() - pos)), handler);
 
             static std::array<std::uint8_t, 4096> buf;
             REQUIRE(P::max_frame <= buf.size());
@@ -518,7 +518,7 @@ void check_poll(const Bytes& data, std::size_t chunk, PollMode mode) {
             } else if (mode == PollMode::event) {
                 auto e = cpp.poll_event();
                 if (!e) return;
-                if (const auto* fe = std::get_if<gmp::FrameError>(&*e))
+                if (const auto* fe = std::get_if<gmsg::FrameError>(&*e))
                     expected.push_back(Event{1, code(fe->error), {}, bytes_of(fe->data.data(), fe->data.size())});
                 else
                     expected.push_back(cpp_polled<P>(std::get<0>(*e)));
@@ -531,7 +531,7 @@ void check_poll(const Bytes& data, std::size_t chunk, PollMode mode) {
         }
     };
     for (std::size_t pos = 0; pos < data.size();) {
-        pos += cpp.push(gmp::bytes_view(data.data() + pos, std::min(chunk, data.size() - pos)));
+        pos += cpp.push(gmsg::bytes_view(data.data() + pos, std::min(chunk, data.size() - pos)));
         cpp_drain();
     }
 
@@ -645,7 +645,7 @@ void check_recovery(const std::vector<Bytes>& valid, unsigned seed) {
         };
         for (std::size_t pos = 0; pos < data.size(); pos += chunk) {
             const std::size_t n = std::min(chunk, data.size() - pos);
-            (void)cpp.feed(gmp::bytes_view(data.data() + pos, n), handler);
+            (void)cpp.feed(gmsg::bytes_view(data.data() + pos, n), handler);
             (void)T::feed(&s, data.data() + pos, n);
             step();
         }
@@ -673,7 +673,7 @@ void check_frames(const std::vector<Bytes>& valid, unsigned seed) {
     for (const auto& f : valid) {
         Bytes a = f, b = f;
         typename T::AnyView v;
-        CHECK(T::Cpp::parse(gmp::mut_bytes(a.data(), a.size())));
+        CHECK(T::Cpp::parse(gmsg::mut_bytes(a.data(), a.size())));
         CHECK(T::parse(b.data(), b.size(), &v) == GMSG_OK);
     }
     check_whole_buffer<T>(valid, seed + 1);
@@ -693,7 +693,7 @@ void check_protocol(unsigned seed) {
     for (const auto& f : valid) {
         Bytes a = f, b = f;
         typename T::AnyView v;
-        CHECK(T::Cpp::parse(gmp::mut_bytes(a.data(), a.size())));
+        CHECK(T::Cpp::parse(gmsg::mut_bytes(a.data(), a.size())));
         CHECK(T::parse(b.data(), b.size(), &v) == GMSG_OK);
     }
     check_whole_buffer<T>(valid, seed + 1);

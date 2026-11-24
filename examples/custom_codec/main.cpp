@@ -15,13 +15,13 @@ int main() {
     for (std::size_t i = 0; i < *n; ++i) std::printf(" %02X", frame[i]);
     std::printf("\n");
 
-    auto any = meter::MeterBus::parse(gmp::bytes_view(frame.data(), *n));
+    auto any = meter::MeterBus::parse(gmsg::bytes_view(frame.data(), *n));
     if (!any) {
-        std::printf("parse failed: %s\n", gmp::to_string(any.error()).data());
+        std::printf("parse failed: %s\n", gmsg::to_string(any.error()).data());
         return 1;
     }
     const auto& v = std::get<meter::ReadingView>(*any);
-    const auto ts = v.timestamp();  // custom-type accessors return gmp::Result<T>
+    const auto ts = v.timestamp();  // custom-type accessors return gmsg::Result<T>
     if (!ts) return 1;
     std::printf("%04d-%02d-%02d %02d:%02d:%02d  %.2f kWh\n", ts->year, ts->month, ts->day, ts->hour, ts->minute,
                 ts->second, v.kwh_scaled());

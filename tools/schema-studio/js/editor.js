@@ -175,7 +175,7 @@
           ${field('Decode function', input(`${b}.decode`, c.decode, { placeholder: 'my::decode_time', mono: true }))}
           ${field('Encode function', input(`${b}.encode`, c.encode, { placeholder: 'my::encode_time', mono: true }))}
         </div>
-        <p class="callout" style="margin:12px 0 0">Binary: <code>gmp::Result&lt;T&gt; decode(gmp::ByteReader&amp;)</code>, <code>gmp::VoidResult encode(gmp::ByteWriter&amp;, const T&amp;)</code>.<br>Text: <code>gmp::Result&lt;T&gt; decode(std::string_view)</code>, <code>gmp::VoidResult encode(gmp::text::TextWriter&amp;, const T&amp;)</code>.</p>`) +
+        <p class="callout" style="margin:12px 0 0">Binary: <code>gmsg::Result&lt;T&gt; decode(gmsg::ByteReader&amp;)</code>, <code>gmsg::VoidResult encode(gmsg::ByteWriter&amp;, const T&amp;)</code>.<br>Text: <code>gmsg::Result&lt;T&gt; decode(std::string_view)</code>, <code>gmsg::VoidResult encode(gmsg::text::TextWriter&amp;, const T&amp;)</code>.</p>`) +
         section('C binding', `<div class="grid">
           ${field('Header', input(`${b}.lang.c.header`, cl(c).header, { placeholder: 'my_codecs.h', mono: true }), '', 'span-2')}
           ${field('C type', input(`${b}.lang.c.type`, cl(c).type, { placeholder: 'my_time', mono: true }), '', 'span-2')}
@@ -207,7 +207,7 @@
           ${field('Name', input(`${b}.name`, c.name, { mono: true }), 'select it as a protocol checksum algo')}
           ${field('Size', input(`${b}.size`, c.size, { mono: true }), 'bytes on the wire')}
           ${field('Header', input(`${b}.header`, c.header, { placeholder: 'my_codecs.hpp', mono: true }))}
-          ${field('Function', input(`${b}.function`, c.function, { placeholder: 'my::crc', mono: true }), '<unsigned> fn(gmp::bytes_view)')}
+          ${field('Function', input(`${b}.function`, c.function, { placeholder: 'my::crc', mono: true }), '<unsigned> fn(gmsg::bytes_view)')}
         </div>`) +
         section('C binding', `<div class="grid">
           ${field('Header', input(`${b}.lang.c.header`, cl(c).header, { placeholder: 'my_codecs.h', mono: true }))}
@@ -229,7 +229,7 @@
         section('Framer', `<div class="grid">
           ${field('Name', input(`${b}.name`, c.name, { mono: true }))}
           ${field('Header', input(`${b}.header`, c.header, { placeholder: 'my_codecs.hpp', mono: true }))}
-          ${field('C++ type', input(`${b}.type`, c.type, { placeholder: 'my::Framer', mono: true }), 'static gmp::FrameScan scan(gmp::bytes_view)', 'span-2')}
+          ${field('C++ type', input(`${b}.type`, c.type, { placeholder: 'my::Framer', mono: true }), 'static gmsg::FrameScan scan(gmsg::bytes_view)', 'span-2')}
         </div>`) +
         section('C binding', `<div class="grid">
           ${field('Header', input(`${b}.lang.c.header`, cl(c).header, { placeholder: 'my_codecs.h', mono: true }))}

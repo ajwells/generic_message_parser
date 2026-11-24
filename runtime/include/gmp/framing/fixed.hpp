@@ -7,7 +7,7 @@
 #include "gmp/framing/escape.hpp"
 #include "gmp/framing/frame.hpp"
 
-namespace gmp {
+namespace gmsg {
 
 struct FixedFrameConfig {
     Pattern sync{};
@@ -35,4 +35,4 @@ constexpr FrameScan scan_fixed(bytes_view buf, const FixedFrameConfig& cfg) noex
     return FrameScan::frame(n, n, s ? 1 : n);
 }
 
-} // namespace gmp
+} // namespace gmsg

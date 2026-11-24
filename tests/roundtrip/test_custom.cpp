@@ -11,7 +11,7 @@ using Catch::Matchers::WithinAbs;
 
 TEST_CASE("custom text codec (ddmm.mmmm coordinates)") {
     constexpr std::string_view line = "POS,4807.0380,\n";
-    auto any = ext::TextPos::parse(gmp::as_bytes(line.data(), line.size()));
+    auto any = ext::TextPos::parse(gmsg::as_bytes(line.data(), line.size()));
     REQUIRE(any);
     const auto& p = std::get<ext::PosView>(*any);
     CHECK_THAT(*p.lat(), WithinAbs(48.1173, 1e-9));
@@ -24,7 +24,7 @@ TEST_CASE("custom text codec (ddmm.mmmm coordinates)") {
     auto n = ext::TextPos::encode(pos, out);
     REQUIRE(n);
     CHECK(std::string_view(reinterpret_cast<const char*>(out.data()), *n) == "POS,4830.0000,1115.0000\n");
-    auto back = ext::TextPos::decode(gmp::bytes_view(out.data(), *n));
+    auto back = ext::TextPos::decode(gmsg::bytes_view(out.data(), *n));
     REQUIRE(back);
     CHECK_THAT(*std::get<ext::Pos>(*back).lon, WithinAbs(11.25, 1e-9));
 }
@@ -35,12 +35,12 @@ TEST_CASE("custom framer drives stream parsing") {
     std::vector<std::pair<int, std::size_t>> got;
     int errors = 0;
     ext::Custom::Stream<> sp;
-    sp.feed(stream, gmp::overloaded{
+    sp.feed(stream, gmsg::overloaded{
                         [&](const ext::Custom::HeaderView& h, const ext::BlobView& b) {
                             CHECK(h.n() == b.wire_size());
                             got.emplace_back(b.kind(), b.data_().size());
                         },
-                        [&](const gmp::FrameError&) { ++errors; },
+                        [&](const gmsg::FrameError&) { ++errors; },
                     });
     REQUIRE(got.size() == 3);
     CHECK(got[0] == std::pair<int, std::size_t>{1, 2});

@@ -14,10 +14,10 @@ int main() {
         "$GPGGA,000000,,,,,0,00,,,,,,,*66\r\n";
 
     nm::Nmea::Stream<> parser;
-    parser.feed(gmp::as_bytes(log.data(), log.size()),
-                gmp::overloaded{
+    parser.feed(gmsg::as_bytes(log.data(), log.size()),
+                gmsg::overloaded{
                     [](const nm::GGAView& g) {
-                        // Text views parse lazily: each accessor returns gmp::Result<T>.
+                        // Text views parse lazily: each accessor returns gmsg::Result<T>.
                         std::printf("GGA time=%.0f quality=%s sats=%u", g.utc_time().value_or(0.0),
                                     nm::to_string(g.quality().value_or(nm::FixQuality::invalid)).data(),
                                     static_cast<unsigned>(g.satellites().value_or(0)));
@@ -29,7 +29,7 @@ int main() {
                     [](const nm::TXTView& t) {
                         std::printf("TXT \"%.*s\"\n", static_cast<int>(t.text().size()), t.text().data());
                     },
-                    [](const gmp::FrameError& e) { std::printf("rejected: %s\n", gmp::to_string(e.error).data()); },
+                    [](const gmsg::FrameError& e) { std::printf("rejected: %s\n", gmsg::to_string(e.error).data()); },
                 });
 
     nm::TXT txt;

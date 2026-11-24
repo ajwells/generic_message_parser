@@ -1,5 +1,5 @@
 """Cross-check of the generated Python (gmpc --lang python) against the generated C++: the reference results come from
-js_crossref (tests/roundtrip_js/js_crossref.cpp). Every case must give the same errors, the same gmp::print text and
+js_crossref (tests/roundtrip_js/js_crossref.cpp). Every case must give the same errors, the same gmsg::print text and
 the same re-encoded bytes.
 
     python tests/roundtrip_py/test_generated.py <js_crossref executable> <directory with the generated *_gmp.py>

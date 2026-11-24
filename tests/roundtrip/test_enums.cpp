@@ -16,8 +16,8 @@ void expect_unknown_enum(std::size_t index, std::uint8_t value) {
     INFO("byte " << index << " = " << int(value));
     auto bad = kGood;
     bad[index] = value;
-    CHECK(Sample::decode(bad).error() == gmp::Error::UnknownEnum);
-    CHECK(SampleView::from(bad).error() == gmp::Error::UnknownEnum);
+    CHECK(Sample::decode(bad).error() == gmsg::Error::UnknownEnum);
+    CHECK(SampleView::from(bad).error() == gmsg::Error::UnknownEnum);
 }
 } // namespace
 
@@ -48,20 +48,20 @@ TEST_CASE("undeclared values fail with UnknownEnum in struct and view") {
     expect_unknown_enum(7, 0x09);   // nested message field
     expect_unknown_enum(10, 0x00);  // variable-count array element
     const std::array<std::uint8_t, 3> tail{0x01, 0x04, 0x02};
-    CHECK(Tail::decode(tail).error() == gmp::Error::UnknownEnum);
-    CHECK(TailView::from(tail).error() == gmp::Error::UnknownEnum);
-    CHECK(gmp::to_string(gmp::Error::UnknownEnum) == "unknown enum value");
+    CHECK(Tail::decode(tail).error() == gmsg::Error::UnknownEnum);
+    CHECK(TailView::from(tail).error() == gmsg::Error::UnknownEnum);
+    CHECK(gmsg::to_string(gmsg::Error::UnknownEnum) == "unknown enum value");
 }
 
 TEST_CASE("strict enums in text messages") {
     auto ok = Line::decode_text("2,9");
     REQUIRE(ok);
     CHECK(ok->color == Color::green);
-    CHECK(Line::decode_text("4,1").error() == gmp::Error::UnknownEnum);
+    CHECK(Line::decode_text("4,1").error() == gmsg::Error::UnknownEnum);
     constexpr std::string_view bad = "4,1";
     auto v = LineView::from(bad);
     REQUIRE(v);  // text views parse lazily...
-    CHECK(v->color().error() == gmp::Error::UnknownEnum);  // ...so the accessor reports it
+    CHECK(v->color().error() == gmsg::Error::UnknownEnum);  // ...so the accessor reports it
     CHECK(v->open());
 }
 
@@ -72,7 +72,7 @@ TEST_CASE("encoding an undeclared strict enum value fails with UnknownEnum") {
         INFO(what);
         Sample s = good;
         mutate(s);
-        CHECK(s.encode(out).error() == gmp::Error::UnknownEnum);
+        CHECK(s.encode(out).error() == gmsg::Error::UnknownEnum);
     };
     expect_fail("scalar", [](Sample& s) { s.color = static_cast<Color>(0); });
     expect_fail("bits group", [](Sample& s) { s.flags.mode = static_cast<Mode>(3); });
@@ -87,13 +87,13 @@ TEST_CASE("encoding an undeclared strict enum value fails with UnknownEnum") {
     Tail t{};
     (void)t.rest.push_back(Color::red);
     (void)t.rest.push_back(static_cast<Color>(7));
-    CHECK(t.encode(out).error() == gmp::Error::UnknownEnum);
+    CHECK(t.encode(out).error() == gmsg::Error::UnknownEnum);
 
     Line l{};
     l.color = static_cast<Color>(5);
     l.open = Open::a;
     std::array<std::uint8_t, 16> txt{};
-    CHECK(l.encode(txt).error() == gmp::Error::UnknownEnum);
+    CHECK(l.encode(txt).error() == gmsg::Error::UnknownEnum);
     l.color = Color::blue;
     REQUIRE(l.encode(txt));
 }

@@ -52,7 +52,7 @@ A local web app for building GMP YAML schemas visually.
      application using the generated code gets. It needs a schema gmpc accepts; its diagnostics join the Issues bar.
      The Quick engine runs too, and a warning lists any frame where the two disagree. Custom codecs do not run in
      either engine.
-5. **View** switches the right column between the field table (**Fields**) and the text `gmp::print` produces for
+5. **View** switches the right column between the field table (**Fields**) and the text `gmsg::print` produces for
    each decoded message (**Print**, or **One line** for `PrintStyle::single_line`). `js/print.js` mirrors the C++
    printer, so the text matches what the generated code logs. Frames that fail to decode have nothing to print.
 
@@ -110,7 +110,7 @@ a new schema option, add it to the constructor in `state.js`, a control in `edit
 
 `tests/` holds headless browser tests:
 - unit checks of the decoder and printer
-- a cross-check against the generated C++ (checksums, decoded values as `gmp::print` text, noisy streams)
+- a cross-check against the generated C++ (checksums, decoded values as `gmsg::print` text, noisy streams)
 - validation and YAML export of every schema in the repository; with `gmpc`, each export must generate identical C++
 - a UI smoke test (every outline item, field editor and tab, and a tooltip on every control)
 - the Guide

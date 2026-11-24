@@ -14,7 +14,7 @@
 #include "gmp/containers.hpp"
 #include "gmp/result.hpp"
 
-namespace gmp::text {
+namespace gmsg::text {
 
 /// Split `s` on `sep`; preserves empty tokens ("a,,b" -> "a","","b").
 class Tokenizer {
@@ -190,4 +190,4 @@ private:
     bool failed_ = false;
 };
 
-} // namespace gmp::text
+} // namespace gmsg::text
