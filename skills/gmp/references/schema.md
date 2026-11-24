@@ -187,6 +187,16 @@ protocols:
   `set_idle_timeout(t)` + `tick(now)` (resync after `t` without new bytes; `now` is any monotonic unsigned time).
 - Interrupt input: the ISR pushes into a `gmsg::ByteRing<N>` (C `gmsg_ring`), the main loop calls `feed(ring)`. Input a
   full ring dropped is reported as `Overrun` (the frame in progress is dropped), counted in `stats().overruns`.
+- Endpoints (`P::make_endpoint(source, sink[, clock])`; C `<p>_endpoint`, JS `P.endpoint({ write })`, Python
+  `P.endpoint(source, sink)` / `P.async_endpoint(reader, writer)`): the stream joined to a byte source, a byte sink and
+  a clock. `service()` reads and delivers; `send(msg)` encodes and writes (send policy `whole_frame`: all or nothing,
+  `BufferFull`; `retry`: until written or `Timeout`); `wait_for<M>(timeout, match)` returns the next matching `M`
+  decoded (others go to the listeners) or `Timeout`; `transact<M>(request, timeout, match)` delivers what arrived,
+  sends, then waits; `request(pending, req, timeout)` / `expect(pending, timeout)` do the same without blocking
+  (a caller-owned `gmsg::Pending<M>` / C `<p>_request` completed by `service()`; JS / Python async: Promises / awaits).
+  Sources / sinks: `ByteRing`, memory, `FILE*`, callables, a circular DMA buffer
+  (`dma_source`, laps reported as `Overrun`). Endpoints exist for protocols with a stream whose messages all have
+  structs. `Endpoint` is a name generated inside every protocol (C++), so messages and enums cannot use it.
 
 ### framing
 

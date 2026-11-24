@@ -60,6 +60,8 @@ def _():
     T.eq(int(Err.UNKNOWN_ENUM), 14)
     T.eq(int(Err.VALUE_OUT_OF_LIMITS), 15)
     T.eq(int(Err.OVERRUN), 16)
+    T.eq(int(Err.TIMEOUT), 17)
+    T.eq(gmsg.error_text(17), "timeout")
     T.eq(gmsg.error_text(Err.BAD_CHECKSUM), "bad checksum")
     T.eq(gmsg.error_text(Err.UNKNOWN_TYPE), "unknown message type")
     T.eq(str(gmsg.GmpError(Err.TRUNCATED)), "truncated")

@@ -663,6 +663,29 @@ typedef struct sensirion_sht4x_measurement_response_event {
     size_t size;
 } sensirion_sht4x_measurement_response_event;
 
+/* Message filter of sensirion_sht4x_measurement_response_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*sensirion_sht4x_measurement_response_match_fn)(void* ctx, const sensirion_sht4x_measurement_response_any_view* v);
+
+/* A request that does not block (sensirion_sht4x_measurement_response_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct sensirion_sht4x_measurement_response_request sensirion_sht4x_measurement_response_request;
+typedef void (*sensirion_sht4x_measurement_response_request_fn)(void* ctx, sensirion_sht4x_measurement_response_request* r);
+struct sensirion_sht4x_measurement_response_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    sensirion_sht4x_measurement_response_any_message reply;
+    /* internal */
+    sensirion_sht4x_measurement_response_request* next_;
+    sensirion_sht4x_measurement_response_kind kind_;
+    sensirion_sht4x_measurement_response_match_fn match_;
+    void* match_ctx_;
+    sensirion_sht4x_measurement_response_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after sensirion_sht4x_measurement_response_stream_init(). */
 typedef struct sensirion_sht4x_measurement_response_stream {
     gmsg_stream base;  /* first member */
@@ -672,7 +695,19 @@ typedef struct sensirion_sht4x_measurement_response_stream {
     sensirion_sht4x_measurement_response_kind want_;
     sensirion_sht4x_measurement_response_received got_;
     sensirion_sht4x_measurement_response_any_message* msg_;
+    sensirion_sht4x_measurement_response_match_fn match_;
+    void* match_ctx_;
+    sensirion_sht4x_measurement_response_request* pending_;    /* requests waiting, oldest first */
+    sensirion_sht4x_measurement_response_request* completed_;  /* finished, callbacks not run yet */
 } sensirion_sht4x_measurement_response_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after sensirion_sht4x_measurement_response_endpoint_init(). */
+typedef struct sensirion_sht4x_measurement_response_endpoint {
+    sensirion_sht4x_measurement_response_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[SENSIRION_SHT4X_MEASUREMENT_RESPONSE_MAX_FRAME];  /* transmit buffer */
+} sensirion_sht4x_measurement_response_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). */
 gmsg_error sensirion_sht4x_measurement_response_parse(const uint8_t* data, size_t size, sensirion_sht4x_measurement_response_any_view* out);
@@ -720,6 +755,38 @@ bool sensirion_sht4x_measurement_response_stream_poll_message(sensirion_sht4x_me
 gmsg_poll sensirion_sht4x_measurement_response_stream_poll_event(sensirion_sht4x_measurement_response_stream* s, sensirion_sht4x_measurement_response_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool sensirion_sht4x_measurement_response_stream_poll_for(sensirion_sht4x_measurement_response_stream* s, sensirion_sht4x_measurement_response_kind kind, sensirion_sht4x_measurement_response_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < SENSIRION_SHT4X_MEASUREMENT_RESPONSE_MAX_FRAME. */
+gmsg_error sensirion_sht4x_measurement_response_endpoint_init(sensirion_sht4x_measurement_response_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void sensirion_sht4x_measurement_response_endpoint_set_clock(sensirion_sht4x_measurement_response_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void sensirion_sht4x_measurement_response_endpoint_set_idle(sensirion_sht4x_measurement_response_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void sensirion_sht4x_measurement_response_endpoint_set_send_policy(sensirion_sht4x_measurement_response_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void sensirion_sht4x_measurement_response_endpoint_set_idle_timeout(sensirion_sht4x_measurement_response_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t sensirion_sht4x_measurement_response_endpoint_service(sensirion_sht4x_measurement_response_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error sensirion_sht4x_measurement_response_endpoint_send_measurement(sensirion_sht4x_measurement_response_endpoint* ep, const sensirion_sht4x_measurement* m);
+gmsg_error sensirion_sht4x_measurement_response_endpoint_send(sensirion_sht4x_measurement_response_endpoint* ep, const sensirion_sht4x_measurement_response_any_message* m);
+static inline gmsg_error sensirion_sht4x_measurement_response_endpoint_send_raw(sensirion_sht4x_measurement_response_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out. Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error sensirion_sht4x_measurement_response_endpoint_wait_for(sensirion_sht4x_measurement_response_endpoint* ep, sensirion_sht4x_measurement_response_kind kind, uint32_t timeout, sensirion_sht4x_measurement_response_match_fn match, void* match_ctx, sensirion_sht4x_measurement_response_any_message* out);
+/* Deliver what has arrived, send `request`, then _wait_for. */
+gmsg_error sensirion_sht4x_measurement_response_endpoint_transact(sensirion_sht4x_measurement_response_endpoint* ep, const sensirion_sht4x_measurement_response_any_message* request, sensirion_sht4x_measurement_response_kind kind, uint32_t timeout, sensirion_sht4x_measurement_response_match_fn match, void* match_ctx, sensirion_sht4x_measurement_response_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error sensirion_sht4x_measurement_response_endpoint_request(sensirion_sht4x_measurement_response_endpoint* ep, sensirion_sht4x_measurement_response_request* r, const sensirion_sht4x_measurement_response_any_message* request, sensirion_sht4x_measurement_response_kind kind, uint32_t timeout, sensirion_sht4x_measurement_response_match_fn match, void* match_ctx, sensirion_sht4x_measurement_response_request_fn on_done, void* ctx);
+void sensirion_sht4x_measurement_response_endpoint_expect(sensirion_sht4x_measurement_response_endpoint* ep, sensirion_sht4x_measurement_response_request* r, sensirion_sht4x_measurement_response_kind kind, uint32_t timeout, sensirion_sht4x_measurement_response_match_fn match, void* match_ctx, sensirion_sht4x_measurement_response_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void sensirion_sht4x_measurement_response_endpoint_cancel(sensirion_sht4x_measurement_response_endpoint* ep, sensirion_sht4x_measurement_response_request* r);
+/* Requests still waiting. */
+size_t sensirion_sht4x_measurement_response_endpoint_pending(const sensirion_sht4x_measurement_response_endpoint* ep);
 
 /* ==== protocol SerialNumberResponse ================================================================ */
 
@@ -773,6 +840,29 @@ typedef struct sensirion_sht4x_serial_number_response_event {
     size_t size;
 } sensirion_sht4x_serial_number_response_event;
 
+/* Message filter of sensirion_sht4x_serial_number_response_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*sensirion_sht4x_serial_number_response_match_fn)(void* ctx, const sensirion_sht4x_serial_number_response_any_view* v);
+
+/* A request that does not block (sensirion_sht4x_serial_number_response_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct sensirion_sht4x_serial_number_response_request sensirion_sht4x_serial_number_response_request;
+typedef void (*sensirion_sht4x_serial_number_response_request_fn)(void* ctx, sensirion_sht4x_serial_number_response_request* r);
+struct sensirion_sht4x_serial_number_response_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    sensirion_sht4x_serial_number_response_any_message reply;
+    /* internal */
+    sensirion_sht4x_serial_number_response_request* next_;
+    sensirion_sht4x_serial_number_response_kind kind_;
+    sensirion_sht4x_serial_number_response_match_fn match_;
+    void* match_ctx_;
+    sensirion_sht4x_serial_number_response_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after sensirion_sht4x_serial_number_response_stream_init(). */
 typedef struct sensirion_sht4x_serial_number_response_stream {
     gmsg_stream base;  /* first member */
@@ -782,7 +872,19 @@ typedef struct sensirion_sht4x_serial_number_response_stream {
     sensirion_sht4x_serial_number_response_kind want_;
     sensirion_sht4x_serial_number_response_received got_;
     sensirion_sht4x_serial_number_response_any_message* msg_;
+    sensirion_sht4x_serial_number_response_match_fn match_;
+    void* match_ctx_;
+    sensirion_sht4x_serial_number_response_request* pending_;    /* requests waiting, oldest first */
+    sensirion_sht4x_serial_number_response_request* completed_;  /* finished, callbacks not run yet */
 } sensirion_sht4x_serial_number_response_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after sensirion_sht4x_serial_number_response_endpoint_init(). */
+typedef struct sensirion_sht4x_serial_number_response_endpoint {
+    sensirion_sht4x_serial_number_response_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[SENSIRION_SHT4X_SERIAL_NUMBER_RESPONSE_MAX_FRAME];  /* transmit buffer */
+} sensirion_sht4x_serial_number_response_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). */
 gmsg_error sensirion_sht4x_serial_number_response_parse(const uint8_t* data, size_t size, sensirion_sht4x_serial_number_response_any_view* out);
@@ -830,6 +932,38 @@ bool sensirion_sht4x_serial_number_response_stream_poll_message(sensirion_sht4x_
 gmsg_poll sensirion_sht4x_serial_number_response_stream_poll_event(sensirion_sht4x_serial_number_response_stream* s, sensirion_sht4x_serial_number_response_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool sensirion_sht4x_serial_number_response_stream_poll_for(sensirion_sht4x_serial_number_response_stream* s, sensirion_sht4x_serial_number_response_kind kind, sensirion_sht4x_serial_number_response_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < SENSIRION_SHT4X_SERIAL_NUMBER_RESPONSE_MAX_FRAME. */
+gmsg_error sensirion_sht4x_serial_number_response_endpoint_init(sensirion_sht4x_serial_number_response_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void sensirion_sht4x_serial_number_response_endpoint_set_clock(sensirion_sht4x_serial_number_response_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void sensirion_sht4x_serial_number_response_endpoint_set_idle(sensirion_sht4x_serial_number_response_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void sensirion_sht4x_serial_number_response_endpoint_set_send_policy(sensirion_sht4x_serial_number_response_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void sensirion_sht4x_serial_number_response_endpoint_set_idle_timeout(sensirion_sht4x_serial_number_response_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t sensirion_sht4x_serial_number_response_endpoint_service(sensirion_sht4x_serial_number_response_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error sensirion_sht4x_serial_number_response_endpoint_send_serial_number(sensirion_sht4x_serial_number_response_endpoint* ep, const sensirion_sht4x_serial_number* m);
+gmsg_error sensirion_sht4x_serial_number_response_endpoint_send(sensirion_sht4x_serial_number_response_endpoint* ep, const sensirion_sht4x_serial_number_response_any_message* m);
+static inline gmsg_error sensirion_sht4x_serial_number_response_endpoint_send_raw(sensirion_sht4x_serial_number_response_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out. Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error sensirion_sht4x_serial_number_response_endpoint_wait_for(sensirion_sht4x_serial_number_response_endpoint* ep, sensirion_sht4x_serial_number_response_kind kind, uint32_t timeout, sensirion_sht4x_serial_number_response_match_fn match, void* match_ctx, sensirion_sht4x_serial_number_response_any_message* out);
+/* Deliver what has arrived, send `request`, then _wait_for. */
+gmsg_error sensirion_sht4x_serial_number_response_endpoint_transact(sensirion_sht4x_serial_number_response_endpoint* ep, const sensirion_sht4x_serial_number_response_any_message* request, sensirion_sht4x_serial_number_response_kind kind, uint32_t timeout, sensirion_sht4x_serial_number_response_match_fn match, void* match_ctx, sensirion_sht4x_serial_number_response_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error sensirion_sht4x_serial_number_response_endpoint_request(sensirion_sht4x_serial_number_response_endpoint* ep, sensirion_sht4x_serial_number_response_request* r, const sensirion_sht4x_serial_number_response_any_message* request, sensirion_sht4x_serial_number_response_kind kind, uint32_t timeout, sensirion_sht4x_serial_number_response_match_fn match, void* match_ctx, sensirion_sht4x_serial_number_response_request_fn on_done, void* ctx);
+void sensirion_sht4x_serial_number_response_endpoint_expect(sensirion_sht4x_serial_number_response_endpoint* ep, sensirion_sht4x_serial_number_response_request* r, sensirion_sht4x_serial_number_response_kind kind, uint32_t timeout, sensirion_sht4x_serial_number_response_match_fn match, void* match_ctx, sensirion_sht4x_serial_number_response_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void sensirion_sht4x_serial_number_response_endpoint_cancel(sensirion_sht4x_serial_number_response_endpoint* ep, sensirion_sht4x_serial_number_response_request* r);
+/* Requests still waiting. */
+size_t sensirion_sht4x_serial_number_response_endpoint_pending(const sensirion_sht4x_serial_number_response_endpoint* ep);
 
 #ifdef __cplusplus
 } /* extern "C" */

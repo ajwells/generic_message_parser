@@ -652,6 +652,16 @@ class Nmea:
         return gmsg.StreamParser(Nmea, capacity)
 
     @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(Nmea, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(Nmea, reader, writer, **options)
+
+    @staticmethod
     def encode(m) -> bytes:
         """Encode a message of this protocol to a frame."""
         if isinstance(m, GGA): return Nmea._encode0(m)

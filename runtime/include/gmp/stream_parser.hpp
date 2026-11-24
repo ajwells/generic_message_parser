@@ -89,6 +89,9 @@ namespace detail {
 struct NoHandler {};
 } // namespace detail
 
+template <class Protocol, class Source, class Sink, class Clock, std::size_t Capacity>
+class Endpoint;  // gmp/endpoint.hpp
+
 /// Handler = void: pass the handler on every feed()/next() call. Otherwise the parser stores a Handler (by value,
 /// or by reference when Handler is a reference type) and feed(bytes) / next() use it.
 template <class Protocol, std::size_t Capacity, class Handler = void>
@@ -162,6 +165,35 @@ public:
         }
         return total;
     }
+
+    /// Let `fill(mut_bytes free)` write input straight into the parser buffer (e.g. a byte source's read());
+    /// it returns the number of bytes it wrote. Nothing is lost when fewer bytes fit than the source has: `free`
+    /// is all the room there is. Returns the bytes added (0 when the buffer is full).
+    template <class Fill>
+    std::size_t push_with(Fill&& fill) {
+        release();
+        if (head_ > 0) compact();
+        if (tail_ == Capacity) return 0;
+        const std::size_t n = std::min<std::size_t>(fill(mut_bytes(buf_.data() + tail_, Capacity - tail_)), Capacity - tail_);
+        tail_ += n;
+        received_ += static_cast<std::uint32_t>(n);
+        return n;
+    }
+
+    /// Mark that input was lost after the bytes pushed so far (e.g. a UART overrun flag, or a DMA ring that the
+    /// hardware lapped). Frames complete before that point are delivered; the frame in progress is dropped and
+    /// reported as FrameError{Error::Overrun, bytes}. One gap at a time: returns false (and does nothing) while an
+    /// earlier gap has not been reported yet (process the buffered frames first).
+    bool push_gap() noexcept {
+        release();
+        if (gap_pending_) return gap_ == tail_;  // the same position: nothing to add
+        gap_pending_ = true;
+        gap_ = tail_;
+        return true;
+    }
+
+    /// Free room in the buffer (bytes push() can take now).
+    [[nodiscard]] std::size_t space() const noexcept { return Capacity - (tail_ - head_); }
 
     // ---------------------------------------------------------------------------------------------
     // recovery: resync / flush / idle timeout. They only drop data; frames that then become complete are
@@ -357,6 +389,9 @@ public:
     [[nodiscard]] std::size_t buffered() const noexcept { return tail_ - head_; }
 
 private:
+    template <class, class, class, class, std::size_t>
+    friend class Endpoint;
+
     enum class StepKind : std::uint8_t { need_more, frame, error };
     struct Step {
         StepKind kind = StepKind::need_more;

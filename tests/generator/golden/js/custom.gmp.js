@@ -246,6 +246,8 @@
     static decode(buffer) { return TextPos.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(TextPos, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(TextPos, options); }
     /** Encode a message of this protocol to a new Uint8Array. */
     static encode(m) {
       if (m instanceof Pos) return TextPos.#encode0(m);

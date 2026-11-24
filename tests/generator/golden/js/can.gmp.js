@@ -484,6 +484,8 @@
     static decode(buffer) { return FixedLink.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(FixedLink, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(FixedLink, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Sensor) return FixedLink.#encode0(m, header);

@@ -26,12 +26,13 @@ class Err(enum.IntEnum):
     UNKNOWN_ENUM = 14
     VALUE_OUT_OF_LIMITS = 15
     OVERRUN = 16
+    TIMEOUT = 17
 
 
 _TEXT = (
     "none", "truncated", "bad sync", "bad checksum", "bad length", "bad delimiter", "bad constant", "out of range",
     "unknown message type", "buffer full", "parse error", "missing field", "invalid value", "custom error",
-    "unknown enum value", "value out of limits", "overrun",
+    "unknown enum value", "value out of limits", "overrun", "timeout",
 )
 
 

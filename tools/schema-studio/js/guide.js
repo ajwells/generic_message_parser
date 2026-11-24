@@ -735,6 +735,50 @@ parser.feed(rx)                  # drain and deliver`, 'py'))}
       ${ln('<code>stats().overruns</code>', '<code>stats.overruns</code>', '<code>stats.overruns</code>', '<code>stats.overruns</code>')}).
       ${ln('<code>rx.high_water()</code>', '<code>gmsg_ring_high_water(&amp;rx)</code>', '<code>rx.highWater</code>', '<code>rx.high_water</code>')} shows how full the
       ring got.${ln(' On 8- and 16-bit MCUs use a narrower index: <code>gmsg::ByteRing&lt;128, std::uint8_t&gt;</code>.', ' On 8- and 16-bit MCUs set <code>GMSG_RING_INDEX_BITS</code> to 8 or 16; without C11 atomics the indices are ordered by <code>GMSG_RING_FENCE()</code>.', '', '')}</p>
+      <h3 id="g-endpoint">Endpoints: send a request, wait for the reply</h3>
+      <p>${ln('An endpoint joins the <code>CallbackStream</code> to a <b>byte source</b>, a <b>byte sink</b> and a <b>clock</b>: it reads input, encodes and writes frames, and waits for a reply with a timeout, so the application does not write that loop itself. A <code>gmsg::ByteRing</code> works as source and as sink; <code>gmp/io.hpp</code> has memory, <code>FILE*</code>, callable and DMA adapters.',
+        'An endpoint joins the stream to a <code>gmsg_source</code>, a <code>gmsg_sink</code> (function pointers with a context, or a <code>gmsg_ring</code>) and a clock function: it reads input, encodes and writes frames, and waits for a reply with a timeout.',
+        'An endpoint joins the stream parser to a sink and to input sources. JavaScript cannot block, so it is event-driven: input is processed as it arrives, a frame that a pending wait accepts settles its Promise, and every other frame goes to the listeners.',
+        'An endpoint joins the stream parser to a byte source and sink (a serial port, a socket, a file, a <code>gmsg.ByteRing</code>) and a clock: it reads input, encodes and writes frames, and waits for a reply with a timeout. <code>async_endpoint(reader, writer)</code> does the same with asyncio streams.')}</p>
+      ${ln(code(`auto ep = demo::Link::make_endpoint(rx, tx, [] { return HAL_GetTick(); });  // or std::chrono::steady_clock{}
+ep.set_idle(+[] { __WFI(); });                  // while a wait has nothing to do
+ep.on<&App::on_status>(app);
+
+auto st = ep.transact<demo::Status>(demo::Command{.opcode = 1}, 100);   // send, wait up to 100 ticks
+if (!st) log(gmsg::to_string(st.error()));      // Timeout
+for (;;) ep.service();                          // read, deliver, idle resync`),
+code(`static uint8_t buf[DEMO_LINK_MAX_FRAME];
+static demo_link_endpoint ep;
+gmsg_source src = gmsg_source_ring(&rx);
+gmsg_sink snk = gmsg_sink_ring(&tx);
+demo_link_endpoint_init(&ep, buf, sizeof buf, &src, &snk);
+demo_link_endpoint_set_clock(&ep, hal_ticks, NULL);
+
+demo_command cmd = {.opcode = 1};
+demo_link_any_message req = {DEMO_LINK_COMMAND}, reply;
+req.as.command = cmd;
+if (demo_link_endpoint_transact(&ep, NULL, &req, DEMO_LINK_STATUS, 100, NULL, NULL, &reply) == GMSG_ERR_TIMEOUT) { /* ... */ }
+for (;;) demo_link_endpoint_service(&ep, SIZE_MAX);`, 'c'),
+code(`const ep = demo.Link.endpoint({ write: (bytes) => port.write(bytes) });
+ep.attach(port);                                 // Node stream, ReadableStream or async iterable
+ep.on('Status', (v) => console.log(String(v)));
+
+const st = await ep.transact(new demo.Command({ opcode: 1 }), demo.Status, { timeout: 100 });`, 'js'),
+code(`ep = demo.Link.endpoint(serial.Serial("COM3", 115200, timeout=0.01), idle_timeout=0.05)
+ep.on(demo.Status, lambda v, h: print(v))
+
+st = ep.transact(demo.Command(opcode=1), demo.Status, 0.1)   # seconds; GmpError(Err.TIMEOUT)
+while True:
+    ep.service()`, 'py'))}
+      <p>Other messages that arrive while waiting go to their listeners; the awaited one does not. A <code>match</code>
+      function picks the right reply (e.g. a sequence number). The <b>send policy</b> decides what happens when the sink cannot
+      take a whole frame now: ${ln('<code>SendPolicy::whole_frame</code>', '<code>GMSG_SEND_WHOLE_FRAME</code>', "<code>'whole'</code>", '<code>"whole"</code>')} (default) writes all
+      or nothing (<code>BufferFull</code>), ${ln('<code>SendPolicy::retry</code>', '<code>GMSG_SEND_RETRY</code>', "<code>'retry'</code>", '<code>"retry"</code>')} keeps
+      writing until it is out or the send timeout passes (<code>Timeout</code>).${ln(' A circular DMA receive buffer is a source too: <code>gmsg::dma_source(buf, pos, true)</code>, with <code>on_half()</code> called from the DMA interrupts so a lap is reported as <code>Overrun</code>.', ' A circular DMA receive buffer is a source too: <code>gmsg_dma_source_init(&amp;d, buf, size, pos, ctx, true)</code>, with <code>gmsg_dma_source_on_half(&amp;d)</code> called from the DMA interrupts so a lap is reported as <code>GMSG_ERR_OVERRUN</code>.', '', '')}</p>
+      <p>${ln('<code>wait_for</code> and <code>transact</code> block (calling the idle hook). To keep a superloop or RTOS task running, start a request instead: <code>gmsg::Pending&lt;demo::Status&gt; p; ep.request(p, cmd, 100);</code> returns at once, and a later <code>ep.service()</code> completes it with the reply or <code>Timeout</code> (<code>p.done()</code>, <code>p.result()</code>, or an <code>on_done</code> callback). <code>ep.expect(p, timeout)</code> waits without sending.',
+        '<code>_wait_for</code> and <code>_transact</code> block (calling the idle hook). To keep a superloop or RTOS task running, start a request instead: <code>demo_link_endpoint_request(&amp;ep, &amp;r, NULL, &amp;req, DEMO_LINK_STATUS, 100, NULL, NULL, on_done, ctx)</code> returns at once, and a later <code>_service</code> completes <code>r</code> (<code>r.state</code>, <code>r.error</code>, <code>r.reply</code>, then <code>on_done</code>).',
+        'Every wait is already non-blocking: <code>waitFor</code> and <code>transact</code> return Promises, and other code keeps running meanwhile.',
+        '<code>wait_for</code> and <code>transact</code> block. To keep a loop running, <code>p = ep.request(cmd, demo.Status, 0.1)</code> returns a <code>gmsg.Pending</code> at once that later <code>ep.service()</code> calls complete (<code>p.done</code>, <code>p.result()</code>, <code>on_done=</code>). With asyncio, <code>demo.Link.async_endpoint(reader, writer)</code> and <code>await ep.transact(...)</code>.')}</p>
       <h3 id="g-extra">Data after the message</h3>
       <p>A frame can carry more than its message uses (a longer length, extra text tokens). By default it is ignored, so
       newer senders that append fields still work, and reported:
@@ -1003,6 +1047,7 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     ['UnknownEnum', 'UNKNOWN_ENUM', 'A strict enum field holds an undeclared value.'],
     ['ValueOutOfLimits', 'VALUE_OUT_OF_LIMITS', 'A value is outside its min_value / max_value / min_raw / max_raw.'],
     ['Overrun', 'OVERRUN', 'Input bytes were lost before parsing (a full byte ring dropped them); the frame in progress is dropped.'],
+    ['Timeout', 'TIMEOUT', 'An endpoint wait (wait_for / transact) or a retried send ran out of time.'],
     ['BufferFull', 'BUFFER_FULL', 'Output buffer too small, or stream buffer full without a frame.'],
     ['ParseError / MissingField', 'PARSE / MISSING_FIELD', 'A text token is invalid / a required token is empty.'],
     ['InvalidValue / Custom', 'INVALID_VALUE / CUSTOM', 'For custom codecs (also: an unknown escape code).'],
@@ -1209,6 +1254,41 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
           'Wait for one message type; other messages go to the listeners meanwhile.'],
         [null, 'uint32_t demo_link_stream_generation(const demo_link_stream* s)', 'Changes whenever polled views expire, so you can check one is still current.'],
       ] },
+    { id: 'endpoint', title: 'Endpoint: send, wait for a reply',
+      intro: 'The stream joined to a byte source, a byte sink and a clock: no read loop, encode buffer or reply wait to write by hand.',
+      rows: [
+        ['auto ep = demo::Link::make_endpoint(rx, tx, clock)', 'demo_link_endpoint_init(&ep, buf, size, &source, &sink), demo_link_endpoint_set_clock(&ep, fn, ctx)',
+          ['Source, sink (a ByteRing, memory, FILE*, a callable, a DMA buffer) and a clock (a std::chrono clock, or a callable returning ticks).',
+            'Source and sink are gmsg_source / gmsg_sink (function pointers + context, or a gmsg_ring); the clock is any uint32 tick function.']],
+        ['ep.service()  →  frames delivered', 'size_t demo_link_endpoint_service(demo_link_endpoint* ep, size_t max)',
+          'Read what the source has, deliver every frame to the listeners, run the idle resync.'],
+        ['ep.send(msg), ep.send(header, msg), ep.send_raw(bytes)', 'demo_link_endpoint_send_status(&ep, &m), _send_status_with_header(&ep, &h, &m), _send(&ep, &any), _send_raw(&ep, data, n)',
+          'Encode into a max_frame buffer and write it to the sink.'],
+        ['ep.set_send_policy(gmsg::SendPolicy::retry, timeout)', 'demo_link_endpoint_set_send_policy(&ep, GMSG_SEND_RETRY, timeout)',
+          'whole_frame (default): all or nothing, BufferFull when the sink has no room now. retry: until it is written, Timeout after the limit.'],
+        ['ep.wait_for<Status>(timeout, match)  →  gmsg::Result<Status>',
+          'gmsg_error demo_link_endpoint_wait_for(demo_link_endpoint* ep, demo_link_kind kind, uint32_t timeout, demo_link_match_fn match, void* ctx, demo_link_any_message* out, demo_link_header* header)',
+          'The next matching message, decoded. Other messages go to the listeners meanwhile; Timeout when none arrives in time.'],
+        ['ep.wait_for_reply<Status>(timeout)  →  gmsg::Reply{header, message}', null, 'The message with the header of its frame.'],
+        ['ep.transact<Status>(request, timeout, match)',
+          'gmsg_error demo_link_endpoint_transact(demo_link_endpoint* ep, const demo_link_header* h, const demo_link_any_message* request, demo_link_kind kind, uint32_t timeout, demo_link_match_fn match, void* ctx, demo_link_any_message* out)',
+          'Deliver what has arrived, send the request, then wait for the reply.'],
+        ['gmsg::Pending<Status> p;  ep.request(p, request, timeout)  →  gmsg::Error',
+          'gmsg_error demo_link_endpoint_request(demo_link_endpoint* ep, demo_link_request* r, const demo_link_header* h, const demo_link_any_message* request, demo_link_kind kind, uint32_t timeout, demo_link_match_fn match, void* match_ctx, demo_link_request_fn on_done, void* ctx)',
+          'Send and return at once: a later service() completes the request with the reply or Timeout (no blocking).'],
+        ['p.done(), p.result(), p.on_done<&App::on_reply>(app), p.cancel(), ep.expect(p, timeout)',
+          'r.state, r.error, r.reply, demo_link_endpoint_cancel(&ep, &r), demo_link_endpoint_expect(&ep, &r, kind, timeout, match, ctx, on_done, ctx)',
+          'Check or get the result, a callback when it is done, stop waiting, or wait for a message without sending.'],
+        ['ep.set_idle(fn), ep.set_idle_timeout(t)', 'demo_link_endpoint_set_idle(&ep, fn, ctx), demo_link_endpoint_set_idle_timeout(&ep, t)',
+          'What runs while a wait has nothing to do (WFI, yield, a short sleep), and the idle resync.'],
+        ['gmsg::dma_source(buf, pos, true), dma.on_half()', 'gmsg_dma_source_init(&d, buf, size, pos, ctx, true), gmsg_dma_source_on_half(&d)',
+          'A circular DMA receive buffer as the source; on_half() from the DMA interrupts reports a lap as Overrun.'],
+        ['gmsg::SpanSource, gmsg::SpanSink, gmsg::FileSink, gmsg::source_fn(f), gmsg::sink_fn(f)',
+          'gmsg_buffer_source_init, gmsg_buffer_sink_init, gmsg_sink_file, gmsg_source_fn, gmsg_sink_fn, gmsg_source_ring, gmsg_sink_ring',
+          'Ready-made sources and sinks: memory, FILE*, any function, a byte ring.'],
+        ['parser.push_gap(), parser.push_with(fill), parser.space()', 'gmsg_stream_push_gap(&s.base), gmsg_stream_push_from(&s.base, read, ctx, max), gmsg_stream_space(&s.base)',
+          'For your own sources: mark lost input (e.g. a UART overrun flag) as Overrun; let a read write into the buffer.'],
+      ] },
     { id: 'print', title: 'Printing',
       intro: 'Human-readable text for logs and consoles; the same output in both languages and in the Studio decode tester.',
       rows: [
@@ -1307,6 +1387,24 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     'gmsg::ByteRing<256> rx;  rx.push(byte)': ['const rx = new gmsg.ByteRing(256, { shared: true });  rx.push(b), rx.pushBytes(bytes)', 'A single-producer / single-consumer byte ring; with shared: true a Worker can fill it (gmsg.ByteRing.attach(rx.buffer)).'],
     'parser.feed(rx), parser.feed(rx, max_bytes), parser.push(rx)': ['parser.feed(rx[, max]), parser.push(rx[, max]), parser.messages(rx), parser.events(rx)'],
     'rx.dropped(), rx.high_water()': ['rx.dropped, rx.highWater'],
+    'auto ep = demo::Link::make_endpoint(rx, tx, clock)': ['const ep = demo.Link.endpoint({ write });  ep.attach(source)',
+      'Input from attach() (a Node stream, a ReadableStream, an async iterable) or receive(chunk), processed as it arrives; options: idleTimeout, sendPolicy, sendTimeout, timers.'],
+    'ep.service()  →  frames delivered': ['ep.receive(chunk)  →  frames delivered', 'Process a chunk of input: frames go to the pending waits first, then to the listeners.'],
+    'ep.send(msg), ep.send(header, msg), ep.send_raw(bytes)': ['await ep.send(msg[, header]), await ep.sendRaw(bytes)',
+      'Encode and write; the sink is a function, an object with write() (and writable()), a Node Writable or a WritableStream.'],
+    'ep.set_send_policy(gmsg::SendPolicy::retry, timeout)': ["ep.setSendPolicy('retry', ms)",
+      "'whole' (default): BufferFull when the sink cannot take the frame now (writable(), writableNeedDrain). 'retry': wait for room ('drain', writer.ready), Timeout after ms."],
+    'ep.wait_for<Status>(timeout, match)  →  gmsg::Result<Status>': ['await ep.waitFor(demo.Status, { timeout, match })',
+      'Resolves with the next matching message, decoded; others go to the listeners. Rejects with GmpError(Err.Timeout).'],
+    'ep.wait_for_reply<Status>(timeout)  →  gmsg::Reply{header, message}': ['await ep.waitForReply(demo.Status, { timeout })  →  { header, message }'],
+    'ep.transact<Status>(request, timeout, match)': ['await ep.transact(request, demo.Status, { timeout, match, header })',
+      'Send, then wait (the wait is registered before the send, so a fast reply is not missed).'],
+    'ep.set_idle(fn), ep.set_idle_timeout(t)': ['ep.setIdleTimeout(ms), ep.close()', 'Resync after ms without input; close() stops reading and rejects the pending waits.'],
+    'gmsg::dma_source(buf, pos, true), dma.on_half()': [null],
+    'gmsg::SpanSource, gmsg::SpanSink, gmsg::FileSink, gmsg::source_fn(f), gmsg::sink_fn(f)': [null],
+    'gmsg::Pending<Status> p;  ep.request(p, request, timeout)  →  gmsg::Error': [null],
+    'p.done(), p.result(), p.on_done<&App::on_reply>(app), p.cancel(), ep.expect(p, timeout)': [null],
+    'parser.push_gap(), parser.push_with(fill), parser.space()': ['parser.pushGap(), parser.space', 'Mark lost input as Overrun; free room in the buffer.'],
     'parser.resync(handler)': ['parser.resync()', 'Give up on an incomplete frame at the head: reported to the error listeners as Truncated.'],
     'parser.flush(handler)': ['parser.flush()'],
     'parser.set_idle_timeout(t), parser.tick(now, handler)': ['parser.setIdleTimeout(t), parser.tick(Date.now())'],
@@ -1399,6 +1497,24 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     'gmsg::ByteRing<256> rx;  rx.push(byte)': ['rx = gmsg.ByteRing(256);  rx.push(b), rx.push_bytes(data)', 'A single-producer / single-consumer byte ring: a reader thread fills it, the parsing thread drains it.'],
     'parser.feed(rx), parser.feed(rx, max_bytes), parser.push(rx)': ['parser.feed(rx, max_bytes=None), parser.push(rx), parser.messages(rx), parser.events(rx)'],
     'rx.dropped(), rx.high_water()': ['rx.dropped, rx.high_water'],
+    'auto ep = demo::Link::make_endpoint(rx, tx, clock)': ['ep = demo.Link.endpoint(source, sink, clock=time.monotonic, idle_timeout=0.05)',
+      'Blocking. Sources: a pyserial port (also the sink), a socket, a file, a gmsg.ByteRing, a callable. demo.Link.async_endpoint(reader, writer) for asyncio.'],
+    'ep.service()  →  frames delivered': ['ep.service(max_bytes=None)  →  frames delivered', 'Read what the source has, deliver every frame to the listeners, run the idle resync.'],
+    'ep.send(msg), ep.send(header, msg), ep.send_raw(bytes)': ['ep.send(msg, header=None), ep.send_raw(data)', 'Encode and write (async endpoint: await).'],
+    'ep.set_send_policy(gmsg::SendPolicy::retry, timeout)': ['ep.set_send_policy("retry", timeout)',
+      '"whole" (default): BUFFER_FULL when the sink has no room now (writable() -> int, a ByteRing). "retry": until written, TIMEOUT after timeout seconds.'],
+    'ep.wait_for<Status>(timeout, match)  →  gmsg::Result<Status>': ['ep.wait_for(demo.Status, timeout, match=None)',
+      'The next matching message, decoded; others go to the listeners. Raises GmpError(Err.TIMEOUT).'],
+    'ep.wait_for_reply<Status>(timeout)  →  gmsg::Reply{header, message}': ['ep.wait_for_reply(demo.Status, timeout)  →  gmsg.Reply(header, message)'],
+    'ep.transact<Status>(request, timeout, match)': ['ep.transact(request, demo.Status, timeout, match=None, header=None)'],
+    'ep.set_idle(fn), ep.set_idle_timeout(t)': ['endpoint(..., idle=fn), ep.set_idle_timeout(t)', 'What runs while a wait has nothing to do (default: a 0.5 ms sleep), and the idle resync.'],
+    'gmsg::dma_source(buf, pos, true), dma.on_half()': [null],
+    'gmsg::SpanSource, gmsg::SpanSink, gmsg::FileSink, gmsg::source_fn(f), gmsg::sink_fn(f)': [null],
+    'gmsg::Pending<Status> p;  ep.request(p, request, timeout)  →  gmsg::Error': ['p = ep.request(request, demo.Status, timeout, match=None, on_done=None)',
+      'Send and return at once: later service() calls complete the returned gmsg.Pending with the reply or TIMEOUT.'],
+    'p.done(), p.result(), p.on_done<&App::on_reply>(app), p.cancel(), ep.expect(p, timeout)': ['p.done, p.result(), p.cancel(), ep.expect(demo.Status, timeout)',
+      'Check or get the result (raises GmpError on TIMEOUT), stop waiting, or wait for a message without sending.'],
+    'parser.push_gap(), parser.push_with(fill), parser.space()': ['parser.push_gap(), parser.space', 'Mark lost input as OVERRUN; free room in the buffer.'],
     'parser.resync(handler)': ['parser.resync()', 'Give up on an incomplete frame at the head: reported to the error listeners as TRUNCATED.'],
     'parser.flush(handler)': ['parser.flush()'],
     'parser.set_idle_timeout(t), parser.tick(now, handler)': ['parser.set_idle_timeout(t), parser.tick(time.monotonic())'],

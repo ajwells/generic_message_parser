@@ -4,7 +4,14 @@ Read this first when starting a new working session. It records what exists, why
 known to be rough, and what is planned. Update it at the end of each session (newest entries at the top of
 "Session history").
 
-Last updated: 2026-11-23 (examples in all four languages, output tests).
+Last updated: 2026-11-24 (non-blocking endpoint requests in C++ / C / Python).
+
+**Where things stand (2026-11-24):** stream I/O part D (endpoints) and the non-blocking requests are done and NOT
+committed (last commit `83aa629`). Deferred by the user: a C++20 coroutine layer (memory note `cpp-coroutines-todo`). Stream I/O A-D is now complete; the endpoint-owned TX queue is noted for later only. On hold by the user:
+ASCII numeric fields. The order recommended for the rest (section 7): skill evals iteration 2 (all 7 cases; the
+skill gained C / JS / Python, value limits, length handling, the byte ring and endpoints since iteration 1), then the
+JS / Python follow-ups (typings, packaging), then MicroPython. Header checksum, per-message `exact_size`, clamping
+and faster Python binary messages wait for a real need.
 
 ---
 
@@ -41,7 +48,8 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 - Regenerate golden files after an intentional generator change:
   `GMP_UPDATE_GOLDEN=1 ctest --test-dir build -R golden`, then check that only the expected files changed.
 - Generator directly: `./build/generator/gmpc.exe --out <dir> schema.yaml` / `--check`.
-- Examples: 7 programs, each in C++ / C (`build/examples/*/example_*.exe`, `_c.exe`), JS and Python (`build/examples/<dir>/example_<name>_js|_py/`, run `node main.js` / `python main.py` there, Python with `PYTHONPATH=runtime-py`). `ctest -R example` compares every run with the example's `expected_output*.txt` (35 tests incl. Python with the accelerator). After an intentional output change, regenerate the expected file from the C++ program (strip ``).
+- Examples: 7 programs, each in C++ / C (`build/examples/*/example_*.exe`, `_c.exe`), JS and Python (`build/examples/<dir>/example_<name>_js|_py/`, run `node main.js` / `python main.py` there, Python with `PYTHONPATH=runtime-py`). `ctest -R example` compares every run with the example's `expected_output*.txt` (35 tests incl. Python with the accelerator). After an intentional output change, regenerate the expected file from the C++ program (strip `
+`).
 - Quick standalone compiles need `-static-libgcc -static-libstdc++` (full `-static` fails to link with this MinGW;
   binaries without static libstdc++ fail with 0xc0000139 when the DLLs are not on PATH).
 - Python is the `py` launcher (3.9, no PyYAML). Node.js only comes with emsdk (see above). Tools that need Python 3.10+ (e.g. the
@@ -153,6 +161,34 @@ Runtime:
   (`Atomics` on an Int32 header, optional `SharedArrayBuffer`, `ByteRing.attach(buffer)` in a Worker), `push` /
   `pushBytes`, `stream.feed(ring[, max])` / `push(ring[, max])` / `messages(ring)` / `events(ring)`. Python:
   `gmsg.ByteRing(capacity)` (`push` / `push_bytes`, a reader thread as producer), same stream calls.
+- Endpoints (`gmp/endpoint.hpp`, `gmp/io.hpp`): `gmsg::Endpoint<P, Source, Sink, Clock, Cap>` derives from
+  `P::CallbackStream<Cap>`; generated `P::Endpoint<...>` alias + `P::make_endpoint(source, sink[, clock])` (lvalues
+  by reference, rvalues by value, clock copied). `service(max)`, `send(msg)` / `send(header, msg)` / `send_raw`
+  (encode into a `max_frame` member buffer), `set_send_policy(SendPolicy::whole_frame | retry[, timeout])`,
+  `wait_for<M>(timeout[, match])` (M struct or view; `Result<struct>`), `wait_for_reply<M>` (`gmsg::Reply{header,
+  message}`), `transact<M>(req[, header], timeout[, match])` (service() first), `set_idle(fn[, ctx])`,
+  `set_idle_timeout(d)`. Clock: void (no waits), a chrono clock type (durations; ticks for the parser are ms), or a
+  callable returning uint32. Waits: pull frames (matching V decoded, others delivered via the friend access to
+  StreamParser internals), timeout check, one last pull after the limit ("expired"), read, tick, idle. Sources:
+  `read(mut_bytes)` + optional `take_overrun()`; sinks: `write(bytes_view)` + optional `writable()`; ByteRing as
+  either (`ByteRing::room()` added). Adapters: NoSource / NoSink, SpanSource / SpanSink, FileSource / FileSink,
+  source_fn / sink_fn, `DmaRingSource<N, Pos>` / `dma_source(buf, pos, track_laps)` (lap tracking via `on_half()`
+  from HT/TC ISRs; unread count from half counter + offset; re-sample after copying). StreamParser gained
+  `push_with(fill)`, `push_gap()`, `space()`. New `Error::Timeout` = 17 in all four languages.
+  C: `gmp/c/endpoint.h` (`gmsg_source` / `gmsg_sink` fn pointers + ctx or a `gmsg_ring`, adapters incl.
+  `gmsg_dma_source` with an 8-bit half counter, `gmsg_endpoint_*` generic part incl. the wait loop), library part
+  `runtime-c/src/endpoint.c`, `gmsg_stream_push_from` / `_push_gap` / `_space`, `gmsg_ring_room`; generated
+  `<p>_endpoint` {stream, io, tx[MAX_FRAME]}, `_init`, `_set_clock` / `_set_idle` / `_set_send_policy` /
+  `_set_idle_timeout` / `_service` / `_send_raw` (inline), `_send_<m>[_with_header]`, `_send`, `_wait_for(kind,
+  timeout, match, ctx, out[, header])`, `_transact([h,] req, kind, ...)`, `<p>_match_fn`; stream struct gained
+  `match_`, `match_ctx_`, `hdr_` and stream mode `wait` (4). Only for protocols with a stream whose messages (and
+  header) all have structs. JS: `gmsg.Endpoint` (event-driven; `receive` / `attach` (Node stream, ReadableStream,
+  async iterable), waits are Promises settled from `process()`, sinks: fn / {write, writable} / Node Writable
+  (writableNeedDrain, 'drain') / WritableStream writer; `timers` option for fakes; `close()`), generated
+  `P.endpoint(options)`, `StreamParser.pushGap()` / `space`. Python: `gmsg.endpoint` `Endpoint` (blocking, like C++;
+  pyserial-like / socket / file / ByteRing / callable sources; `clock=time.monotonic`, `idle=` 0.5 ms sleep) and
+  `AsyncEndpoint` (asyncio, event-driven like JS; StreamReader/StreamWriter, `async with`), `Reply`, generated
+  `P.endpoint(...)` / `P.async_endpoint(...)`, `StreamParser.push_gap()` / `space`, `ByteRing.room`.
 - Data after the message: views `extra_bytes()` / text `extra_tokens()`, `decode(data, extra)` /
   `decode_text(s, extra)` (C `_decode_extra`, JS `decodeWithExtra`), `gmsg::extra_of(view or AnyView)`,
   `Received::extra`, `stats().frames_with_extra` (C++ `process(frame, handler, &extra)`; C `gmsg_stream.last_extra`).
@@ -343,6 +379,13 @@ C runtime (`runtime-c/`, for the C backend):
   languages; JS / Python rings too (parity). After an overflow the ring keeps dropping until the consumer reaches the
   gap: this keeps one gap per ring without storing positions (a frame is lost there anyway). The two-argument
   `GMP_ASSERT` became the C runtime's one-argument `GMSG_ASSERT(x)` in the rename the same day.
+- **Endpoints** (user, 2026-11-23): send policy is a parameter (whole frame = all or nothing / retry until a
+  timeout); an endpoint-owned TX queue only noted for the future. Clock: both a std::chrono clock and a callable
+  tick counter. JS: Promise-based; Python: blocking and asyncio. One round, worked in the order D1 (sources / sinks,
+  service, send) → D2 (wait_for, transact, Timeout) → D3 (DMA source). Design choices of mine: `transact` delivers
+  what already arrived before sending (C++ / C / blocking Python); JS / asyncio register the wait before sending
+  (input is processed on arrival there, so old replies already went to the listeners). The awaited message is not
+  passed to listeners (like poll_for). A wait looks once more after its deadline (timeout 0 takes what is readable).
 - **The AI skill bundles its references** (generated from docs/README/examples by a script) so it works when copied
   outside the repo.
 
@@ -384,6 +427,11 @@ C runtime (`runtime-c/`, for the C backend):
   relies on single-writer attributes (GIL, or per-object locking in free-threaded builds). Not done: a DMA circular
   buffer adapter (with part D), a generic `SpscQueue<T, N>`.
 - The gmpc engine cannot run custom codecs (user code); frames using them fail with `Custom` in that engine.
+- Endpoints: send never processes input meanwhile (a half-duplex peer that waits for us to read could stall a retried
+  send); not thread-safe (only rings / DMA source cross contexts); C has no compile-time clock type (a wait without
+  a clock looks once). The DMA lap check needs the HT/TC interrupts and a read at least every 127 laps (C 8-bit
+  counter). JS / Python async endpoints are not cross-checked against C++ (different model); their unit tests mirror
+  the C++ scenarios. No example program uses an endpoint yet.
 
 ## 7. Future tasks (planned, not started)
 
@@ -394,7 +442,8 @@ C runtime (`runtime-c/`, for the C backend):
 | Value limits: clamping (not requested) | Value limits reject; an opt-in clamp (e.g. SHT4x humidity, where slightly out-of-range values are normal) was offered and deferred. Memory note `field-value-range-todo`. |
 | Header checksum (deferred) | Optional checksum over the header alone, for protocols that have one; add only when a real protocol needs it. Memory note `bad-length-handling-todo`. |
 | Per-message `exact_size` (future) | `exact_size` is per protocol for now; a per-message option was noted for later. |
-| Stream I/O + callbacks | decided: do all four, one at a time. **A** stored handler / callbacks, **B** pull API, **C** byte ring for interrupt input: **done**. Remaining: **D** (the user said to wait on it, 2026-11-23), an endpoint with source/sink adapters (incl. a DMA circular-buffer adapter), `send(msg)` and a blocking `wait_for<V>(timeout)` / `transact`. |
+| Stream I/O + callbacks | **All done** (A stored handler / callbacks, B pull API, C byte ring, D endpoints, 2026-11-23). Noted for later only: an endpoint-owned TX queue (the user's option 3), retries in `transact`, a generic `SpscQueue<T, N>`. |
+| Endpoint example (suggested) | A request / reply example program in all four languages (a simulated device over rings), compared like the other examples. |
 | `gmsg::to_text<N>(msg)` (small, optional) | printing helper returning a fresh `gmsg::static_string<N>` instead of appending to a sink |
 | MicroPython (separate option) | Decided with the user: add a MicroPython variant separately later, without limiting the CPython API. Memory note `python-backend-todo`. |
 | Python follow-ups (suggested) | (Python examples: done 2026-11-23.) Type stubs / `py.typed`, publishing the `gmsg` wheel (abi3) and an sdist that carries the C runtime headers, faster binary messages (see known issues). |
@@ -406,6 +455,63 @@ project.
 ## 8. Session history
 
 
+### 2026-11-24 (endpoints: requests that do not block)
+- Question (user): is there an async and a blocking version in C, C++ and Python? Only Python had both (JS is async
+  only; C / C++ blocking only). Decision (user): option 1, non-blocking requests driven by `service()`, in C and C++;
+  note option 2 (C++20 coroutines) for later (memory note `cpp-coroutines-todo`).
+- C++: caller-owned `gmsg::Pending<M, Match = MatchAll>` (intrusive link `detail::PendingLink`, type-erased
+  offer / finish thunks set by `Endpoint::arm`; `state()`, `done()`, `result()`, `cancel()` (also in the destructor),
+  `on_done<...>` via `CallbackSlot<const Result<M>&>`); `ep.request(p, req[, header], timeout)` (drains first unless
+  called from inside the endpoint: depth counter), `ep.expect(p, timeout)`, `ep.pending()`. `service()` uses
+  `next_frame()` (plain `next()` when nothing waits, else step + `dispatch`: the first waiting request that accepts
+  takes the frame, oldest first, else listeners); `wait_impl` offers non-target frames to requests too; requests
+  expire after each tick (`expire_requests`), callbacks run after the step (`fire_completed`). `~Endpoint` sets
+  waiting requests idle.
+- C: runtime `gmsg_request_state`, `gmsg_endpoint.on_step` / `on_tick` hooks, `depth`, `gmsg_endpoint_now`;
+  generated `<p>_request` / `<p>_request_fn`, `_endpoint_request` / `_expect` / `_cancel` / `_pending`, stream fields
+  `pending_` / `completed_`, `_offer_` / `_complete_` / `_view_to_message_` before the stream hook (deliver mode and
+  the wait mode's other frames), `_fire_` / `_expire_` hooks (endpoint found from `io` by `offsetof`).
+- Python (blocking `Endpoint`): `ep.request(...)` / `ep.expect(...)` return `gmsg.Pending` (`RequestState`), same
+  semantics. JS and AsyncEndpoint unchanged (already async).
+- Not served by the poll API (`poll_for` etc.); requests carry no header (use `wait_for_reply` for that).
+- Tests: C++ cases (reply, timeout, cancel, restart, send failure, several + match + expect, chained from on_done,
+  destroyed while waiting, served during wait_for, endpoint destroyed first), embedded profile, the C-vs-C++
+  cross-check now also runs random request / expect / cancel ops (two slots per message type; completion events
+  interleaved with listener events, states and `pending()` compared; replies and timeouts both occur), a C test for
+  chaining from the callback, Python cases. 351 ctest pass.
+- Planted bugs: 12 (C++, C runtime, C generator, Python): all caught (two first needed rewriting to compile).
+- Release build compiles; Python 3.12 run passes. Not committed.
+
+
+### 2026-11-23 (stream I/O part D: endpoints)
+- Decisions (user): see section 5 ("Endpoints"). Implemented D1 → D2 → D3 in C++, C, JS and Python.
+- Runtime / generator: see the inventory (section 4). Generator changes: C++ `Endpoint` alias + `make_endpoint`
+  (reserved name `Endpoint`), C endpoint struct / functions + stream wait mode, JS `static endpoint`, Python
+  `endpoint` / `async_endpoint`. Goldens: additions only (C: plus the stream struct fields and the wait mode). gmpc.js
+  rebuilt.
+- Tests: `tests/roundtrip/test_endpoint.cpp` (18 cases: service, both send policies, ByteRing in/out with overrun,
+  wait_for / wait_for_reply / match / timeout 0, transact with a simulated device and a stale reply, steady_clock +
+  producer thread, NMEA, FILE*, push_with / push_gap, DMA source with and without lap tracking), embedded profile
+  (rings, tick clock, wait / transact, DMA source; no heap / exceptions), C runtime unit tests (adapters, push_gap,
+  write policies, wait loop incl. clock wraparound and no clock, DMA), C-vs-C++ `check_endpoint` in
+  `test_c_protocols.cpp` for every streamed protocol (timed input, sink with time-varying room, random service /
+  wait_for / transact / send / idle-timeout ops; events, results, sink bytes, clocks and stats must match; the file
+  now needs `-Wa,-mbig-obj` on MinGW), `tests/roundtrip_js/test_endpoint.js` (fake timers, Node streams,
+  ReadableStream, WritableStream), `tests/roundtrip_py/test_endpoint.py` (blocking incl. a socket pair and a
+  device thread, asyncio incl. a real TCP connection; pure and accelerator; 3.12 run passes).
+- Planted bugs: 24 (C++ endpoint / DMA, C runtime + generated C, JS, Python). 23 caught. The one left (C: drop the
+  DMA source's pre-copy lap check) is equivalent with lap tracking, because the check after copying finds the same
+  lap. The first pass showed that the new Python test never set its exit code (`sys.exit(T.run())` was missing), and
+  that a JS test whose Promise never settles let Node exit with 0. The JS harness now fails such a run ("never
+  finished"). It also showed that an overrun reported one `service()` call late went unnoticed in C++ (a check was
+  added). Run mutants with `ctest --timeout`; a mutant that does not compile (e.g. an unused variable under
+  `-Werror`) is not a catch.
+- Release build compiles. Python 3.12 run of test_endpoint.py passes (pure and accelerator).
+- Docs: README "Endpoints" section + protocol / errors / JS / Python table rows, docs/schema.md, SKILL.md, Guide
+  section + API group "endpoint" (C++ / C / JS / Python rows), runtime-py README.
+- End state: 346 ctest pass. Not committed.
+
+
 ### 2026-11-23 (examples in every language; outputs compared)
 - Request (user): wait on stream I/O part D; write the examples in all languages and use them to confirm the outputs
   match between the versions.
@@ -413,11 +519,12 @@ project.
   `js:` / `python:` blocks + `meter_codecs.js` / `.py` (decode, encode, print hook, checksum) for custom_codec.
 - Aligned before comparing: the C nmea_text / custom_codec printed a full `print` dump that C++ did not; C++ now does
   too (`gmsg::println` of the first GGA; a `gmsg_print` ADL hook for `meter::DateTime`), and so do JS / Python.
-- Tests: `examples/compare_output.cmake` + `expected_output*.txt` (from the C++ output, `` stripped): one ctest per
+- Tests: `examples/compare_output.cmake` + `expected_output*.txt` (from the C++ output, `
+` stripped): one ctest per
   program and language, 35 in total (Python pure and with the accelerator). All 28 programs printed identical text on
   the first run of each language; a changed expectation fails every language with a got / want diff (checked).
 - JS formatting uses `toFixed` (rounds exact ties differently from printf; no printed value is a tie).
-- End state: 325 ctest pass. Not committed.
+- End state: 325 ctest pass. Committed as `83aa629` (with the byte ring).
 
 
 ### 2026-11-23 (stream I/O part C: byte ring for interrupt input)
@@ -439,7 +546,7 @@ project.
   each language, and all 15 real mutants are caught. The 16th (`took_gap` in the feed loops) was equivalent: the
   `next()` loop already reports a taken gap, so that flag was removed everywhere.
 - Lesson: a planted bug that drops the gap check makes `feed(ring)` loop forever; run mutants with `ctest --timeout`.
-- End state: 290 ctest pass, Studio 736 checks pass, Release build compiles, Python 3.12 run passes. Not committed.
+- End state: 290 ctest pass, Studio 736 checks pass, Release build compiles, Python 3.12 run passes. Committed as `83aa629`.
 - Docs: README "Interrupt input (byte ring)", error table, stats; docs/schema.md; SKILL.md (no hand-written ring);
   runtime-py README; Guide section + API rows (C++ / C / JS / Python).
 
@@ -451,7 +558,7 @@ project.
   one-argument macro as the C runtime (the two-argument form would clash when C and C++ headers share a TU).
 - Breaking for users: `gmp::` code, `gmp_print` hooks and `GMP_ASSERT` overrides must be renamed.
 - Only the C++ goldens changed (C / JS / Python identical). gmpc.js rebuilt, skill references refreshed.
-- End state: 276 ctest pass, Studio 736 checks pass, Release build compiles. Not committed.
+- End state: 276 ctest pass, Studio 736 checks pass, Release build compiles. Committed as `756b785`.
 
 ### 2026-11-23 (Python support: runtime, `gmpc --lang python`, accelerator)
 - Decisions (user): options A (generator backend + pure-Python runtime) and C (optional accelerator from runtime-c)

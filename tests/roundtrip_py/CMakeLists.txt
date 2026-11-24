@@ -29,12 +29,16 @@ if (GMP_PYTHON)
     add_test(NAME gmp_py_generated_tests
             COMMAND ${GMP_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/test_generated.py $<TARGET_FILE:gmp_js_crossref> ${GEN_DIR} --pure)
     add_test(NAME gmp_py_api_tests COMMAND ${GMP_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/test_api.py ${GEN_DIR} --pure)
-    set_tests_properties(gmp_py_generated_tests gmp_py_api_tests PROPERTIES ENVIRONMENT "GMSG_PATH=${PROJECT_SOURCE_DIR}/runtime-py")
+    add_test(NAME gmp_py_endpoint_tests COMMAND ${GMP_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/test_endpoint.py ${GEN_DIR} --pure)
+    set_tests_properties(gmp_py_generated_tests gmp_py_api_tests gmp_py_endpoint_tests PROPERTIES
+            ENVIRONMENT "GMSG_PATH=${PROJECT_SOURCE_DIR}/runtime-py")
     if (GMP_PY_NATIVE_DIR)  # with the accelerator (tests/runtime_py/CMakeLists.txt)
         add_test(NAME gmp_py_generated_tests_native
                 COMMAND ${GMP_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/test_generated.py $<TARGET_FILE:gmp_js_crossref> ${GEN_DIR} --native)
         add_test(NAME gmp_py_api_tests_native COMMAND ${GMP_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/test_api.py ${GEN_DIR} --native)
-        set_tests_properties(gmp_py_generated_tests_native gmp_py_api_tests_native PROPERTIES
+        add_test(NAME gmp_py_endpoint_tests_native
+                COMMAND ${GMP_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/test_endpoint.py ${GEN_DIR} --native)
+        set_tests_properties(gmp_py_generated_tests_native gmp_py_api_tests_native gmp_py_endpoint_tests_native PROPERTIES
                 ENVIRONMENT "GMSG_PATH=${GMP_PY_NATIVE_DIR}")
     endif ()
 endif ()

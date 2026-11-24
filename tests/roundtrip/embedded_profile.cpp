@@ -76,6 +76,28 @@ int main() {
     pull.push(gmsg::bytes_view(frame.data(), *n));
     auto copy = pull.poll_message();
     if (!copy || std::get<Status>(*copy).samples.size() != 4) return 11;
+    // endpoint: interrupt rings as source and sink, a tick clock, send + wait_for + transact (loopback)
+    static gmsg::ByteRing<512> wire;
+    static std::uint32_t ticks = 0;
+    auto ep = BinaryLink::make_endpoint(wire, wire, [] { return ticks; });
+    ep.set_idle(+[] { ++ticks; });
+    if (!ep.send(s)) return 12;
+    auto echoed = ep.wait_for<Status>(10);
+    if (!echoed || echoed->samples.size() != 4) return 13;
+    auto none = ep.wait_for<Command>(5);
+    if (none || none.error() != gmsg::Error::Timeout) return 14;
+    auto reply = ep.transact<Status>(s, 10, [](const StatusView& v) { return v.samples().size() == 4; });
+    if (!reply) return 15;
+    gmsg::Pending<Status> pend;  // a request that does not block: completed by service()
+    int completed = 0;
+    pend.on_done(+[](int* n, const gmsg::Result<Status>& r) { *n += r ? 1 : 100; }, &completed);
+    if (ep.request(pend, s, 10) != gmsg::Error::None || !pend.waiting()) return 17;
+    ep.service();
+    if (!pend.done() || !pend.result() || completed != 1) return 18;
+    std::uint8_t dma_buf[64] = {};
+    auto dma = gmsg::dma_source(dma_buf, [] { return std::size_t{0}; }, true);
+    auto dma_ep = BinaryLink::make_endpoint(dma, gmsg::NoSink{});
+    if (dma_ep.service() != 0) return 16;
     g_armed = false;
     if (delivered != 1) return 4;
     std::puts("embedded profile OK: no exceptions, no RTTI, no heap");

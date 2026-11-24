@@ -50,6 +50,7 @@ if ("C" IN_LIST _gmp_languages)
             runtime-c/src/checksum.c
             runtime-c/src/framing.c
             runtime-c/src/stream.c
+            runtime-c/src/endpoint.c
             runtime-c/src/float_text.c
             runtime-c/src/text.c
             runtime-c/src/print.c)

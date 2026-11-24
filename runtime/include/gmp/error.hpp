@@ -24,6 +24,7 @@ enum class Error : std::uint8_t {
     UnknownEnum,    // a `strict` enum field held a value that is not one of the enum's values
     ValueOutOfLimits,  // a field value is outside its min_value / max_value / min_raw / max_raw limits
     Overrun,        // input bytes were lost before parsing (a full gmsg::ByteRing dropped them)
+    Timeout,        // an endpoint wait (wait_for / transact) or a retried send ran out of time
 };
 
 constexpr std::string_view to_string(Error e) noexcept {
@@ -45,6 +46,7 @@ constexpr std::string_view to_string(Error e) noexcept {
         case Error::UnknownEnum: return "unknown enum value";
         case Error::ValueOutOfLimits: return "value out of limits";
         case Error::Overrun: return "overrun";
+        case Error::Timeout: return "timeout";
     }
     return "unknown";
 }

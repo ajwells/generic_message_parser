@@ -462,7 +462,7 @@ gmsg_error link_stuffed_sync_link_process(uint8_t* data, size_t size, const link
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { link_stuffed_sync_link_mode_deliver_ = 0, link_stuffed_sync_link_mode_capture_ = 1, link_stuffed_sync_link_mode_message_ = 2, link_stuffed_sync_link_mode_for_ = 3 };
+enum { link_stuffed_sync_link_mode_deliver_ = 0, link_stuffed_sync_link_mode_capture_ = 1, link_stuffed_sync_link_mode_message_ = 2, link_stuffed_sync_link_mode_for_ = 3, link_stuffed_sync_link_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t link_stuffed_sync_link_extra_(const link_stuffed_sync_link_any_view* v) {
@@ -471,6 +471,41 @@ static size_t link_stuffed_sync_link_extra_(const link_stuffed_sync_link_any_vie
         case LINK_STUFFED_SYNC_LINK_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
         default: return 0;
     }
+}
+
+static gmsg_error link_stuffed_sync_link_view_to_message_(const link_stuffed_sync_link_any_view* v, link_stuffed_sync_link_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case LINK_STUFFED_SYNC_LINK_DATA: return link_stuffed_data_view_to_struct(&v->as.data, &out->as.data);
+        case LINK_STUFFED_SYNC_LINK_PING: return link_stuffed_ping_view_to_struct(&v->as.ping, &out->as.ping);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void link_stuffed_sync_link_complete_(link_stuffed_sync_link_stream* s, link_stuffed_sync_link_request* r, gmsg_error e) {
+    link_stuffed_sync_link_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error link_stuffed_sync_link_offer_(link_stuffed_sync_link_stream* s, const link_stuffed_sync_link_frame_* f, const link_stuffed_sync_link_any_view* v, bool* taken) {
+    link_stuffed_sync_link_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        link_stuffed_sync_link_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = link_stuffed_sync_link_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        link_stuffed_sync_link_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error link_stuffed_sync_link_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -482,6 +517,14 @@ static gmsg_error link_stuffed_sync_link_stream_process_(gmsg_stream* gs, uint8_
         link_stuffed_sync_link_any_view v;
         if ((e = link_stuffed_sync_link_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
         gs->last_extra = link_stuffed_sync_link_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = link_stuffed_sync_link_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                link_stuffed_sync_link_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         link_stuffed_sync_link_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -494,7 +537,27 @@ static gmsg_error link_stuffed_sync_link_stream_process_(gmsg_stream* gs, uint8_
         link_stuffed_sync_link_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = LINK_STUFFED_SYNC_LINK_NONE;
     }
-    if (s->mode_ == link_stuffed_sync_link_mode_message_) {
+    if (s->mode_ == link_stuffed_sync_link_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = link_stuffed_sync_link_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    link_stuffed_sync_link_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                    return e;
+                }
+                if (taken) s->got_.message.kind = LINK_STUFFED_SYNC_LINK_NONE;
+                if (taken) return GMSG_OK;
+            }
+            link_stuffed_sync_link_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = LINK_STUFFED_SYNC_LINK_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = link_stuffed_sync_link_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            link_stuffed_sync_link_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+            return e;
+        }
+    }
+    if (s->mode_ == link_stuffed_sync_link_mode_message_ || s->mode_ == link_stuffed_sync_link_mode_wait_) {
         switch (s->got_.message.kind) {
             case LINK_STUFFED_SYNC_LINK_DATA: s->msg_->kind = LINK_STUFFED_SYNC_LINK_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
             case LINK_STUFFED_SYNC_LINK_PING: s->msg_->kind = LINK_STUFFED_SYNC_LINK_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
@@ -577,6 +640,168 @@ static void link_stuffed_sync_link_stream_error_(gmsg_stream* s, gmsg_error e, c
 gmsg_error link_stuffed_sync_link_stream_init(link_stuffed_sync_link_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, LINK_STUFFED_SYNC_LINK_MAX_FRAME, link_stuffed_sync_link_scan_, link_stuffed_sync_link_stream_process_, link_stuffed_sync_link_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void link_stuffed_sync_link_endpoint_fire_(gmsg_endpoint* io) {
+    link_stuffed_sync_link_stream* s = &((link_stuffed_sync_link_endpoint*)(void*)((char*)io - offsetof(link_stuffed_sync_link_endpoint, io)))->stream;
+    while (s->completed_) {
+        link_stuffed_sync_link_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void link_stuffed_sync_link_endpoint_expire_(gmsg_endpoint* io) {
+    link_stuffed_sync_link_stream* s = &((link_stuffed_sync_link_endpoint*)(void*)((char*)io - offsetof(link_stuffed_sync_link_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    link_stuffed_sync_link_request** at = &s->pending_;
+    while (*at) {
+        link_stuffed_sync_link_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            link_stuffed_sync_link_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    link_stuffed_sync_link_endpoint_fire_(io);
+}
+
+gmsg_error link_stuffed_sync_link_endpoint_init(link_stuffed_sync_link_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = link_stuffed_sync_link_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = link_stuffed_sync_link_endpoint_fire_;
+    ep->io.on_tick = link_stuffed_sync_link_endpoint_expire_;
+    return e;
+}
+
+void link_stuffed_sync_link_endpoint_cancel(link_stuffed_sync_link_endpoint* ep, link_stuffed_sync_link_request* r) {
+    link_stuffed_sync_link_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void link_stuffed_sync_link_endpoint_expect(link_stuffed_sync_link_endpoint* ep, link_stuffed_sync_link_request* r, link_stuffed_sync_link_kind kind, uint32_t timeout, link_stuffed_sync_link_match_fn match, void* match_ctx, link_stuffed_sync_link_request_fn on_done, void* ctx) {
+    link_stuffed_sync_link_request** at;
+    link_stuffed_sync_link_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t link_stuffed_sync_link_endpoint_pending(const link_stuffed_sync_link_endpoint* ep) {
+    size_t k = 0;
+    const link_stuffed_sync_link_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error link_stuffed_sync_link_endpoint_send_data(link_stuffed_sync_link_endpoint* ep, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_sync_link_encode_data(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_sync_link_endpoint_send_data_with_header(link_stuffed_sync_link_endpoint* ep, const link_stuffed_sync_link_header* h, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_sync_link_encode_data_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_sync_link_endpoint_send_ping(link_stuffed_sync_link_endpoint* ep, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_sync_link_encode_ping(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_sync_link_endpoint_send_ping_with_header(link_stuffed_sync_link_endpoint* ep, const link_stuffed_sync_link_header* h, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_sync_link_encode_ping_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_sync_link_endpoint_send(link_stuffed_sync_link_endpoint* ep, const link_stuffed_sync_link_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_sync_link_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool link_stuffed_sync_link_endpoint_pull_(void* ctx) {
+    link_stuffed_sync_link_endpoint* ep = (link_stuffed_sync_link_endpoint*)ctx;
+    link_stuffed_sync_link_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        link_stuffed_sync_link_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error link_stuffed_sync_link_endpoint_wait_for(link_stuffed_sync_link_endpoint* ep, link_stuffed_sync_link_kind kind, uint32_t timeout, link_stuffed_sync_link_match_fn match, void* match_ctx, link_stuffed_sync_link_any_message* out, link_stuffed_sync_link_header* header) {
+    link_stuffed_sync_link_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = link_stuffed_sync_link_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, link_stuffed_sync_link_endpoint_pull_, ep);
+    s->mode_ = link_stuffed_sync_link_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error link_stuffed_sync_link_endpoint_transact(link_stuffed_sync_link_endpoint* ep, const link_stuffed_sync_link_header* h, const link_stuffed_sync_link_any_message* request, link_stuffed_sync_link_kind kind, uint32_t timeout, link_stuffed_sync_link_match_fn match, void* match_ctx, link_stuffed_sync_link_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_SYNC_LINK_DATA: e = link_stuffed_sync_link_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_SYNC_LINK_PING: e = link_stuffed_sync_link_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_sync_link_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return link_stuffed_sync_link_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error link_stuffed_sync_link_endpoint_request(link_stuffed_sync_link_endpoint* ep, link_stuffed_sync_link_request* r, const link_stuffed_sync_link_header* h, const link_stuffed_sync_link_any_message* request, link_stuffed_sync_link_kind kind, uint32_t timeout, link_stuffed_sync_link_match_fn match, void* match_ctx, link_stuffed_sync_link_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    link_stuffed_sync_link_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_SYNC_LINK_DATA: e = link_stuffed_sync_link_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_SYNC_LINK_PING: e = link_stuffed_sync_link_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_sync_link_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    link_stuffed_sync_link_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error link_stuffed_sync_link_encode_data(const link_stuffed_data* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -935,7 +1160,7 @@ gmsg_error link_stuffed_wire_checksum_process(uint8_t* data, size_t size, const 
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { link_stuffed_wire_checksum_mode_deliver_ = 0, link_stuffed_wire_checksum_mode_capture_ = 1, link_stuffed_wire_checksum_mode_message_ = 2, link_stuffed_wire_checksum_mode_for_ = 3 };
+enum { link_stuffed_wire_checksum_mode_deliver_ = 0, link_stuffed_wire_checksum_mode_capture_ = 1, link_stuffed_wire_checksum_mode_message_ = 2, link_stuffed_wire_checksum_mode_for_ = 3, link_stuffed_wire_checksum_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t link_stuffed_wire_checksum_extra_(const link_stuffed_wire_checksum_any_view* v) {
@@ -944,6 +1169,41 @@ static size_t link_stuffed_wire_checksum_extra_(const link_stuffed_wire_checksum
         case LINK_STUFFED_WIRE_CHECKSUM_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
         default: return 0;
     }
+}
+
+static gmsg_error link_stuffed_wire_checksum_view_to_message_(const link_stuffed_wire_checksum_any_view* v, link_stuffed_wire_checksum_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case LINK_STUFFED_WIRE_CHECKSUM_DATA: return link_stuffed_data_view_to_struct(&v->as.data, &out->as.data);
+        case LINK_STUFFED_WIRE_CHECKSUM_PING: return link_stuffed_ping_view_to_struct(&v->as.ping, &out->as.ping);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void link_stuffed_wire_checksum_complete_(link_stuffed_wire_checksum_stream* s, link_stuffed_wire_checksum_request* r, gmsg_error e) {
+    link_stuffed_wire_checksum_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error link_stuffed_wire_checksum_offer_(link_stuffed_wire_checksum_stream* s, const link_stuffed_wire_checksum_frame_* f, const link_stuffed_wire_checksum_any_view* v, bool* taken) {
+    link_stuffed_wire_checksum_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        link_stuffed_wire_checksum_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = link_stuffed_wire_checksum_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        link_stuffed_wire_checksum_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error link_stuffed_wire_checksum_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -955,6 +1215,14 @@ static gmsg_error link_stuffed_wire_checksum_stream_process_(gmsg_stream* gs, ui
         link_stuffed_wire_checksum_any_view v;
         if ((e = link_stuffed_wire_checksum_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
         gs->last_extra = link_stuffed_wire_checksum_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = link_stuffed_wire_checksum_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                link_stuffed_wire_checksum_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         link_stuffed_wire_checksum_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -967,7 +1235,27 @@ static gmsg_error link_stuffed_wire_checksum_stream_process_(gmsg_stream* gs, ui
         link_stuffed_wire_checksum_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = LINK_STUFFED_WIRE_CHECKSUM_NONE;
     }
-    if (s->mode_ == link_stuffed_wire_checksum_mode_message_) {
+    if (s->mode_ == link_stuffed_wire_checksum_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = link_stuffed_wire_checksum_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    link_stuffed_wire_checksum_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                    return e;
+                }
+                if (taken) s->got_.message.kind = LINK_STUFFED_WIRE_CHECKSUM_NONE;
+                if (taken) return GMSG_OK;
+            }
+            link_stuffed_wire_checksum_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = LINK_STUFFED_WIRE_CHECKSUM_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = link_stuffed_wire_checksum_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            link_stuffed_wire_checksum_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+            return e;
+        }
+    }
+    if (s->mode_ == link_stuffed_wire_checksum_mode_message_ || s->mode_ == link_stuffed_wire_checksum_mode_wait_) {
         switch (s->got_.message.kind) {
             case LINK_STUFFED_WIRE_CHECKSUM_DATA: s->msg_->kind = LINK_STUFFED_WIRE_CHECKSUM_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
             case LINK_STUFFED_WIRE_CHECKSUM_PING: s->msg_->kind = LINK_STUFFED_WIRE_CHECKSUM_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
@@ -1050,6 +1338,168 @@ static void link_stuffed_wire_checksum_stream_error_(gmsg_stream* s, gmsg_error 
 gmsg_error link_stuffed_wire_checksum_stream_init(link_stuffed_wire_checksum_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, LINK_STUFFED_WIRE_CHECKSUM_MAX_FRAME, link_stuffed_wire_checksum_scan_, link_stuffed_wire_checksum_stream_process_, link_stuffed_wire_checksum_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void link_stuffed_wire_checksum_endpoint_fire_(gmsg_endpoint* io) {
+    link_stuffed_wire_checksum_stream* s = &((link_stuffed_wire_checksum_endpoint*)(void*)((char*)io - offsetof(link_stuffed_wire_checksum_endpoint, io)))->stream;
+    while (s->completed_) {
+        link_stuffed_wire_checksum_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void link_stuffed_wire_checksum_endpoint_expire_(gmsg_endpoint* io) {
+    link_stuffed_wire_checksum_stream* s = &((link_stuffed_wire_checksum_endpoint*)(void*)((char*)io - offsetof(link_stuffed_wire_checksum_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    link_stuffed_wire_checksum_request** at = &s->pending_;
+    while (*at) {
+        link_stuffed_wire_checksum_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            link_stuffed_wire_checksum_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    link_stuffed_wire_checksum_endpoint_fire_(io);
+}
+
+gmsg_error link_stuffed_wire_checksum_endpoint_init(link_stuffed_wire_checksum_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = link_stuffed_wire_checksum_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = link_stuffed_wire_checksum_endpoint_fire_;
+    ep->io.on_tick = link_stuffed_wire_checksum_endpoint_expire_;
+    return e;
+}
+
+void link_stuffed_wire_checksum_endpoint_cancel(link_stuffed_wire_checksum_endpoint* ep, link_stuffed_wire_checksum_request* r) {
+    link_stuffed_wire_checksum_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void link_stuffed_wire_checksum_endpoint_expect(link_stuffed_wire_checksum_endpoint* ep, link_stuffed_wire_checksum_request* r, link_stuffed_wire_checksum_kind kind, uint32_t timeout, link_stuffed_wire_checksum_match_fn match, void* match_ctx, link_stuffed_wire_checksum_request_fn on_done, void* ctx) {
+    link_stuffed_wire_checksum_request** at;
+    link_stuffed_wire_checksum_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t link_stuffed_wire_checksum_endpoint_pending(const link_stuffed_wire_checksum_endpoint* ep) {
+    size_t k = 0;
+    const link_stuffed_wire_checksum_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error link_stuffed_wire_checksum_endpoint_send_data(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_checksum_encode_data(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_checksum_endpoint_send_data_with_header(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_wire_checksum_header* h, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_checksum_encode_data_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_checksum_endpoint_send_ping(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_checksum_encode_ping(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_checksum_endpoint_send_ping_with_header(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_wire_checksum_header* h, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_checksum_encode_ping_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_checksum_endpoint_send(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_wire_checksum_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_checksum_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool link_stuffed_wire_checksum_endpoint_pull_(void* ctx) {
+    link_stuffed_wire_checksum_endpoint* ep = (link_stuffed_wire_checksum_endpoint*)ctx;
+    link_stuffed_wire_checksum_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        link_stuffed_wire_checksum_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error link_stuffed_wire_checksum_endpoint_wait_for(link_stuffed_wire_checksum_endpoint* ep, link_stuffed_wire_checksum_kind kind, uint32_t timeout, link_stuffed_wire_checksum_match_fn match, void* match_ctx, link_stuffed_wire_checksum_any_message* out, link_stuffed_wire_checksum_header* header) {
+    link_stuffed_wire_checksum_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = link_stuffed_wire_checksum_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, link_stuffed_wire_checksum_endpoint_pull_, ep);
+    s->mode_ = link_stuffed_wire_checksum_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error link_stuffed_wire_checksum_endpoint_transact(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_wire_checksum_header* h, const link_stuffed_wire_checksum_any_message* request, link_stuffed_wire_checksum_kind kind, uint32_t timeout, link_stuffed_wire_checksum_match_fn match, void* match_ctx, link_stuffed_wire_checksum_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_WIRE_CHECKSUM_DATA: e = link_stuffed_wire_checksum_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_WIRE_CHECKSUM_PING: e = link_stuffed_wire_checksum_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_wire_checksum_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return link_stuffed_wire_checksum_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error link_stuffed_wire_checksum_endpoint_request(link_stuffed_wire_checksum_endpoint* ep, link_stuffed_wire_checksum_request* r, const link_stuffed_wire_checksum_header* h, const link_stuffed_wire_checksum_any_message* request, link_stuffed_wire_checksum_kind kind, uint32_t timeout, link_stuffed_wire_checksum_match_fn match, void* match_ctx, link_stuffed_wire_checksum_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    link_stuffed_wire_checksum_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_WIRE_CHECKSUM_DATA: e = link_stuffed_wire_checksum_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_WIRE_CHECKSUM_PING: e = link_stuffed_wire_checksum_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_wire_checksum_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    link_stuffed_wire_checksum_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error link_stuffed_wire_checksum_encode_data(const link_stuffed_data* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -1396,7 +1846,7 @@ gmsg_error link_stuffed_wire_length_process(uint8_t* data, size_t size, const li
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { link_stuffed_wire_length_mode_deliver_ = 0, link_stuffed_wire_length_mode_capture_ = 1, link_stuffed_wire_length_mode_message_ = 2, link_stuffed_wire_length_mode_for_ = 3 };
+enum { link_stuffed_wire_length_mode_deliver_ = 0, link_stuffed_wire_length_mode_capture_ = 1, link_stuffed_wire_length_mode_message_ = 2, link_stuffed_wire_length_mode_for_ = 3, link_stuffed_wire_length_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t link_stuffed_wire_length_extra_(const link_stuffed_wire_length_any_view* v) {
@@ -1405,6 +1855,41 @@ static size_t link_stuffed_wire_length_extra_(const link_stuffed_wire_length_any
         case LINK_STUFFED_WIRE_LENGTH_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
         default: return 0;
     }
+}
+
+static gmsg_error link_stuffed_wire_length_view_to_message_(const link_stuffed_wire_length_any_view* v, link_stuffed_wire_length_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case LINK_STUFFED_WIRE_LENGTH_DATA: return link_stuffed_data_view_to_struct(&v->as.data, &out->as.data);
+        case LINK_STUFFED_WIRE_LENGTH_PING: return link_stuffed_ping_view_to_struct(&v->as.ping, &out->as.ping);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void link_stuffed_wire_length_complete_(link_stuffed_wire_length_stream* s, link_stuffed_wire_length_request* r, gmsg_error e) {
+    link_stuffed_wire_length_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error link_stuffed_wire_length_offer_(link_stuffed_wire_length_stream* s, const link_stuffed_wire_length_frame_* f, const link_stuffed_wire_length_any_view* v, bool* taken) {
+    link_stuffed_wire_length_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        link_stuffed_wire_length_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = link_stuffed_wire_length_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        link_stuffed_wire_length_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error link_stuffed_wire_length_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -1416,6 +1901,14 @@ static gmsg_error link_stuffed_wire_length_stream_process_(gmsg_stream* gs, uint
         link_stuffed_wire_length_any_view v;
         if ((e = link_stuffed_wire_length_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
         gs->last_extra = link_stuffed_wire_length_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = link_stuffed_wire_length_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                link_stuffed_wire_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         link_stuffed_wire_length_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -1428,7 +1921,27 @@ static gmsg_error link_stuffed_wire_length_stream_process_(gmsg_stream* gs, uint
         link_stuffed_wire_length_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = LINK_STUFFED_WIRE_LENGTH_NONE;
     }
-    if (s->mode_ == link_stuffed_wire_length_mode_message_) {
+    if (s->mode_ == link_stuffed_wire_length_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = link_stuffed_wire_length_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    link_stuffed_wire_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                    return e;
+                }
+                if (taken) s->got_.message.kind = LINK_STUFFED_WIRE_LENGTH_NONE;
+                if (taken) return GMSG_OK;
+            }
+            link_stuffed_wire_length_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = LINK_STUFFED_WIRE_LENGTH_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = link_stuffed_wire_length_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            link_stuffed_wire_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+            return e;
+        }
+    }
+    if (s->mode_ == link_stuffed_wire_length_mode_message_ || s->mode_ == link_stuffed_wire_length_mode_wait_) {
         switch (s->got_.message.kind) {
             case LINK_STUFFED_WIRE_LENGTH_DATA: s->msg_->kind = LINK_STUFFED_WIRE_LENGTH_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
             case LINK_STUFFED_WIRE_LENGTH_PING: s->msg_->kind = LINK_STUFFED_WIRE_LENGTH_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
@@ -1511,6 +2024,168 @@ static void link_stuffed_wire_length_stream_error_(gmsg_stream* s, gmsg_error e,
 gmsg_error link_stuffed_wire_length_stream_init(link_stuffed_wire_length_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, LINK_STUFFED_WIRE_LENGTH_MAX_FRAME, link_stuffed_wire_length_scan_, link_stuffed_wire_length_stream_process_, link_stuffed_wire_length_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void link_stuffed_wire_length_endpoint_fire_(gmsg_endpoint* io) {
+    link_stuffed_wire_length_stream* s = &((link_stuffed_wire_length_endpoint*)(void*)((char*)io - offsetof(link_stuffed_wire_length_endpoint, io)))->stream;
+    while (s->completed_) {
+        link_stuffed_wire_length_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void link_stuffed_wire_length_endpoint_expire_(gmsg_endpoint* io) {
+    link_stuffed_wire_length_stream* s = &((link_stuffed_wire_length_endpoint*)(void*)((char*)io - offsetof(link_stuffed_wire_length_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    link_stuffed_wire_length_request** at = &s->pending_;
+    while (*at) {
+        link_stuffed_wire_length_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            link_stuffed_wire_length_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    link_stuffed_wire_length_endpoint_fire_(io);
+}
+
+gmsg_error link_stuffed_wire_length_endpoint_init(link_stuffed_wire_length_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = link_stuffed_wire_length_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = link_stuffed_wire_length_endpoint_fire_;
+    ep->io.on_tick = link_stuffed_wire_length_endpoint_expire_;
+    return e;
+}
+
+void link_stuffed_wire_length_endpoint_cancel(link_stuffed_wire_length_endpoint* ep, link_stuffed_wire_length_request* r) {
+    link_stuffed_wire_length_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void link_stuffed_wire_length_endpoint_expect(link_stuffed_wire_length_endpoint* ep, link_stuffed_wire_length_request* r, link_stuffed_wire_length_kind kind, uint32_t timeout, link_stuffed_wire_length_match_fn match, void* match_ctx, link_stuffed_wire_length_request_fn on_done, void* ctx) {
+    link_stuffed_wire_length_request** at;
+    link_stuffed_wire_length_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t link_stuffed_wire_length_endpoint_pending(const link_stuffed_wire_length_endpoint* ep) {
+    size_t k = 0;
+    const link_stuffed_wire_length_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error link_stuffed_wire_length_endpoint_send_data(link_stuffed_wire_length_endpoint* ep, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_length_encode_data(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_length_endpoint_send_data_with_header(link_stuffed_wire_length_endpoint* ep, const link_stuffed_wire_length_header* h, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_length_encode_data_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_length_endpoint_send_ping(link_stuffed_wire_length_endpoint* ep, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_length_encode_ping(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_length_endpoint_send_ping_with_header(link_stuffed_wire_length_endpoint* ep, const link_stuffed_wire_length_header* h, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_length_encode_ping_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_length_endpoint_send(link_stuffed_wire_length_endpoint* ep, const link_stuffed_wire_length_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_length_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool link_stuffed_wire_length_endpoint_pull_(void* ctx) {
+    link_stuffed_wire_length_endpoint* ep = (link_stuffed_wire_length_endpoint*)ctx;
+    link_stuffed_wire_length_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        link_stuffed_wire_length_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error link_stuffed_wire_length_endpoint_wait_for(link_stuffed_wire_length_endpoint* ep, link_stuffed_wire_length_kind kind, uint32_t timeout, link_stuffed_wire_length_match_fn match, void* match_ctx, link_stuffed_wire_length_any_message* out, link_stuffed_wire_length_header* header) {
+    link_stuffed_wire_length_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = link_stuffed_wire_length_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, link_stuffed_wire_length_endpoint_pull_, ep);
+    s->mode_ = link_stuffed_wire_length_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error link_stuffed_wire_length_endpoint_transact(link_stuffed_wire_length_endpoint* ep, const link_stuffed_wire_length_header* h, const link_stuffed_wire_length_any_message* request, link_stuffed_wire_length_kind kind, uint32_t timeout, link_stuffed_wire_length_match_fn match, void* match_ctx, link_stuffed_wire_length_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_WIRE_LENGTH_DATA: e = link_stuffed_wire_length_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_WIRE_LENGTH_PING: e = link_stuffed_wire_length_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_wire_length_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return link_stuffed_wire_length_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error link_stuffed_wire_length_endpoint_request(link_stuffed_wire_length_endpoint* ep, link_stuffed_wire_length_request* r, const link_stuffed_wire_length_header* h, const link_stuffed_wire_length_any_message* request, link_stuffed_wire_length_kind kind, uint32_t timeout, link_stuffed_wire_length_match_fn match, void* match_ctx, link_stuffed_wire_length_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    link_stuffed_wire_length_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_WIRE_LENGTH_DATA: e = link_stuffed_wire_length_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_WIRE_LENGTH_PING: e = link_stuffed_wire_length_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_wire_length_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    link_stuffed_wire_length_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error link_stuffed_wire_length_encode_data(const link_stuffed_data* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -1861,7 +2536,7 @@ gmsg_error link_stuffed_crc_length_process(uint8_t* data, size_t size, const lin
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { link_stuffed_crc_length_mode_deliver_ = 0, link_stuffed_crc_length_mode_capture_ = 1, link_stuffed_crc_length_mode_message_ = 2, link_stuffed_crc_length_mode_for_ = 3 };
+enum { link_stuffed_crc_length_mode_deliver_ = 0, link_stuffed_crc_length_mode_capture_ = 1, link_stuffed_crc_length_mode_message_ = 2, link_stuffed_crc_length_mode_for_ = 3, link_stuffed_crc_length_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t link_stuffed_crc_length_extra_(const link_stuffed_crc_length_any_view* v) {
@@ -1870,6 +2545,41 @@ static size_t link_stuffed_crc_length_extra_(const link_stuffed_crc_length_any_v
         case LINK_STUFFED_CRC_LENGTH_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
         default: return 0;
     }
+}
+
+static gmsg_error link_stuffed_crc_length_view_to_message_(const link_stuffed_crc_length_any_view* v, link_stuffed_crc_length_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case LINK_STUFFED_CRC_LENGTH_DATA: return link_stuffed_data_view_to_struct(&v->as.data, &out->as.data);
+        case LINK_STUFFED_CRC_LENGTH_PING: return link_stuffed_ping_view_to_struct(&v->as.ping, &out->as.ping);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void link_stuffed_crc_length_complete_(link_stuffed_crc_length_stream* s, link_stuffed_crc_length_request* r, gmsg_error e) {
+    link_stuffed_crc_length_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error link_stuffed_crc_length_offer_(link_stuffed_crc_length_stream* s, const link_stuffed_crc_length_frame_* f, const link_stuffed_crc_length_any_view* v, bool* taken) {
+    link_stuffed_crc_length_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        link_stuffed_crc_length_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = link_stuffed_crc_length_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        link_stuffed_crc_length_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error link_stuffed_crc_length_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -1881,6 +2591,14 @@ static gmsg_error link_stuffed_crc_length_stream_process_(gmsg_stream* gs, uint8
         link_stuffed_crc_length_any_view v;
         if ((e = link_stuffed_crc_length_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
         gs->last_extra = link_stuffed_crc_length_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = link_stuffed_crc_length_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                link_stuffed_crc_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         link_stuffed_crc_length_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -1893,7 +2611,27 @@ static gmsg_error link_stuffed_crc_length_stream_process_(gmsg_stream* gs, uint8
         link_stuffed_crc_length_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = LINK_STUFFED_CRC_LENGTH_NONE;
     }
-    if (s->mode_ == link_stuffed_crc_length_mode_message_) {
+    if (s->mode_ == link_stuffed_crc_length_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = link_stuffed_crc_length_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    link_stuffed_crc_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                    return e;
+                }
+                if (taken) s->got_.message.kind = LINK_STUFFED_CRC_LENGTH_NONE;
+                if (taken) return GMSG_OK;
+            }
+            link_stuffed_crc_length_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = LINK_STUFFED_CRC_LENGTH_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = link_stuffed_crc_length_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            link_stuffed_crc_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+            return e;
+        }
+    }
+    if (s->mode_ == link_stuffed_crc_length_mode_message_ || s->mode_ == link_stuffed_crc_length_mode_wait_) {
         switch (s->got_.message.kind) {
             case LINK_STUFFED_CRC_LENGTH_DATA: s->msg_->kind = LINK_STUFFED_CRC_LENGTH_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
             case LINK_STUFFED_CRC_LENGTH_PING: s->msg_->kind = LINK_STUFFED_CRC_LENGTH_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
@@ -1976,6 +2714,168 @@ static void link_stuffed_crc_length_stream_error_(gmsg_stream* s, gmsg_error e, 
 gmsg_error link_stuffed_crc_length_stream_init(link_stuffed_crc_length_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, LINK_STUFFED_CRC_LENGTH_MAX_FRAME, link_stuffed_crc_length_scan_, link_stuffed_crc_length_stream_process_, link_stuffed_crc_length_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void link_stuffed_crc_length_endpoint_fire_(gmsg_endpoint* io) {
+    link_stuffed_crc_length_stream* s = &((link_stuffed_crc_length_endpoint*)(void*)((char*)io - offsetof(link_stuffed_crc_length_endpoint, io)))->stream;
+    while (s->completed_) {
+        link_stuffed_crc_length_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void link_stuffed_crc_length_endpoint_expire_(gmsg_endpoint* io) {
+    link_stuffed_crc_length_stream* s = &((link_stuffed_crc_length_endpoint*)(void*)((char*)io - offsetof(link_stuffed_crc_length_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    link_stuffed_crc_length_request** at = &s->pending_;
+    while (*at) {
+        link_stuffed_crc_length_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            link_stuffed_crc_length_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    link_stuffed_crc_length_endpoint_fire_(io);
+}
+
+gmsg_error link_stuffed_crc_length_endpoint_init(link_stuffed_crc_length_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = link_stuffed_crc_length_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = link_stuffed_crc_length_endpoint_fire_;
+    ep->io.on_tick = link_stuffed_crc_length_endpoint_expire_;
+    return e;
+}
+
+void link_stuffed_crc_length_endpoint_cancel(link_stuffed_crc_length_endpoint* ep, link_stuffed_crc_length_request* r) {
+    link_stuffed_crc_length_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void link_stuffed_crc_length_endpoint_expect(link_stuffed_crc_length_endpoint* ep, link_stuffed_crc_length_request* r, link_stuffed_crc_length_kind kind, uint32_t timeout, link_stuffed_crc_length_match_fn match, void* match_ctx, link_stuffed_crc_length_request_fn on_done, void* ctx) {
+    link_stuffed_crc_length_request** at;
+    link_stuffed_crc_length_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t link_stuffed_crc_length_endpoint_pending(const link_stuffed_crc_length_endpoint* ep) {
+    size_t k = 0;
+    const link_stuffed_crc_length_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error link_stuffed_crc_length_endpoint_send_data(link_stuffed_crc_length_endpoint* ep, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_crc_length_encode_data(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_crc_length_endpoint_send_data_with_header(link_stuffed_crc_length_endpoint* ep, const link_stuffed_crc_length_header* h, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_crc_length_encode_data_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_crc_length_endpoint_send_ping(link_stuffed_crc_length_endpoint* ep, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_crc_length_encode_ping(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_crc_length_endpoint_send_ping_with_header(link_stuffed_crc_length_endpoint* ep, const link_stuffed_crc_length_header* h, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_crc_length_encode_ping_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_crc_length_endpoint_send(link_stuffed_crc_length_endpoint* ep, const link_stuffed_crc_length_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_crc_length_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool link_stuffed_crc_length_endpoint_pull_(void* ctx) {
+    link_stuffed_crc_length_endpoint* ep = (link_stuffed_crc_length_endpoint*)ctx;
+    link_stuffed_crc_length_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        link_stuffed_crc_length_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error link_stuffed_crc_length_endpoint_wait_for(link_stuffed_crc_length_endpoint* ep, link_stuffed_crc_length_kind kind, uint32_t timeout, link_stuffed_crc_length_match_fn match, void* match_ctx, link_stuffed_crc_length_any_message* out, link_stuffed_crc_length_header* header) {
+    link_stuffed_crc_length_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = link_stuffed_crc_length_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, link_stuffed_crc_length_endpoint_pull_, ep);
+    s->mode_ = link_stuffed_crc_length_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error link_stuffed_crc_length_endpoint_transact(link_stuffed_crc_length_endpoint* ep, const link_stuffed_crc_length_header* h, const link_stuffed_crc_length_any_message* request, link_stuffed_crc_length_kind kind, uint32_t timeout, link_stuffed_crc_length_match_fn match, void* match_ctx, link_stuffed_crc_length_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_CRC_LENGTH_DATA: e = link_stuffed_crc_length_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_CRC_LENGTH_PING: e = link_stuffed_crc_length_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_crc_length_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return link_stuffed_crc_length_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error link_stuffed_crc_length_endpoint_request(link_stuffed_crc_length_endpoint* ep, link_stuffed_crc_length_request* r, const link_stuffed_crc_length_header* h, const link_stuffed_crc_length_any_message* request, link_stuffed_crc_length_kind kind, uint32_t timeout, link_stuffed_crc_length_match_fn match, void* match_ctx, link_stuffed_crc_length_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    link_stuffed_crc_length_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_CRC_LENGTH_DATA: e = link_stuffed_crc_length_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_CRC_LENGTH_PING: e = link_stuffed_crc_length_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_crc_length_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    link_stuffed_crc_length_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error link_stuffed_crc_length_encode_data(const link_stuffed_data* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -2310,7 +3210,7 @@ gmsg_error link_stuffed_wire_crc_length_process(uint8_t* data, size_t size, cons
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { link_stuffed_wire_crc_length_mode_deliver_ = 0, link_stuffed_wire_crc_length_mode_capture_ = 1, link_stuffed_wire_crc_length_mode_message_ = 2, link_stuffed_wire_crc_length_mode_for_ = 3 };
+enum { link_stuffed_wire_crc_length_mode_deliver_ = 0, link_stuffed_wire_crc_length_mode_capture_ = 1, link_stuffed_wire_crc_length_mode_message_ = 2, link_stuffed_wire_crc_length_mode_for_ = 3, link_stuffed_wire_crc_length_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t link_stuffed_wire_crc_length_extra_(const link_stuffed_wire_crc_length_any_view* v) {
@@ -2319,6 +3219,41 @@ static size_t link_stuffed_wire_crc_length_extra_(const link_stuffed_wire_crc_le
         case LINK_STUFFED_WIRE_CRC_LENGTH_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
         default: return 0;
     }
+}
+
+static gmsg_error link_stuffed_wire_crc_length_view_to_message_(const link_stuffed_wire_crc_length_any_view* v, link_stuffed_wire_crc_length_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case LINK_STUFFED_WIRE_CRC_LENGTH_DATA: return link_stuffed_data_view_to_struct(&v->as.data, &out->as.data);
+        case LINK_STUFFED_WIRE_CRC_LENGTH_PING: return link_stuffed_ping_view_to_struct(&v->as.ping, &out->as.ping);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void link_stuffed_wire_crc_length_complete_(link_stuffed_wire_crc_length_stream* s, link_stuffed_wire_crc_length_request* r, gmsg_error e) {
+    link_stuffed_wire_crc_length_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error link_stuffed_wire_crc_length_offer_(link_stuffed_wire_crc_length_stream* s, const link_stuffed_wire_crc_length_frame_* f, const link_stuffed_wire_crc_length_any_view* v, bool* taken) {
+    link_stuffed_wire_crc_length_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        link_stuffed_wire_crc_length_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = link_stuffed_wire_crc_length_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        link_stuffed_wire_crc_length_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error link_stuffed_wire_crc_length_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -2330,6 +3265,14 @@ static gmsg_error link_stuffed_wire_crc_length_stream_process_(gmsg_stream* gs, 
         link_stuffed_wire_crc_length_any_view v;
         if ((e = link_stuffed_wire_crc_length_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
         gs->last_extra = link_stuffed_wire_crc_length_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = link_stuffed_wire_crc_length_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                link_stuffed_wire_crc_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         link_stuffed_wire_crc_length_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -2342,7 +3285,27 @@ static gmsg_error link_stuffed_wire_crc_length_stream_process_(gmsg_stream* gs, 
         link_stuffed_wire_crc_length_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = LINK_STUFFED_WIRE_CRC_LENGTH_NONE;
     }
-    if (s->mode_ == link_stuffed_wire_crc_length_mode_message_) {
+    if (s->mode_ == link_stuffed_wire_crc_length_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = link_stuffed_wire_crc_length_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    link_stuffed_wire_crc_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                    return e;
+                }
+                if (taken) s->got_.message.kind = LINK_STUFFED_WIRE_CRC_LENGTH_NONE;
+                if (taken) return GMSG_OK;
+            }
+            link_stuffed_wire_crc_length_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = LINK_STUFFED_WIRE_CRC_LENGTH_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = link_stuffed_wire_crc_length_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            link_stuffed_wire_crc_length_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+            return e;
+        }
+    }
+    if (s->mode_ == link_stuffed_wire_crc_length_mode_message_ || s->mode_ == link_stuffed_wire_crc_length_mode_wait_) {
         switch (s->got_.message.kind) {
             case LINK_STUFFED_WIRE_CRC_LENGTH_DATA: s->msg_->kind = LINK_STUFFED_WIRE_CRC_LENGTH_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
             case LINK_STUFFED_WIRE_CRC_LENGTH_PING: s->msg_->kind = LINK_STUFFED_WIRE_CRC_LENGTH_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
@@ -2425,6 +3388,168 @@ static void link_stuffed_wire_crc_length_stream_error_(gmsg_stream* s, gmsg_erro
 gmsg_error link_stuffed_wire_crc_length_stream_init(link_stuffed_wire_crc_length_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, LINK_STUFFED_WIRE_CRC_LENGTH_MAX_FRAME, link_stuffed_wire_crc_length_scan_, link_stuffed_wire_crc_length_stream_process_, link_stuffed_wire_crc_length_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void link_stuffed_wire_crc_length_endpoint_fire_(gmsg_endpoint* io) {
+    link_stuffed_wire_crc_length_stream* s = &((link_stuffed_wire_crc_length_endpoint*)(void*)((char*)io - offsetof(link_stuffed_wire_crc_length_endpoint, io)))->stream;
+    while (s->completed_) {
+        link_stuffed_wire_crc_length_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void link_stuffed_wire_crc_length_endpoint_expire_(gmsg_endpoint* io) {
+    link_stuffed_wire_crc_length_stream* s = &((link_stuffed_wire_crc_length_endpoint*)(void*)((char*)io - offsetof(link_stuffed_wire_crc_length_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    link_stuffed_wire_crc_length_request** at = &s->pending_;
+    while (*at) {
+        link_stuffed_wire_crc_length_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            link_stuffed_wire_crc_length_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    link_stuffed_wire_crc_length_endpoint_fire_(io);
+}
+
+gmsg_error link_stuffed_wire_crc_length_endpoint_init(link_stuffed_wire_crc_length_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = link_stuffed_wire_crc_length_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = link_stuffed_wire_crc_length_endpoint_fire_;
+    ep->io.on_tick = link_stuffed_wire_crc_length_endpoint_expire_;
+    return e;
+}
+
+void link_stuffed_wire_crc_length_endpoint_cancel(link_stuffed_wire_crc_length_endpoint* ep, link_stuffed_wire_crc_length_request* r) {
+    link_stuffed_wire_crc_length_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void link_stuffed_wire_crc_length_endpoint_expect(link_stuffed_wire_crc_length_endpoint* ep, link_stuffed_wire_crc_length_request* r, link_stuffed_wire_crc_length_kind kind, uint32_t timeout, link_stuffed_wire_crc_length_match_fn match, void* match_ctx, link_stuffed_wire_crc_length_request_fn on_done, void* ctx) {
+    link_stuffed_wire_crc_length_request** at;
+    link_stuffed_wire_crc_length_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t link_stuffed_wire_crc_length_endpoint_pending(const link_stuffed_wire_crc_length_endpoint* ep) {
+    size_t k = 0;
+    const link_stuffed_wire_crc_length_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error link_stuffed_wire_crc_length_endpoint_send_data(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_crc_length_encode_data(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_crc_length_endpoint_send_data_with_header(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_wire_crc_length_header* h, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_crc_length_encode_data_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_crc_length_endpoint_send_ping(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_crc_length_encode_ping(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_crc_length_endpoint_send_ping_with_header(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_wire_crc_length_header* h, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_crc_length_encode_ping_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_crc_length_endpoint_send(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_wire_crc_length_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_crc_length_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool link_stuffed_wire_crc_length_endpoint_pull_(void* ctx) {
+    link_stuffed_wire_crc_length_endpoint* ep = (link_stuffed_wire_crc_length_endpoint*)ctx;
+    link_stuffed_wire_crc_length_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        link_stuffed_wire_crc_length_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error link_stuffed_wire_crc_length_endpoint_wait_for(link_stuffed_wire_crc_length_endpoint* ep, link_stuffed_wire_crc_length_kind kind, uint32_t timeout, link_stuffed_wire_crc_length_match_fn match, void* match_ctx, link_stuffed_wire_crc_length_any_message* out, link_stuffed_wire_crc_length_header* header) {
+    link_stuffed_wire_crc_length_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = link_stuffed_wire_crc_length_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, link_stuffed_wire_crc_length_endpoint_pull_, ep);
+    s->mode_ = link_stuffed_wire_crc_length_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error link_stuffed_wire_crc_length_endpoint_transact(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_wire_crc_length_header* h, const link_stuffed_wire_crc_length_any_message* request, link_stuffed_wire_crc_length_kind kind, uint32_t timeout, link_stuffed_wire_crc_length_match_fn match, void* match_ctx, link_stuffed_wire_crc_length_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_WIRE_CRC_LENGTH_DATA: e = link_stuffed_wire_crc_length_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_WIRE_CRC_LENGTH_PING: e = link_stuffed_wire_crc_length_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_wire_crc_length_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return link_stuffed_wire_crc_length_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error link_stuffed_wire_crc_length_endpoint_request(link_stuffed_wire_crc_length_endpoint* ep, link_stuffed_wire_crc_length_request* r, const link_stuffed_wire_crc_length_header* h, const link_stuffed_wire_crc_length_any_message* request, link_stuffed_wire_crc_length_kind kind, uint32_t timeout, link_stuffed_wire_crc_length_match_fn match, void* match_ctx, link_stuffed_wire_crc_length_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    link_stuffed_wire_crc_length_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_WIRE_CRC_LENGTH_DATA: e = link_stuffed_wire_crc_length_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_WIRE_CRC_LENGTH_PING: e = link_stuffed_wire_crc_length_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_wire_crc_length_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    link_stuffed_wire_crc_length_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error link_stuffed_wire_crc_length_encode_data(const link_stuffed_data* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -2780,7 +3905,7 @@ gmsg_error link_stuffed_wire_crc_over_wire_process(uint8_t* data, size_t size, c
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { link_stuffed_wire_crc_over_wire_mode_deliver_ = 0, link_stuffed_wire_crc_over_wire_mode_capture_ = 1, link_stuffed_wire_crc_over_wire_mode_message_ = 2, link_stuffed_wire_crc_over_wire_mode_for_ = 3 };
+enum { link_stuffed_wire_crc_over_wire_mode_deliver_ = 0, link_stuffed_wire_crc_over_wire_mode_capture_ = 1, link_stuffed_wire_crc_over_wire_mode_message_ = 2, link_stuffed_wire_crc_over_wire_mode_for_ = 3, link_stuffed_wire_crc_over_wire_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t link_stuffed_wire_crc_over_wire_extra_(const link_stuffed_wire_crc_over_wire_any_view* v) {
@@ -2789,6 +3914,41 @@ static size_t link_stuffed_wire_crc_over_wire_extra_(const link_stuffed_wire_crc
         case LINK_STUFFED_WIRE_CRC_OVER_WIRE_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
         default: return 0;
     }
+}
+
+static gmsg_error link_stuffed_wire_crc_over_wire_view_to_message_(const link_stuffed_wire_crc_over_wire_any_view* v, link_stuffed_wire_crc_over_wire_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case LINK_STUFFED_WIRE_CRC_OVER_WIRE_DATA: return link_stuffed_data_view_to_struct(&v->as.data, &out->as.data);
+        case LINK_STUFFED_WIRE_CRC_OVER_WIRE_PING: return link_stuffed_ping_view_to_struct(&v->as.ping, &out->as.ping);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void link_stuffed_wire_crc_over_wire_complete_(link_stuffed_wire_crc_over_wire_stream* s, link_stuffed_wire_crc_over_wire_request* r, gmsg_error e) {
+    link_stuffed_wire_crc_over_wire_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error link_stuffed_wire_crc_over_wire_offer_(link_stuffed_wire_crc_over_wire_stream* s, const link_stuffed_wire_crc_over_wire_frame_* f, const link_stuffed_wire_crc_over_wire_any_view* v, bool* taken) {
+    link_stuffed_wire_crc_over_wire_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        link_stuffed_wire_crc_over_wire_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = link_stuffed_wire_crc_over_wire_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        link_stuffed_wire_crc_over_wire_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error link_stuffed_wire_crc_over_wire_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -2800,6 +3960,14 @@ static gmsg_error link_stuffed_wire_crc_over_wire_stream_process_(gmsg_stream* g
         link_stuffed_wire_crc_over_wire_any_view v;
         if ((e = link_stuffed_wire_crc_over_wire_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
         gs->last_extra = link_stuffed_wire_crc_over_wire_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = link_stuffed_wire_crc_over_wire_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                link_stuffed_wire_crc_over_wire_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         link_stuffed_wire_crc_over_wire_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -2812,7 +3980,27 @@ static gmsg_error link_stuffed_wire_crc_over_wire_stream_process_(gmsg_stream* g
         link_stuffed_wire_crc_over_wire_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = LINK_STUFFED_WIRE_CRC_OVER_WIRE_NONE;
     }
-    if (s->mode_ == link_stuffed_wire_crc_over_wire_mode_message_) {
+    if (s->mode_ == link_stuffed_wire_crc_over_wire_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = link_stuffed_wire_crc_over_wire_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    link_stuffed_wire_crc_over_wire_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                    return e;
+                }
+                if (taken) s->got_.message.kind = LINK_STUFFED_WIRE_CRC_OVER_WIRE_NONE;
+                if (taken) return GMSG_OK;
+            }
+            link_stuffed_wire_crc_over_wire_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = LINK_STUFFED_WIRE_CRC_OVER_WIRE_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = link_stuffed_wire_crc_over_wire_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            link_stuffed_wire_crc_over_wire_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+            return e;
+        }
+    }
+    if (s->mode_ == link_stuffed_wire_crc_over_wire_mode_message_ || s->mode_ == link_stuffed_wire_crc_over_wire_mode_wait_) {
         switch (s->got_.message.kind) {
             case LINK_STUFFED_WIRE_CRC_OVER_WIRE_DATA: s->msg_->kind = LINK_STUFFED_WIRE_CRC_OVER_WIRE_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
             case LINK_STUFFED_WIRE_CRC_OVER_WIRE_PING: s->msg_->kind = LINK_STUFFED_WIRE_CRC_OVER_WIRE_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
@@ -2895,6 +4083,168 @@ static void link_stuffed_wire_crc_over_wire_stream_error_(gmsg_stream* s, gmsg_e
 gmsg_error link_stuffed_wire_crc_over_wire_stream_init(link_stuffed_wire_crc_over_wire_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, LINK_STUFFED_WIRE_CRC_OVER_WIRE_MAX_FRAME, link_stuffed_wire_crc_over_wire_scan_, link_stuffed_wire_crc_over_wire_stream_process_, link_stuffed_wire_crc_over_wire_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void link_stuffed_wire_crc_over_wire_endpoint_fire_(gmsg_endpoint* io) {
+    link_stuffed_wire_crc_over_wire_stream* s = &((link_stuffed_wire_crc_over_wire_endpoint*)(void*)((char*)io - offsetof(link_stuffed_wire_crc_over_wire_endpoint, io)))->stream;
+    while (s->completed_) {
+        link_stuffed_wire_crc_over_wire_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void link_stuffed_wire_crc_over_wire_endpoint_expire_(gmsg_endpoint* io) {
+    link_stuffed_wire_crc_over_wire_stream* s = &((link_stuffed_wire_crc_over_wire_endpoint*)(void*)((char*)io - offsetof(link_stuffed_wire_crc_over_wire_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    link_stuffed_wire_crc_over_wire_request** at = &s->pending_;
+    while (*at) {
+        link_stuffed_wire_crc_over_wire_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            link_stuffed_wire_crc_over_wire_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    link_stuffed_wire_crc_over_wire_endpoint_fire_(io);
+}
+
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_init(link_stuffed_wire_crc_over_wire_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = link_stuffed_wire_crc_over_wire_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = link_stuffed_wire_crc_over_wire_endpoint_fire_;
+    ep->io.on_tick = link_stuffed_wire_crc_over_wire_endpoint_expire_;
+    return e;
+}
+
+void link_stuffed_wire_crc_over_wire_endpoint_cancel(link_stuffed_wire_crc_over_wire_endpoint* ep, link_stuffed_wire_crc_over_wire_request* r) {
+    link_stuffed_wire_crc_over_wire_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void link_stuffed_wire_crc_over_wire_endpoint_expect(link_stuffed_wire_crc_over_wire_endpoint* ep, link_stuffed_wire_crc_over_wire_request* r, link_stuffed_wire_crc_over_wire_kind kind, uint32_t timeout, link_stuffed_wire_crc_over_wire_match_fn match, void* match_ctx, link_stuffed_wire_crc_over_wire_request_fn on_done, void* ctx) {
+    link_stuffed_wire_crc_over_wire_request** at;
+    link_stuffed_wire_crc_over_wire_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t link_stuffed_wire_crc_over_wire_endpoint_pending(const link_stuffed_wire_crc_over_wire_endpoint* ep) {
+    size_t k = 0;
+    const link_stuffed_wire_crc_over_wire_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_send_data(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_crc_over_wire_encode_data(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_send_data_with_header(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_wire_crc_over_wire_header* h, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_crc_over_wire_encode_data_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_send_ping(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_crc_over_wire_encode_ping(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_send_ping_with_header(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_wire_crc_over_wire_header* h, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_crc_over_wire_encode_ping_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_send(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_wire_crc_over_wire_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_wire_crc_over_wire_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool link_stuffed_wire_crc_over_wire_endpoint_pull_(void* ctx) {
+    link_stuffed_wire_crc_over_wire_endpoint* ep = (link_stuffed_wire_crc_over_wire_endpoint*)ctx;
+    link_stuffed_wire_crc_over_wire_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        link_stuffed_wire_crc_over_wire_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_wait_for(link_stuffed_wire_crc_over_wire_endpoint* ep, link_stuffed_wire_crc_over_wire_kind kind, uint32_t timeout, link_stuffed_wire_crc_over_wire_match_fn match, void* match_ctx, link_stuffed_wire_crc_over_wire_any_message* out, link_stuffed_wire_crc_over_wire_header* header) {
+    link_stuffed_wire_crc_over_wire_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = link_stuffed_wire_crc_over_wire_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, link_stuffed_wire_crc_over_wire_endpoint_pull_, ep);
+    s->mode_ = link_stuffed_wire_crc_over_wire_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_transact(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_wire_crc_over_wire_header* h, const link_stuffed_wire_crc_over_wire_any_message* request, link_stuffed_wire_crc_over_wire_kind kind, uint32_t timeout, link_stuffed_wire_crc_over_wire_match_fn match, void* match_ctx, link_stuffed_wire_crc_over_wire_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_WIRE_CRC_OVER_WIRE_DATA: e = link_stuffed_wire_crc_over_wire_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_WIRE_CRC_OVER_WIRE_PING: e = link_stuffed_wire_crc_over_wire_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_wire_crc_over_wire_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return link_stuffed_wire_crc_over_wire_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_request(link_stuffed_wire_crc_over_wire_endpoint* ep, link_stuffed_wire_crc_over_wire_request* r, const link_stuffed_wire_crc_over_wire_header* h, const link_stuffed_wire_crc_over_wire_any_message* request, link_stuffed_wire_crc_over_wire_kind kind, uint32_t timeout, link_stuffed_wire_crc_over_wire_match_fn match, void* match_ctx, link_stuffed_wire_crc_over_wire_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    link_stuffed_wire_crc_over_wire_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_WIRE_CRC_OVER_WIRE_DATA: e = link_stuffed_wire_crc_over_wire_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_WIRE_CRC_OVER_WIRE_PING: e = link_stuffed_wire_crc_over_wire_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_wire_crc_over_wire_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    link_stuffed_wire_crc_over_wire_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error link_stuffed_wire_crc_over_wire_encode_data(const link_stuffed_data* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -3167,7 +4517,7 @@ gmsg_error link_stuffed_fixed_link_process(uint8_t* data, size_t size, const lin
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { link_stuffed_fixed_link_mode_deliver_ = 0, link_stuffed_fixed_link_mode_capture_ = 1, link_stuffed_fixed_link_mode_message_ = 2, link_stuffed_fixed_link_mode_for_ = 3 };
+enum { link_stuffed_fixed_link_mode_deliver_ = 0, link_stuffed_fixed_link_mode_capture_ = 1, link_stuffed_fixed_link_mode_message_ = 2, link_stuffed_fixed_link_mode_for_ = 3, link_stuffed_fixed_link_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t link_stuffed_fixed_link_extra_(const link_stuffed_fixed_link_any_view* v) {
@@ -3175,6 +4525,41 @@ static size_t link_stuffed_fixed_link_extra_(const link_stuffed_fixed_link_any_v
         case LINK_STUFFED_FIXED_LINK_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
         default: return 0;
     }
+}
+
+static gmsg_error link_stuffed_fixed_link_view_to_message_(const link_stuffed_fixed_link_any_view* v, link_stuffed_fixed_link_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case LINK_STUFFED_FIXED_LINK_PING: return link_stuffed_ping_view_to_struct(&v->as.ping, &out->as.ping);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void link_stuffed_fixed_link_complete_(link_stuffed_fixed_link_stream* s, link_stuffed_fixed_link_request* r, gmsg_error e) {
+    link_stuffed_fixed_link_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error link_stuffed_fixed_link_offer_(link_stuffed_fixed_link_stream* s, const link_stuffed_fixed_link_frame_* f, const link_stuffed_fixed_link_any_view* v, bool* taken) {
+    link_stuffed_fixed_link_request** at;
+    (void)f;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        link_stuffed_fixed_link_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, v))) continue;
+        if ((e = link_stuffed_fixed_link_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        link_stuffed_fixed_link_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error link_stuffed_fixed_link_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -3186,6 +4571,14 @@ static gmsg_error link_stuffed_fixed_link_stream_process_(gmsg_stream* gs, uint8
         link_stuffed_fixed_link_any_view v;
         if ((e = link_stuffed_fixed_link_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
         gs->last_extra = link_stuffed_fixed_link_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = link_stuffed_fixed_link_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                link_stuffed_fixed_link_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         link_stuffed_fixed_link_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -3197,7 +4590,23 @@ static gmsg_error link_stuffed_fixed_link_stream_process_(gmsg_stream* gs, uint8
         link_stuffed_fixed_link_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = LINK_STUFFED_FIXED_LINK_NONE;
     }
-    if (s->mode_ == link_stuffed_fixed_link_mode_message_) {
+    if (s->mode_ == link_stuffed_fixed_link_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = link_stuffed_fixed_link_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    link_stuffed_fixed_link_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                    return e;
+                }
+                if (taken) s->got_.message.kind = LINK_STUFFED_FIXED_LINK_NONE;
+                if (taken) return GMSG_OK;
+            }
+            link_stuffed_fixed_link_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = LINK_STUFFED_FIXED_LINK_NONE;
+            return GMSG_OK;
+        }
+    }
+    if (s->mode_ == link_stuffed_fixed_link_mode_message_ || s->mode_ == link_stuffed_fixed_link_mode_wait_) {
         switch (s->got_.message.kind) {
             case LINK_STUFFED_FIXED_LINK_PING: s->msg_->kind = LINK_STUFFED_FIXED_LINK_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
             default: e = GMSG_ERR_UNKNOWN_TYPE; break;
@@ -3279,6 +4688,132 @@ static void link_stuffed_fixed_link_stream_error_(gmsg_stream* s, gmsg_error e, 
 gmsg_error link_stuffed_fixed_link_stream_init(link_stuffed_fixed_link_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, LINK_STUFFED_FIXED_LINK_MAX_FRAME, link_stuffed_fixed_link_scan_, link_stuffed_fixed_link_stream_process_, link_stuffed_fixed_link_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void link_stuffed_fixed_link_endpoint_fire_(gmsg_endpoint* io) {
+    link_stuffed_fixed_link_stream* s = &((link_stuffed_fixed_link_endpoint*)(void*)((char*)io - offsetof(link_stuffed_fixed_link_endpoint, io)))->stream;
+    while (s->completed_) {
+        link_stuffed_fixed_link_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void link_stuffed_fixed_link_endpoint_expire_(gmsg_endpoint* io) {
+    link_stuffed_fixed_link_stream* s = &((link_stuffed_fixed_link_endpoint*)(void*)((char*)io - offsetof(link_stuffed_fixed_link_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    link_stuffed_fixed_link_request** at = &s->pending_;
+    while (*at) {
+        link_stuffed_fixed_link_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            link_stuffed_fixed_link_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    link_stuffed_fixed_link_endpoint_fire_(io);
+}
+
+gmsg_error link_stuffed_fixed_link_endpoint_init(link_stuffed_fixed_link_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = link_stuffed_fixed_link_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = link_stuffed_fixed_link_endpoint_fire_;
+    ep->io.on_tick = link_stuffed_fixed_link_endpoint_expire_;
+    return e;
+}
+
+void link_stuffed_fixed_link_endpoint_cancel(link_stuffed_fixed_link_endpoint* ep, link_stuffed_fixed_link_request* r) {
+    link_stuffed_fixed_link_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void link_stuffed_fixed_link_endpoint_expect(link_stuffed_fixed_link_endpoint* ep, link_stuffed_fixed_link_request* r, link_stuffed_fixed_link_kind kind, uint32_t timeout, link_stuffed_fixed_link_match_fn match, void* match_ctx, link_stuffed_fixed_link_request_fn on_done, void* ctx) {
+    link_stuffed_fixed_link_request** at;
+    link_stuffed_fixed_link_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t link_stuffed_fixed_link_endpoint_pending(const link_stuffed_fixed_link_endpoint* ep) {
+    size_t k = 0;
+    const link_stuffed_fixed_link_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error link_stuffed_fixed_link_endpoint_send_ping(link_stuffed_fixed_link_endpoint* ep, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_fixed_link_encode_ping(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_fixed_link_endpoint_send(link_stuffed_fixed_link_endpoint* ep, const link_stuffed_fixed_link_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_fixed_link_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool link_stuffed_fixed_link_endpoint_pull_(void* ctx) {
+    link_stuffed_fixed_link_endpoint* ep = (link_stuffed_fixed_link_endpoint*)ctx;
+    link_stuffed_fixed_link_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        link_stuffed_fixed_link_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error link_stuffed_fixed_link_endpoint_wait_for(link_stuffed_fixed_link_endpoint* ep, link_stuffed_fixed_link_kind kind, uint32_t timeout, link_stuffed_fixed_link_match_fn match, void* match_ctx, link_stuffed_fixed_link_any_message* out) {
+    link_stuffed_fixed_link_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = link_stuffed_fixed_link_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    e = gmsg_endpoint_wait(&ep->io, timeout, link_stuffed_fixed_link_endpoint_pull_, ep);
+    s->mode_ = link_stuffed_fixed_link_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    return e;
+}
+
+gmsg_error link_stuffed_fixed_link_endpoint_transact(link_stuffed_fixed_link_endpoint* ep, const link_stuffed_fixed_link_any_message* request, link_stuffed_fixed_link_kind kind, uint32_t timeout, link_stuffed_fixed_link_match_fn match, void* match_ctx, link_stuffed_fixed_link_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    e = link_stuffed_fixed_link_endpoint_send(ep, request);
+    if (e != GMSG_OK) return e;
+    return link_stuffed_fixed_link_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out);
+}
+
+gmsg_error link_stuffed_fixed_link_endpoint_request(link_stuffed_fixed_link_endpoint* ep, link_stuffed_fixed_link_request* r, const link_stuffed_fixed_link_any_message* request, link_stuffed_fixed_link_kind kind, uint32_t timeout, link_stuffed_fixed_link_match_fn match, void* match_ctx, link_stuffed_fixed_link_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    link_stuffed_fixed_link_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    e = link_stuffed_fixed_link_endpoint_send(ep, request);
+    if (e != GMSG_OK) return e;
+    link_stuffed_fixed_link_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error link_stuffed_fixed_link_encode_ping(const link_stuffed_ping* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -3561,7 +5096,7 @@ gmsg_error link_stuffed_delimited_process(uint8_t* data, size_t size, const link
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { link_stuffed_delimited_mode_deliver_ = 0, link_stuffed_delimited_mode_capture_ = 1, link_stuffed_delimited_mode_message_ = 2, link_stuffed_delimited_mode_for_ = 3 };
+enum { link_stuffed_delimited_mode_deliver_ = 0, link_stuffed_delimited_mode_capture_ = 1, link_stuffed_delimited_mode_message_ = 2, link_stuffed_delimited_mode_for_ = 3, link_stuffed_delimited_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t link_stuffed_delimited_extra_(const link_stuffed_delimited_any_view* v) {
@@ -3570,6 +5105,41 @@ static size_t link_stuffed_delimited_extra_(const link_stuffed_delimited_any_vie
         case LINK_STUFFED_DELIMITED_PING: return link_stuffed_ping_view_extra_bytes(&v->as.ping);
         default: return 0;
     }
+}
+
+static gmsg_error link_stuffed_delimited_view_to_message_(const link_stuffed_delimited_any_view* v, link_stuffed_delimited_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case LINK_STUFFED_DELIMITED_DATA: return link_stuffed_data_view_to_struct(&v->as.data, &out->as.data);
+        case LINK_STUFFED_DELIMITED_PING: return link_stuffed_ping_view_to_struct(&v->as.ping, &out->as.ping);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void link_stuffed_delimited_complete_(link_stuffed_delimited_stream* s, link_stuffed_delimited_request* r, gmsg_error e) {
+    link_stuffed_delimited_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error link_stuffed_delimited_offer_(link_stuffed_delimited_stream* s, const link_stuffed_delimited_frame_* f, const link_stuffed_delimited_any_view* v, bool* taken) {
+    link_stuffed_delimited_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        link_stuffed_delimited_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = link_stuffed_delimited_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        link_stuffed_delimited_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error link_stuffed_delimited_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -3581,6 +5151,14 @@ static gmsg_error link_stuffed_delimited_stream_process_(gmsg_stream* gs, uint8_
         link_stuffed_delimited_any_view v;
         if ((e = link_stuffed_delimited_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
         gs->last_extra = link_stuffed_delimited_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = link_stuffed_delimited_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                link_stuffed_delimited_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         link_stuffed_delimited_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -3593,7 +5171,27 @@ static gmsg_error link_stuffed_delimited_stream_process_(gmsg_stream* gs, uint8_
         link_stuffed_delimited_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = LINK_STUFFED_DELIMITED_NONE;
     }
-    if (s->mode_ == link_stuffed_delimited_mode_message_) {
+    if (s->mode_ == link_stuffed_delimited_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = link_stuffed_delimited_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    link_stuffed_delimited_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                    return e;
+                }
+                if (taken) s->got_.message.kind = LINK_STUFFED_DELIMITED_NONE;
+                if (taken) return GMSG_OK;
+            }
+            link_stuffed_delimited_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = LINK_STUFFED_DELIMITED_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = link_stuffed_delimited_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            link_stuffed_delimited_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+            return e;
+        }
+    }
+    if (s->mode_ == link_stuffed_delimited_mode_message_ || s->mode_ == link_stuffed_delimited_mode_wait_) {
         switch (s->got_.message.kind) {
             case LINK_STUFFED_DELIMITED_DATA: s->msg_->kind = LINK_STUFFED_DELIMITED_DATA; e = link_stuffed_data_view_to_struct(&s->got_.message.as.data, &s->msg_->as.data); break;
             case LINK_STUFFED_DELIMITED_PING: s->msg_->kind = LINK_STUFFED_DELIMITED_PING; e = link_stuffed_ping_view_to_struct(&s->got_.message.as.ping, &s->msg_->as.ping); break;
@@ -3676,6 +5274,168 @@ static void link_stuffed_delimited_stream_error_(gmsg_stream* s, gmsg_error e, c
 gmsg_error link_stuffed_delimited_stream_init(link_stuffed_delimited_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, LINK_STUFFED_DELIMITED_MAX_FRAME, link_stuffed_delimited_scan_, link_stuffed_delimited_stream_process_, link_stuffed_delimited_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void link_stuffed_delimited_endpoint_fire_(gmsg_endpoint* io) {
+    link_stuffed_delimited_stream* s = &((link_stuffed_delimited_endpoint*)(void*)((char*)io - offsetof(link_stuffed_delimited_endpoint, io)))->stream;
+    while (s->completed_) {
+        link_stuffed_delimited_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void link_stuffed_delimited_endpoint_expire_(gmsg_endpoint* io) {
+    link_stuffed_delimited_stream* s = &((link_stuffed_delimited_endpoint*)(void*)((char*)io - offsetof(link_stuffed_delimited_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    link_stuffed_delimited_request** at = &s->pending_;
+    while (*at) {
+        link_stuffed_delimited_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            link_stuffed_delimited_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    link_stuffed_delimited_endpoint_fire_(io);
+}
+
+gmsg_error link_stuffed_delimited_endpoint_init(link_stuffed_delimited_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = link_stuffed_delimited_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = link_stuffed_delimited_endpoint_fire_;
+    ep->io.on_tick = link_stuffed_delimited_endpoint_expire_;
+    return e;
+}
+
+void link_stuffed_delimited_endpoint_cancel(link_stuffed_delimited_endpoint* ep, link_stuffed_delimited_request* r) {
+    link_stuffed_delimited_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void link_stuffed_delimited_endpoint_expect(link_stuffed_delimited_endpoint* ep, link_stuffed_delimited_request* r, link_stuffed_delimited_kind kind, uint32_t timeout, link_stuffed_delimited_match_fn match, void* match_ctx, link_stuffed_delimited_request_fn on_done, void* ctx) {
+    link_stuffed_delimited_request** at;
+    link_stuffed_delimited_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t link_stuffed_delimited_endpoint_pending(const link_stuffed_delimited_endpoint* ep) {
+    size_t k = 0;
+    const link_stuffed_delimited_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error link_stuffed_delimited_endpoint_send_data(link_stuffed_delimited_endpoint* ep, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_delimited_encode_data(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_delimited_endpoint_send_data_with_header(link_stuffed_delimited_endpoint* ep, const link_stuffed_delimited_header* h, const link_stuffed_data* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_delimited_encode_data_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_delimited_endpoint_send_ping(link_stuffed_delimited_endpoint* ep, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_delimited_encode_ping(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_delimited_endpoint_send_ping_with_header(link_stuffed_delimited_endpoint* ep, const link_stuffed_delimited_header* h, const link_stuffed_ping* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_delimited_encode_ping_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error link_stuffed_delimited_endpoint_send(link_stuffed_delimited_endpoint* ep, const link_stuffed_delimited_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = link_stuffed_delimited_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool link_stuffed_delimited_endpoint_pull_(void* ctx) {
+    link_stuffed_delimited_endpoint* ep = (link_stuffed_delimited_endpoint*)ctx;
+    link_stuffed_delimited_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        link_stuffed_delimited_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error link_stuffed_delimited_endpoint_wait_for(link_stuffed_delimited_endpoint* ep, link_stuffed_delimited_kind kind, uint32_t timeout, link_stuffed_delimited_match_fn match, void* match_ctx, link_stuffed_delimited_any_message* out, link_stuffed_delimited_header* header) {
+    link_stuffed_delimited_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = link_stuffed_delimited_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, link_stuffed_delimited_endpoint_pull_, ep);
+    s->mode_ = link_stuffed_delimited_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error link_stuffed_delimited_endpoint_transact(link_stuffed_delimited_endpoint* ep, const link_stuffed_delimited_header* h, const link_stuffed_delimited_any_message* request, link_stuffed_delimited_kind kind, uint32_t timeout, link_stuffed_delimited_match_fn match, void* match_ctx, link_stuffed_delimited_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_DELIMITED_DATA: e = link_stuffed_delimited_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_DELIMITED_PING: e = link_stuffed_delimited_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_delimited_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return link_stuffed_delimited_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error link_stuffed_delimited_endpoint_request(link_stuffed_delimited_endpoint* ep, link_stuffed_delimited_request* r, const link_stuffed_delimited_header* h, const link_stuffed_delimited_any_message* request, link_stuffed_delimited_kind kind, uint32_t timeout, link_stuffed_delimited_match_fn match, void* match_ctx, link_stuffed_delimited_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    link_stuffed_delimited_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case LINK_STUFFED_DELIMITED_DATA: e = link_stuffed_delimited_endpoint_send_data_with_header(ep, h, &request->as.data); break;
+            case LINK_STUFFED_DELIMITED_PING: e = link_stuffed_delimited_endpoint_send_ping_with_header(ep, h, &request->as.ping); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = link_stuffed_delimited_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    link_stuffed_delimited_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error link_stuffed_delimited_encode_data(const link_stuffed_data* m, uint8_t* out, size_t capacity, size_t* written) {

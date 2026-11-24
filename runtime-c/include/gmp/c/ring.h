@@ -192,6 +192,12 @@ GMSG_INLINE size_t gmsg_ring_push_n(gmsg_ring* r, const uint8_t* data, size_t n)
     return k;
 }
 
+/* Free room for gmsg_ring_push_n (producer side): bytes that can be appended now without an overrun. */
+GMSG_INLINE size_t gmsg_ring_room(const gmsg_ring* r) {
+    if (gmsg_ring_acquire_(&r->overrun)) return 0;
+    return r->capacity - (size_t)(gmsg_ring_index)(gmsg_ring_relaxed_(&r->w) - gmsg_ring_acquire_(&r->r));
+}
+
 /* ---- consumer side ------------------------------------------------------------------------------------------- */
 
 /* The oldest buffered bytes that are contiguous in storage (all of them, or the part up to the end of the storage

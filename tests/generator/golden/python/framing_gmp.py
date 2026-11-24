@@ -511,6 +511,16 @@ class Adjusted:
         return gmsg.StreamParser(Adjusted, capacity)
 
     @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(Adjusted, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(Adjusted, reader, writer, **options)
+
+    @staticmethod
     def encode(m, header=None) -> bytes:
         """Encode a message of this protocol (optionally with header values: a dict or a header instance; type id and length are filled in) to a frame."""
         if isinstance(m, Reading): return Adjusted._encode0(m, header)
@@ -761,6 +771,16 @@ class WholeFrame:
     def stream(capacity: int | None = None) -> gmsg.StreamParser:
         """A stream parser for this protocol (default capacity: max_frame)."""
         return gmsg.StreamParser(WholeFrame, capacity)
+
+    @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(WholeFrame, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(WholeFrame, reader, writer, **options)
 
     @staticmethod
     def encode(m, header=None) -> bytes:
@@ -1015,6 +1035,16 @@ class EscapedWithEnd:
         return gmsg.StreamParser(EscapedWithEnd, capacity)
 
     @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(EscapedWithEnd, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(EscapedWithEnd, reader, writer, **options)
+
+    @staticmethod
     def encode(m, header=None) -> bytes:
         """Encode a message of this protocol (optionally with header values: a dict or a header instance; type id and length are filled in) to a frame."""
         if isinstance(m, Reading): return EscapedWithEnd._encode0(m, header)
@@ -1249,6 +1279,16 @@ class FixedWithEnd:
         return gmsg.StreamParser(FixedWithEnd, capacity)
 
     @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(FixedWithEnd, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(FixedWithEnd, reader, writer, **options)
+
+    @staticmethod
     def encode(m, header=None) -> bytes:
         """Encode a message of this protocol (optionally with header values: a dict or a header instance; type id and length are filled in) to a frame."""
         if isinstance(m, Reading): return FixedWithEnd._encode0(m, header)
@@ -1478,6 +1518,16 @@ class Loose:
     def stream(capacity: int | None = None) -> gmsg.StreamParser:
         """A stream parser for this protocol (default capacity: max_frame)."""
         return gmsg.StreamParser(Loose, capacity)
+
+    @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(Loose, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(Loose, reader, writer, **options)
 
     @staticmethod
     def encode(m, header=None) -> bytes:
@@ -1731,6 +1781,16 @@ class Exact:
     def stream(capacity: int | None = None) -> gmsg.StreamParser:
         """A stream parser for this protocol (default capacity: max_frame)."""
         return gmsg.StreamParser(Exact, capacity)
+
+    @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(Exact, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(Exact, reader, writer, **options)
 
     @staticmethod
     def encode(m, header=None) -> bytes:

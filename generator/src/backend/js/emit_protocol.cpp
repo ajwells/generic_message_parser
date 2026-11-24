@@ -314,6 +314,10 @@ private:
         if (stream_) {
             w_.line("/** A stream parser for this protocol (options: { capacity }, default maxFrame). */");
             w_.line("static stream(options) { return new gmsg.StreamParser(" + n_ + ", options); }");
+            if (all_struct_) {
+                w_.line("/** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */");
+                w_.line("static endpoint(options) { return new gmsg.Endpoint(" + n_ + ", options); }");
+            }
         }
     }
 

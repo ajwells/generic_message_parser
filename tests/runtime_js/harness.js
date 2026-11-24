@@ -23,8 +23,11 @@ module.exports = {
   skip(reason) { current.skipped = reason; },
   async run() {
     let failed = 0, skipped = 0, checks = 0;
+    // a test whose Promise never settles lets Node exit early: report that as a failure, not a pass
+    const unfinished = () => { if (current) { console.log(`FAIL ${current.name}: never finished (a Promise that never settles)`); process.exitCode = 1; } };
+    process.once('exit', unfinished);
     for (const t of tests) {
-      current = { checks: 0, failures: [], skipped: null };
+      current = { name: t.name, checks: 0, failures: [], skipped: null };
       try {
         await t.fn();
       } catch (e) {
@@ -42,6 +45,8 @@ module.exports = {
         console.log(`PASS ${t.name} (${current.checks} checks)`);
       }
     }
+    current = null;
+    process.removeListener('exit', unfinished);
     console.log(`${tests.length - failed - skipped} passed, ${failed} failed, ${skipped} skipped (${checks} checks)`);
     process.exitCode = failed ? 1 : 0;
   },

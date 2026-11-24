@@ -18,6 +18,10 @@
  *                                  unsigned time the application passes; wraparound is fine)
  *   resync / flush / tick only drop data; frames that become complete are delivered by the next
  *   gmsg_stream_next / gmsg_stream_feed / poll call.
+ *   gmsg_stream_push_from(s, read, ctx, max)
+ *                                  let read(ctx, out, n) write input straight into the buffer (a byte source)
+ *   gmsg_stream_push_gap(s)        input was lost after the bytes pushed so far (e.g. a UART overrun flag): the
+ *                                  frame in progress is dropped and reported as GMSG_ERR_OVERRUN
  *   gmsg_stream_push_ring(s, ring, max) / gmsg_stream_feed_ring(s, ring, max)
  *                                  move bytes from a gmsg_ring (gmp/c/ring.h) filled by an interrupt, at most
  *                                  `max` (SIZE_MAX: all). Bytes the full ring dropped are an overrun: the frames
@@ -92,6 +96,19 @@ GMSG_API uint32_t gmsg_stream_generation(const gmsg_stream* s);
 
 /* Copy as much of data[0..n) as fits. Returns bytes accepted. */
 GMSG_API size_t gmsg_stream_push(gmsg_stream* s, const uint8_t* data, size_t n);
+
+/* Free room in the buffer (bytes gmsg_stream_push can take now). */
+GMSG_API size_t gmsg_stream_space(const gmsg_stream* s);
+
+/* Let read(ctx, out, n) write up to n input bytes straight into the buffer (n: all the room there is, at most
+ * `max`); it returns the number written. Returns the bytes added (0 when the buffer is full). */
+GMSG_API size_t gmsg_stream_push_from(gmsg_stream* s, size_t (*read)(void* ctx, uint8_t* out, size_t n), void* ctx,
+                                      size_t max);
+
+/* Mark that input was lost after the bytes pushed so far. Frames complete before that point are delivered; the
+ * frame in progress is dropped and reported as GMSG_ERR_OVERRUN. One gap at a time: returns false (and does
+ * nothing) while an earlier gap has not been reported yet. */
+GMSG_API bool gmsg_stream_push_gap(gmsg_stream* s);
 
 /* Result of a generated <protocol>_stream_poll_event(). */
 typedef enum gmsg_poll { GMSG_POLL_NEED_MORE = 0, GMSG_POLL_MESSAGE = 1, GMSG_POLL_ERROR = 2 } gmsg_poll;
@@ -214,6 +231,31 @@ GMSG_API size_t gmsg_stream_push(gmsg_stream* s, const uint8_t* data, size_t n) 
     s->tail += k;
     s->received += (uint32_t)k;
     return k;
+}
+
+GMSG_API size_t gmsg_stream_space(const gmsg_stream* s) { return s->capacity - (s->tail - s->head); }
+
+GMSG_API size_t gmsg_stream_push_from(gmsg_stream* s, size_t (*read)(void* ctx, uint8_t* out, size_t n), void* ctx,
+                                      size_t max) {
+    size_t room, k;
+    gmsg_stream_release_(s);
+    gmsg_stream_compact_(s);
+    room = s->capacity - s->tail;
+    if (room > max) room = max;
+    if (room == 0) return 0;
+    k = read(ctx, s->buf + s->tail, room);
+    if (k > room) k = room;
+    s->tail += k;
+    s->received += (uint32_t)k;
+    return k;
+}
+
+GMSG_API bool gmsg_stream_push_gap(gmsg_stream* s) {
+    gmsg_stream_release_(s);
+    if (s->gap_pending) return s->gap == s->tail; /* the same position: nothing to add */
+    s->gap_pending = true;
+    s->gap = s->tail;
+    return true;
 }
 
 GMSG_PRIV_ gmsg_step gmsg_step_make_(gmsg_step_kind k, gmsg_error e, const uint8_t* data, size_t size) {

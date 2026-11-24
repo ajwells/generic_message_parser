@@ -303,6 +303,20 @@ class StreamParser:
             if not len(b):
                 return
 
+    @property
+    def space(self) -> int:
+        """Free room in the buffer (bytes push() can take now)."""
+        return self.capacity - (self._tail - self._head)
+
+    def push_gap(self) -> bool:
+        """Mark that input was lost after the bytes pushed so far (e.g. a UART overrun): frames complete before it are
+        delivered, the frame in progress is dropped as Err.OVERRUN. One gap at a time: False while one is pending."""
+        if self._gap_pending:
+            return self._gap == self._tail
+        self._gap_pending = True
+        self._gap = self._tail
+        return True
+
     def reset(self) -> None:
         self._head = self._tail = 0
         self.stats = StreamStats()

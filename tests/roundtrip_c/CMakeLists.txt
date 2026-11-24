@@ -28,6 +28,10 @@ target_include_directories(gmp_test_schemas_c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
 
 gmp_add_test(gmp_c_generated_tests test_c_generated.cpp test_c_protocols.cpp test_c_text.cpp)
 target_link_libraries(gmp_c_generated_tests PRIVATE gmp_test_schemas_c gmp_test_schemas)
+# test_c_protocols.cpp instantiates every check for ~25 protocols: more sections than a default COFF object holds
+if (MINGW)
+    set_source_files_properties(test_c_protocols.cpp PROPERTIES COMPILE_OPTIONS "-Wa,-mbig-obj")
+endif ()
 
 get_target_property(c_sources gmp_test_schemas_c GMP_GENERATED_SOURCES)
 get_target_property(c_include gmp_test_schemas_c INCLUDE_DIRECTORIES)

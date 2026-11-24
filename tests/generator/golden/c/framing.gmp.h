@@ -213,6 +213,29 @@ typedef struct test_framing_adjusted_event {
     size_t size;
 } test_framing_adjusted_event;
 
+/* Message filter of test_framing_adjusted_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*test_framing_adjusted_match_fn)(void* ctx, const test_framing_adjusted_header_view* h, const test_framing_adjusted_any_view* v);
+
+/* A request that does not block (test_framing_adjusted_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct test_framing_adjusted_request test_framing_adjusted_request;
+typedef void (*test_framing_adjusted_request_fn)(void* ctx, test_framing_adjusted_request* r);
+struct test_framing_adjusted_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    test_framing_adjusted_any_message reply;
+    /* internal */
+    test_framing_adjusted_request* next_;
+    test_framing_adjusted_kind kind_;
+    test_framing_adjusted_match_fn match_;
+    void* match_ctx_;
+    test_framing_adjusted_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after test_framing_adjusted_stream_init(). */
 typedef struct test_framing_adjusted_stream {
     gmsg_stream base;  /* first member */
@@ -222,7 +245,20 @@ typedef struct test_framing_adjusted_stream {
     test_framing_adjusted_kind want_;
     test_framing_adjusted_received got_;
     test_framing_adjusted_any_message* msg_;
+    test_framing_adjusted_match_fn match_;
+    void* match_ctx_;
+    test_framing_adjusted_header* hdr_;
+    test_framing_adjusted_request* pending_;    /* requests waiting, oldest first */
+    test_framing_adjusted_request* completed_;  /* finished, callbacks not run yet */
 } test_framing_adjusted_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after test_framing_adjusted_endpoint_init(). */
+typedef struct test_framing_adjusted_endpoint {
+    test_framing_adjusted_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[TEST_FRAMING_ADJUSTED_MAX_FRAME];  /* transmit buffer */
+} test_framing_adjusted_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). */
 gmsg_error test_framing_adjusted_parse(const uint8_t* data, size_t size, test_framing_adjusted_any_view* out);
@@ -273,6 +309,41 @@ bool test_framing_adjusted_stream_poll_message(test_framing_adjusted_stream* s, 
 gmsg_poll test_framing_adjusted_stream_poll_event(test_framing_adjusted_stream* s, test_framing_adjusted_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool test_framing_adjusted_stream_poll_for(test_framing_adjusted_stream* s, test_framing_adjusted_kind kind, test_framing_adjusted_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < TEST_FRAMING_ADJUSTED_MAX_FRAME. */
+gmsg_error test_framing_adjusted_endpoint_init(test_framing_adjusted_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void test_framing_adjusted_endpoint_set_clock(test_framing_adjusted_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void test_framing_adjusted_endpoint_set_idle(test_framing_adjusted_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void test_framing_adjusted_endpoint_set_send_policy(test_framing_adjusted_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void test_framing_adjusted_endpoint_set_idle_timeout(test_framing_adjusted_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t test_framing_adjusted_endpoint_service(test_framing_adjusted_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error test_framing_adjusted_endpoint_send_reading(test_framing_adjusted_endpoint* ep, const test_framing_reading* m);
+gmsg_error test_framing_adjusted_endpoint_send_reading_with_header(test_framing_adjusted_endpoint* ep, const test_framing_adjusted_header* h, const test_framing_reading* m);
+gmsg_error test_framing_adjusted_endpoint_send_note(test_framing_adjusted_endpoint* ep, const test_framing_note* m);
+gmsg_error test_framing_adjusted_endpoint_send_note_with_header(test_framing_adjusted_endpoint* ep, const test_framing_adjusted_header* h, const test_framing_note* m);
+gmsg_error test_framing_adjusted_endpoint_send(test_framing_adjusted_endpoint* ep, const test_framing_adjusted_any_message* m);
+static inline gmsg_error test_framing_adjusted_endpoint_send_raw(test_framing_adjusted_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error test_framing_adjusted_endpoint_wait_for(test_framing_adjusted_endpoint* ep, test_framing_adjusted_kind kind, uint32_t timeout, test_framing_adjusted_match_fn match, void* match_ctx, test_framing_adjusted_any_message* out, test_framing_adjusted_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error test_framing_adjusted_endpoint_transact(test_framing_adjusted_endpoint* ep, const test_framing_adjusted_header* h, const test_framing_adjusted_any_message* request, test_framing_adjusted_kind kind, uint32_t timeout, test_framing_adjusted_match_fn match, void* match_ctx, test_framing_adjusted_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error test_framing_adjusted_endpoint_request(test_framing_adjusted_endpoint* ep, test_framing_adjusted_request* r, const test_framing_adjusted_header* h, const test_framing_adjusted_any_message* request, test_framing_adjusted_kind kind, uint32_t timeout, test_framing_adjusted_match_fn match, void* match_ctx, test_framing_adjusted_request_fn on_done, void* ctx);
+void test_framing_adjusted_endpoint_expect(test_framing_adjusted_endpoint* ep, test_framing_adjusted_request* r, test_framing_adjusted_kind kind, uint32_t timeout, test_framing_adjusted_match_fn match, void* match_ctx, test_framing_adjusted_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void test_framing_adjusted_endpoint_cancel(test_framing_adjusted_endpoint* ep, test_framing_adjusted_request* r);
+/* Requests still waiting. */
+size_t test_framing_adjusted_endpoint_pending(const test_framing_adjusted_endpoint* ep);
 
 /* ---- WholeFrameHeader -------------------------------------------------------------------------------- */
 
@@ -378,6 +449,29 @@ typedef struct test_framing_whole_frame_event {
     size_t size;
 } test_framing_whole_frame_event;
 
+/* Message filter of test_framing_whole_frame_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*test_framing_whole_frame_match_fn)(void* ctx, const test_framing_whole_frame_header_view* h, const test_framing_whole_frame_any_view* v);
+
+/* A request that does not block (test_framing_whole_frame_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct test_framing_whole_frame_request test_framing_whole_frame_request;
+typedef void (*test_framing_whole_frame_request_fn)(void* ctx, test_framing_whole_frame_request* r);
+struct test_framing_whole_frame_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    test_framing_whole_frame_any_message reply;
+    /* internal */
+    test_framing_whole_frame_request* next_;
+    test_framing_whole_frame_kind kind_;
+    test_framing_whole_frame_match_fn match_;
+    void* match_ctx_;
+    test_framing_whole_frame_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after test_framing_whole_frame_stream_init(). */
 typedef struct test_framing_whole_frame_stream {
     gmsg_stream base;  /* first member */
@@ -387,7 +481,20 @@ typedef struct test_framing_whole_frame_stream {
     test_framing_whole_frame_kind want_;
     test_framing_whole_frame_received got_;
     test_framing_whole_frame_any_message* msg_;
+    test_framing_whole_frame_match_fn match_;
+    void* match_ctx_;
+    test_framing_whole_frame_header* hdr_;
+    test_framing_whole_frame_request* pending_;    /* requests waiting, oldest first */
+    test_framing_whole_frame_request* completed_;  /* finished, callbacks not run yet */
 } test_framing_whole_frame_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after test_framing_whole_frame_endpoint_init(). */
+typedef struct test_framing_whole_frame_endpoint {
+    test_framing_whole_frame_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[TEST_FRAMING_WHOLE_FRAME_MAX_FRAME];  /* transmit buffer */
+} test_framing_whole_frame_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). */
 gmsg_error test_framing_whole_frame_parse(const uint8_t* data, size_t size, test_framing_whole_frame_any_view* out);
@@ -438,6 +545,41 @@ bool test_framing_whole_frame_stream_poll_message(test_framing_whole_frame_strea
 gmsg_poll test_framing_whole_frame_stream_poll_event(test_framing_whole_frame_stream* s, test_framing_whole_frame_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool test_framing_whole_frame_stream_poll_for(test_framing_whole_frame_stream* s, test_framing_whole_frame_kind kind, test_framing_whole_frame_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < TEST_FRAMING_WHOLE_FRAME_MAX_FRAME. */
+gmsg_error test_framing_whole_frame_endpoint_init(test_framing_whole_frame_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void test_framing_whole_frame_endpoint_set_clock(test_framing_whole_frame_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void test_framing_whole_frame_endpoint_set_idle(test_framing_whole_frame_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void test_framing_whole_frame_endpoint_set_send_policy(test_framing_whole_frame_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void test_framing_whole_frame_endpoint_set_idle_timeout(test_framing_whole_frame_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t test_framing_whole_frame_endpoint_service(test_framing_whole_frame_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error test_framing_whole_frame_endpoint_send_reading(test_framing_whole_frame_endpoint* ep, const test_framing_reading* m);
+gmsg_error test_framing_whole_frame_endpoint_send_reading_with_header(test_framing_whole_frame_endpoint* ep, const test_framing_whole_frame_header* h, const test_framing_reading* m);
+gmsg_error test_framing_whole_frame_endpoint_send_note(test_framing_whole_frame_endpoint* ep, const test_framing_note* m);
+gmsg_error test_framing_whole_frame_endpoint_send_note_with_header(test_framing_whole_frame_endpoint* ep, const test_framing_whole_frame_header* h, const test_framing_note* m);
+gmsg_error test_framing_whole_frame_endpoint_send(test_framing_whole_frame_endpoint* ep, const test_framing_whole_frame_any_message* m);
+static inline gmsg_error test_framing_whole_frame_endpoint_send_raw(test_framing_whole_frame_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error test_framing_whole_frame_endpoint_wait_for(test_framing_whole_frame_endpoint* ep, test_framing_whole_frame_kind kind, uint32_t timeout, test_framing_whole_frame_match_fn match, void* match_ctx, test_framing_whole_frame_any_message* out, test_framing_whole_frame_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error test_framing_whole_frame_endpoint_transact(test_framing_whole_frame_endpoint* ep, const test_framing_whole_frame_header* h, const test_framing_whole_frame_any_message* request, test_framing_whole_frame_kind kind, uint32_t timeout, test_framing_whole_frame_match_fn match, void* match_ctx, test_framing_whole_frame_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error test_framing_whole_frame_endpoint_request(test_framing_whole_frame_endpoint* ep, test_framing_whole_frame_request* r, const test_framing_whole_frame_header* h, const test_framing_whole_frame_any_message* request, test_framing_whole_frame_kind kind, uint32_t timeout, test_framing_whole_frame_match_fn match, void* match_ctx, test_framing_whole_frame_request_fn on_done, void* ctx);
+void test_framing_whole_frame_endpoint_expect(test_framing_whole_frame_endpoint* ep, test_framing_whole_frame_request* r, test_framing_whole_frame_kind kind, uint32_t timeout, test_framing_whole_frame_match_fn match, void* match_ctx, test_framing_whole_frame_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void test_framing_whole_frame_endpoint_cancel(test_framing_whole_frame_endpoint* ep, test_framing_whole_frame_request* r);
+/* Requests still waiting. */
+size_t test_framing_whole_frame_endpoint_pending(const test_framing_whole_frame_endpoint* ep);
 
 /* ---- EscapedWithEndHeader ---------------------------------------------------------------------------- */
 
@@ -543,6 +685,29 @@ typedef struct test_framing_escaped_with_end_event {
     size_t size;
 } test_framing_escaped_with_end_event;
 
+/* Message filter of test_framing_escaped_with_end_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*test_framing_escaped_with_end_match_fn)(void* ctx, const test_framing_escaped_with_end_header_view* h, const test_framing_escaped_with_end_any_view* v);
+
+/* A request that does not block (test_framing_escaped_with_end_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct test_framing_escaped_with_end_request test_framing_escaped_with_end_request;
+typedef void (*test_framing_escaped_with_end_request_fn)(void* ctx, test_framing_escaped_with_end_request* r);
+struct test_framing_escaped_with_end_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    test_framing_escaped_with_end_any_message reply;
+    /* internal */
+    test_framing_escaped_with_end_request* next_;
+    test_framing_escaped_with_end_kind kind_;
+    test_framing_escaped_with_end_match_fn match_;
+    void* match_ctx_;
+    test_framing_escaped_with_end_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after test_framing_escaped_with_end_stream_init(). */
 typedef struct test_framing_escaped_with_end_stream {
     gmsg_stream base;  /* first member */
@@ -552,7 +717,20 @@ typedef struct test_framing_escaped_with_end_stream {
     test_framing_escaped_with_end_kind want_;
     test_framing_escaped_with_end_received got_;
     test_framing_escaped_with_end_any_message* msg_;
+    test_framing_escaped_with_end_match_fn match_;
+    void* match_ctx_;
+    test_framing_escaped_with_end_header* hdr_;
+    test_framing_escaped_with_end_request* pending_;    /* requests waiting, oldest first */
+    test_framing_escaped_with_end_request* completed_;  /* finished, callbacks not run yet */
 } test_framing_escaped_with_end_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after test_framing_escaped_with_end_endpoint_init(). */
+typedef struct test_framing_escaped_with_end_endpoint {
+    test_framing_escaped_with_end_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[TEST_FRAMING_ESCAPED_WITH_END_MAX_FRAME];  /* transmit buffer */
+} test_framing_escaped_with_end_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). The frame is unescaped in place. */
 gmsg_error test_framing_escaped_with_end_parse(uint8_t* data, size_t size, test_framing_escaped_with_end_any_view* out);
@@ -603,6 +781,41 @@ bool test_framing_escaped_with_end_stream_poll_message(test_framing_escaped_with
 gmsg_poll test_framing_escaped_with_end_stream_poll_event(test_framing_escaped_with_end_stream* s, test_framing_escaped_with_end_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool test_framing_escaped_with_end_stream_poll_for(test_framing_escaped_with_end_stream* s, test_framing_escaped_with_end_kind kind, test_framing_escaped_with_end_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < TEST_FRAMING_ESCAPED_WITH_END_MAX_FRAME. */
+gmsg_error test_framing_escaped_with_end_endpoint_init(test_framing_escaped_with_end_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void test_framing_escaped_with_end_endpoint_set_clock(test_framing_escaped_with_end_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void test_framing_escaped_with_end_endpoint_set_idle(test_framing_escaped_with_end_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void test_framing_escaped_with_end_endpoint_set_send_policy(test_framing_escaped_with_end_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void test_framing_escaped_with_end_endpoint_set_idle_timeout(test_framing_escaped_with_end_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t test_framing_escaped_with_end_endpoint_service(test_framing_escaped_with_end_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error test_framing_escaped_with_end_endpoint_send_reading(test_framing_escaped_with_end_endpoint* ep, const test_framing_reading* m);
+gmsg_error test_framing_escaped_with_end_endpoint_send_reading_with_header(test_framing_escaped_with_end_endpoint* ep, const test_framing_escaped_with_end_header* h, const test_framing_reading* m);
+gmsg_error test_framing_escaped_with_end_endpoint_send_note(test_framing_escaped_with_end_endpoint* ep, const test_framing_note* m);
+gmsg_error test_framing_escaped_with_end_endpoint_send_note_with_header(test_framing_escaped_with_end_endpoint* ep, const test_framing_escaped_with_end_header* h, const test_framing_note* m);
+gmsg_error test_framing_escaped_with_end_endpoint_send(test_framing_escaped_with_end_endpoint* ep, const test_framing_escaped_with_end_any_message* m);
+static inline gmsg_error test_framing_escaped_with_end_endpoint_send_raw(test_framing_escaped_with_end_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error test_framing_escaped_with_end_endpoint_wait_for(test_framing_escaped_with_end_endpoint* ep, test_framing_escaped_with_end_kind kind, uint32_t timeout, test_framing_escaped_with_end_match_fn match, void* match_ctx, test_framing_escaped_with_end_any_message* out, test_framing_escaped_with_end_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error test_framing_escaped_with_end_endpoint_transact(test_framing_escaped_with_end_endpoint* ep, const test_framing_escaped_with_end_header* h, const test_framing_escaped_with_end_any_message* request, test_framing_escaped_with_end_kind kind, uint32_t timeout, test_framing_escaped_with_end_match_fn match, void* match_ctx, test_framing_escaped_with_end_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error test_framing_escaped_with_end_endpoint_request(test_framing_escaped_with_end_endpoint* ep, test_framing_escaped_with_end_request* r, const test_framing_escaped_with_end_header* h, const test_framing_escaped_with_end_any_message* request, test_framing_escaped_with_end_kind kind, uint32_t timeout, test_framing_escaped_with_end_match_fn match, void* match_ctx, test_framing_escaped_with_end_request_fn on_done, void* ctx);
+void test_framing_escaped_with_end_endpoint_expect(test_framing_escaped_with_end_endpoint* ep, test_framing_escaped_with_end_request* r, test_framing_escaped_with_end_kind kind, uint32_t timeout, test_framing_escaped_with_end_match_fn match, void* match_ctx, test_framing_escaped_with_end_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void test_framing_escaped_with_end_endpoint_cancel(test_framing_escaped_with_end_endpoint* ep, test_framing_escaped_with_end_request* r);
+/* Requests still waiting. */
+size_t test_framing_escaped_with_end_endpoint_pending(const test_framing_escaped_with_end_endpoint* ep);
 
 /* ---- FixedWithEndHeader ------------------------------------------------------------------------------ */
 
@@ -700,6 +913,29 @@ typedef struct test_framing_fixed_with_end_event {
     size_t size;
 } test_framing_fixed_with_end_event;
 
+/* Message filter of test_framing_fixed_with_end_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*test_framing_fixed_with_end_match_fn)(void* ctx, const test_framing_fixed_with_end_header_view* h, const test_framing_fixed_with_end_any_view* v);
+
+/* A request that does not block (test_framing_fixed_with_end_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct test_framing_fixed_with_end_request test_framing_fixed_with_end_request;
+typedef void (*test_framing_fixed_with_end_request_fn)(void* ctx, test_framing_fixed_with_end_request* r);
+struct test_framing_fixed_with_end_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    test_framing_fixed_with_end_any_message reply;
+    /* internal */
+    test_framing_fixed_with_end_request* next_;
+    test_framing_fixed_with_end_kind kind_;
+    test_framing_fixed_with_end_match_fn match_;
+    void* match_ctx_;
+    test_framing_fixed_with_end_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after test_framing_fixed_with_end_stream_init(). */
 typedef struct test_framing_fixed_with_end_stream {
     gmsg_stream base;  /* first member */
@@ -709,7 +945,20 @@ typedef struct test_framing_fixed_with_end_stream {
     test_framing_fixed_with_end_kind want_;
     test_framing_fixed_with_end_received got_;
     test_framing_fixed_with_end_any_message* msg_;
+    test_framing_fixed_with_end_match_fn match_;
+    void* match_ctx_;
+    test_framing_fixed_with_end_header* hdr_;
+    test_framing_fixed_with_end_request* pending_;    /* requests waiting, oldest first */
+    test_framing_fixed_with_end_request* completed_;  /* finished, callbacks not run yet */
 } test_framing_fixed_with_end_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after test_framing_fixed_with_end_endpoint_init(). */
+typedef struct test_framing_fixed_with_end_endpoint {
+    test_framing_fixed_with_end_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[TEST_FRAMING_FIXED_WITH_END_MAX_FRAME];  /* transmit buffer */
+} test_framing_fixed_with_end_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). The frame is unescaped in place. */
 gmsg_error test_framing_fixed_with_end_parse(uint8_t* data, size_t size, test_framing_fixed_with_end_any_view* out);
@@ -758,6 +1007,39 @@ bool test_framing_fixed_with_end_stream_poll_message(test_framing_fixed_with_end
 gmsg_poll test_framing_fixed_with_end_stream_poll_event(test_framing_fixed_with_end_stream* s, test_framing_fixed_with_end_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool test_framing_fixed_with_end_stream_poll_for(test_framing_fixed_with_end_stream* s, test_framing_fixed_with_end_kind kind, test_framing_fixed_with_end_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < TEST_FRAMING_FIXED_WITH_END_MAX_FRAME. */
+gmsg_error test_framing_fixed_with_end_endpoint_init(test_framing_fixed_with_end_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void test_framing_fixed_with_end_endpoint_set_clock(test_framing_fixed_with_end_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void test_framing_fixed_with_end_endpoint_set_idle(test_framing_fixed_with_end_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void test_framing_fixed_with_end_endpoint_set_send_policy(test_framing_fixed_with_end_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void test_framing_fixed_with_end_endpoint_set_idle_timeout(test_framing_fixed_with_end_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t test_framing_fixed_with_end_endpoint_service(test_framing_fixed_with_end_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error test_framing_fixed_with_end_endpoint_send_reading(test_framing_fixed_with_end_endpoint* ep, const test_framing_reading* m);
+gmsg_error test_framing_fixed_with_end_endpoint_send_reading_with_header(test_framing_fixed_with_end_endpoint* ep, const test_framing_fixed_with_end_header* h, const test_framing_reading* m);
+gmsg_error test_framing_fixed_with_end_endpoint_send(test_framing_fixed_with_end_endpoint* ep, const test_framing_fixed_with_end_any_message* m);
+static inline gmsg_error test_framing_fixed_with_end_endpoint_send_raw(test_framing_fixed_with_end_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error test_framing_fixed_with_end_endpoint_wait_for(test_framing_fixed_with_end_endpoint* ep, test_framing_fixed_with_end_kind kind, uint32_t timeout, test_framing_fixed_with_end_match_fn match, void* match_ctx, test_framing_fixed_with_end_any_message* out, test_framing_fixed_with_end_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error test_framing_fixed_with_end_endpoint_transact(test_framing_fixed_with_end_endpoint* ep, const test_framing_fixed_with_end_header* h, const test_framing_fixed_with_end_any_message* request, test_framing_fixed_with_end_kind kind, uint32_t timeout, test_framing_fixed_with_end_match_fn match, void* match_ctx, test_framing_fixed_with_end_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error test_framing_fixed_with_end_endpoint_request(test_framing_fixed_with_end_endpoint* ep, test_framing_fixed_with_end_request* r, const test_framing_fixed_with_end_header* h, const test_framing_fixed_with_end_any_message* request, test_framing_fixed_with_end_kind kind, uint32_t timeout, test_framing_fixed_with_end_match_fn match, void* match_ctx, test_framing_fixed_with_end_request_fn on_done, void* ctx);
+void test_framing_fixed_with_end_endpoint_expect(test_framing_fixed_with_end_endpoint* ep, test_framing_fixed_with_end_request* r, test_framing_fixed_with_end_kind kind, uint32_t timeout, test_framing_fixed_with_end_match_fn match, void* match_ctx, test_framing_fixed_with_end_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void test_framing_fixed_with_end_endpoint_cancel(test_framing_fixed_with_end_endpoint* ep, test_framing_fixed_with_end_request* r);
+/* Requests still waiting. */
+size_t test_framing_fixed_with_end_endpoint_pending(const test_framing_fixed_with_end_endpoint* ep);
 
 /* ---- LooseHeader ------------------------------------------------------------------------------------- */
 
@@ -863,6 +1145,29 @@ typedef struct test_framing_loose_event {
     size_t size;
 } test_framing_loose_event;
 
+/* Message filter of test_framing_loose_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*test_framing_loose_match_fn)(void* ctx, const test_framing_loose_header_view* h, const test_framing_loose_any_view* v);
+
+/* A request that does not block (test_framing_loose_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct test_framing_loose_request test_framing_loose_request;
+typedef void (*test_framing_loose_request_fn)(void* ctx, test_framing_loose_request* r);
+struct test_framing_loose_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    test_framing_loose_any_message reply;
+    /* internal */
+    test_framing_loose_request* next_;
+    test_framing_loose_kind kind_;
+    test_framing_loose_match_fn match_;
+    void* match_ctx_;
+    test_framing_loose_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after test_framing_loose_stream_init(). */
 typedef struct test_framing_loose_stream {
     gmsg_stream base;  /* first member */
@@ -872,7 +1177,20 @@ typedef struct test_framing_loose_stream {
     test_framing_loose_kind want_;
     test_framing_loose_received got_;
     test_framing_loose_any_message* msg_;
+    test_framing_loose_match_fn match_;
+    void* match_ctx_;
+    test_framing_loose_header* hdr_;
+    test_framing_loose_request* pending_;    /* requests waiting, oldest first */
+    test_framing_loose_request* completed_;  /* finished, callbacks not run yet */
 } test_framing_loose_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after test_framing_loose_endpoint_init(). */
+typedef struct test_framing_loose_endpoint {
+    test_framing_loose_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[TEST_FRAMING_LOOSE_MAX_FRAME];  /* transmit buffer */
+} test_framing_loose_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). */
 gmsg_error test_framing_loose_parse(const uint8_t* data, size_t size, test_framing_loose_any_view* out);
@@ -923,6 +1241,41 @@ bool test_framing_loose_stream_poll_message(test_framing_loose_stream* s, test_f
 gmsg_poll test_framing_loose_stream_poll_event(test_framing_loose_stream* s, test_framing_loose_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool test_framing_loose_stream_poll_for(test_framing_loose_stream* s, test_framing_loose_kind kind, test_framing_loose_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < TEST_FRAMING_LOOSE_MAX_FRAME. */
+gmsg_error test_framing_loose_endpoint_init(test_framing_loose_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void test_framing_loose_endpoint_set_clock(test_framing_loose_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void test_framing_loose_endpoint_set_idle(test_framing_loose_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void test_framing_loose_endpoint_set_send_policy(test_framing_loose_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void test_framing_loose_endpoint_set_idle_timeout(test_framing_loose_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t test_framing_loose_endpoint_service(test_framing_loose_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error test_framing_loose_endpoint_send_reading(test_framing_loose_endpoint* ep, const test_framing_reading* m);
+gmsg_error test_framing_loose_endpoint_send_reading_with_header(test_framing_loose_endpoint* ep, const test_framing_loose_header* h, const test_framing_reading* m);
+gmsg_error test_framing_loose_endpoint_send_note(test_framing_loose_endpoint* ep, const test_framing_note* m);
+gmsg_error test_framing_loose_endpoint_send_note_with_header(test_framing_loose_endpoint* ep, const test_framing_loose_header* h, const test_framing_note* m);
+gmsg_error test_framing_loose_endpoint_send(test_framing_loose_endpoint* ep, const test_framing_loose_any_message* m);
+static inline gmsg_error test_framing_loose_endpoint_send_raw(test_framing_loose_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error test_framing_loose_endpoint_wait_for(test_framing_loose_endpoint* ep, test_framing_loose_kind kind, uint32_t timeout, test_framing_loose_match_fn match, void* match_ctx, test_framing_loose_any_message* out, test_framing_loose_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error test_framing_loose_endpoint_transact(test_framing_loose_endpoint* ep, const test_framing_loose_header* h, const test_framing_loose_any_message* request, test_framing_loose_kind kind, uint32_t timeout, test_framing_loose_match_fn match, void* match_ctx, test_framing_loose_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error test_framing_loose_endpoint_request(test_framing_loose_endpoint* ep, test_framing_loose_request* r, const test_framing_loose_header* h, const test_framing_loose_any_message* request, test_framing_loose_kind kind, uint32_t timeout, test_framing_loose_match_fn match, void* match_ctx, test_framing_loose_request_fn on_done, void* ctx);
+void test_framing_loose_endpoint_expect(test_framing_loose_endpoint* ep, test_framing_loose_request* r, test_framing_loose_kind kind, uint32_t timeout, test_framing_loose_match_fn match, void* match_ctx, test_framing_loose_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void test_framing_loose_endpoint_cancel(test_framing_loose_endpoint* ep, test_framing_loose_request* r);
+/* Requests still waiting. */
+size_t test_framing_loose_endpoint_pending(const test_framing_loose_endpoint* ep);
 
 /* ---- ExactHeader ------------------------------------------------------------------------------------- */
 
@@ -1028,6 +1381,29 @@ typedef struct test_framing_exact_event {
     size_t size;
 } test_framing_exact_event;
 
+/* Message filter of test_framing_exact_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*test_framing_exact_match_fn)(void* ctx, const test_framing_exact_header_view* h, const test_framing_exact_any_view* v);
+
+/* A request that does not block (test_framing_exact_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct test_framing_exact_request test_framing_exact_request;
+typedef void (*test_framing_exact_request_fn)(void* ctx, test_framing_exact_request* r);
+struct test_framing_exact_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    test_framing_exact_any_message reply;
+    /* internal */
+    test_framing_exact_request* next_;
+    test_framing_exact_kind kind_;
+    test_framing_exact_match_fn match_;
+    void* match_ctx_;
+    test_framing_exact_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after test_framing_exact_stream_init(). */
 typedef struct test_framing_exact_stream {
     gmsg_stream base;  /* first member */
@@ -1037,7 +1413,20 @@ typedef struct test_framing_exact_stream {
     test_framing_exact_kind want_;
     test_framing_exact_received got_;
     test_framing_exact_any_message* msg_;
+    test_framing_exact_match_fn match_;
+    void* match_ctx_;
+    test_framing_exact_header* hdr_;
+    test_framing_exact_request* pending_;    /* requests waiting, oldest first */
+    test_framing_exact_request* completed_;  /* finished, callbacks not run yet */
 } test_framing_exact_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after test_framing_exact_endpoint_init(). */
+typedef struct test_framing_exact_endpoint {
+    test_framing_exact_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[TEST_FRAMING_EXACT_MAX_FRAME];  /* transmit buffer */
+} test_framing_exact_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). */
 gmsg_error test_framing_exact_parse(const uint8_t* data, size_t size, test_framing_exact_any_view* out);
@@ -1088,6 +1477,41 @@ bool test_framing_exact_stream_poll_message(test_framing_exact_stream* s, test_f
 gmsg_poll test_framing_exact_stream_poll_event(test_framing_exact_stream* s, test_framing_exact_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool test_framing_exact_stream_poll_for(test_framing_exact_stream* s, test_framing_exact_kind kind, test_framing_exact_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < TEST_FRAMING_EXACT_MAX_FRAME. */
+gmsg_error test_framing_exact_endpoint_init(test_framing_exact_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void test_framing_exact_endpoint_set_clock(test_framing_exact_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void test_framing_exact_endpoint_set_idle(test_framing_exact_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void test_framing_exact_endpoint_set_send_policy(test_framing_exact_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void test_framing_exact_endpoint_set_idle_timeout(test_framing_exact_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t test_framing_exact_endpoint_service(test_framing_exact_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error test_framing_exact_endpoint_send_reading(test_framing_exact_endpoint* ep, const test_framing_reading* m);
+gmsg_error test_framing_exact_endpoint_send_reading_with_header(test_framing_exact_endpoint* ep, const test_framing_exact_header* h, const test_framing_reading* m);
+gmsg_error test_framing_exact_endpoint_send_note(test_framing_exact_endpoint* ep, const test_framing_note* m);
+gmsg_error test_framing_exact_endpoint_send_note_with_header(test_framing_exact_endpoint* ep, const test_framing_exact_header* h, const test_framing_note* m);
+gmsg_error test_framing_exact_endpoint_send(test_framing_exact_endpoint* ep, const test_framing_exact_any_message* m);
+static inline gmsg_error test_framing_exact_endpoint_send_raw(test_framing_exact_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error test_framing_exact_endpoint_wait_for(test_framing_exact_endpoint* ep, test_framing_exact_kind kind, uint32_t timeout, test_framing_exact_match_fn match, void* match_ctx, test_framing_exact_any_message* out, test_framing_exact_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error test_framing_exact_endpoint_transact(test_framing_exact_endpoint* ep, const test_framing_exact_header* h, const test_framing_exact_any_message* request, test_framing_exact_kind kind, uint32_t timeout, test_framing_exact_match_fn match, void* match_ctx, test_framing_exact_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error test_framing_exact_endpoint_request(test_framing_exact_endpoint* ep, test_framing_exact_request* r, const test_framing_exact_header* h, const test_framing_exact_any_message* request, test_framing_exact_kind kind, uint32_t timeout, test_framing_exact_match_fn match, void* match_ctx, test_framing_exact_request_fn on_done, void* ctx);
+void test_framing_exact_endpoint_expect(test_framing_exact_endpoint* ep, test_framing_exact_request* r, test_framing_exact_kind kind, uint32_t timeout, test_framing_exact_match_fn match, void* match_ctx, test_framing_exact_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void test_framing_exact_endpoint_cancel(test_framing_exact_endpoint* ep, test_framing_exact_request* r);
+/* Requests still waiting. */
+size_t test_framing_exact_endpoint_pending(const test_framing_exact_endpoint* ep);
 
 #ifdef __cplusplus
 } /* extern "C" */

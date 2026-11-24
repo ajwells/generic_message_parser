@@ -77,10 +77,10 @@
     const visibleRows = () => Array.from(sec().querySelectorAll('[data-api-row]')).filter((r) => !r.hidden && !r.closest('[data-api-group]').hidden);
     btn('cpp').click();
     await T.until(() => sec() && groups().length, 3000, 'API section');
-    const want = ['decode', 'views', 'fields', 'encode', 'text', 'enums', 'protocols', 'stream', 'poll', 'print', 'sizes', 'errors', 'checksums'];
+    const want = ['decode', 'views', 'fields', 'encode', 'text', 'enums', 'protocols', 'stream', 'poll', 'endpoint', 'print', 'sizes', 'errors', 'checksums'];
     T.eq(groups().map((g) => g.dataset.apiGroup).join(','), want.join(','), 'C++ groups');
     const cppText = sec().textContent;
-    for (const x of ['Status::decode(bytes)', 's.encode(out)', 'Link::parse(frame)', 'parser.poll_event()', 'gmsg::println', 'CallbackStream'])
+    for (const x of ['Status::decode(bytes)', 's.encode(out)', 'Link::parse(frame)', 'parser.poll_event()', 'gmsg::println', 'CallbackStream', 'ep.transact<Status>', 'make_endpoint'])
       T.ok(cppText.includes(x), `C++ reference has ${x}`);
     T.ok(!/gmsg_printer_init|demo_status_decode/.test(cppText), 'no C names in the C++ reference');
     T.ok(!/\bnull\b|undefined/.test(cppText), 'no missing cells (C++)');
@@ -104,7 +104,7 @@
     filter().value = '';
     filter().dispatchEvent(new w.Event('input', { bubbles: true }));
     const cText = sec().textContent;
-    for (const x of ['demo_status_decode', 'demo_status_view_from', 'demo_link_encode_status_with_header', 'demo_link_stream_poll_event', 'gmsg_printer_finish', 'gmsg_crc32_compute', 'DEMO_LINK_MAX_FRAME'])
+    for (const x of ['demo_status_decode', 'demo_status_view_from', 'demo_link_encode_status_with_header', 'demo_link_stream_poll_event', 'gmsg_printer_finish', 'gmsg_crc32_compute', 'DEMO_LINK_MAX_FRAME', 'demo_link_endpoint_transact', 'gmsg_dma_source_init'])
       T.ok(cText.includes(x), `C reference has ${x}`);
     T.ok(!/gmsg::|std::/.test(cText), 'no C++ names in the C reference');
     T.ok(!/\bnull\b|undefined/.test(cText), 'no missing cells (C)');
@@ -127,7 +127,7 @@
     T.ok(!/gmsg::|std::|gmsg_\w+\(/.test(c), 'no C++ or C left in the code samples');
     T.ok(d.getElementById('cpp').textContent.includes('gmsg.Err.BadChecksum'), 'JavaScript error names');
     const api = d.getElementById('api').textContent;
-    for (const x of ['demo.Status.decode(bytes)', 's.encode()', 'demo.Link.parse(frame)', 'parser.pollEvent()', 'gmsg.checksum.crc32.compute(bytes)', 'demo.Link.maxFrame', 'parser.messages(chunk)'])
+    for (const x of ['demo.Status.decode(bytes)', 's.encode()', 'demo.Link.parse(frame)', 'parser.pollEvent()', 'gmsg.checksum.crc32.compute(bytes)', 'demo.Link.maxFrame', 'parser.messages(chunk)', 'await ep.waitFor(demo.Status', 'demo.Link.endpoint({ write })'])
       T.ok(api.includes(x), `JavaScript reference has ${x}`);
     T.ok(!/gmsg::|std::|demo_status_/.test(api), 'no C++ or C names in the JavaScript reference');
     T.ok(!/\bnull\b|undefined</.test(api), 'no missing cells (JavaScript)');
@@ -155,7 +155,7 @@
     T.ok(gen.includes('@dataclass class M'), 'Python generated-code table');
     const api = d.getElementById('api').textContent;
     for (const x of ['demo.Status.decode(data)', 's.encode()', 'demo.Link.parse(frame)', 'parser.poll_event()', 'gmsg.checksum.crc32.compute(data)',
-      'demo.Link.max_frame', 'parser.messages(chunk)', 'gmsg.use_native(False)', 'demo.Mode.name_of(v)'])
+      'demo.Link.max_frame', 'parser.messages(chunk)', 'gmsg.use_native(False)', 'demo.Mode.name_of(v)', 'ep.wait_for(demo.Status', 'async_endpoint'])
       T.ok(api.includes(x), `Python reference has ${x}`);
     T.ok(!/gmsg::|std::|demo_status_|pollEvent|toStruct/.test(api), 'no C++, C or JavaScript names in the Python reference');
     T.ok(!/\bnull\b|undefined</.test(api), 'no missing cells (Python)');

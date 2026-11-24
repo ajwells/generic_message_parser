@@ -309,6 +309,29 @@ typedef struct nav_nmea_nmea_event {
     size_t size;
 } nav_nmea_nmea_event;
 
+/* Message filter of nav_nmea_nmea_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*nav_nmea_nmea_match_fn)(void* ctx, const nav_nmea_nmea_any_view* v);
+
+/* A request that does not block (nav_nmea_nmea_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct nav_nmea_nmea_request nav_nmea_nmea_request;
+typedef void (*nav_nmea_nmea_request_fn)(void* ctx, nav_nmea_nmea_request* r);
+struct nav_nmea_nmea_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    nav_nmea_nmea_any_message reply;
+    /* internal */
+    nav_nmea_nmea_request* next_;
+    nav_nmea_nmea_kind kind_;
+    nav_nmea_nmea_match_fn match_;
+    void* match_ctx_;
+    nav_nmea_nmea_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after nav_nmea_nmea_stream_init(). */
 typedef struct nav_nmea_nmea_stream {
     gmsg_stream base;  /* first member */
@@ -318,7 +341,19 @@ typedef struct nav_nmea_nmea_stream {
     nav_nmea_nmea_kind want_;
     nav_nmea_nmea_received got_;
     nav_nmea_nmea_any_message* msg_;
+    nav_nmea_nmea_match_fn match_;
+    void* match_ctx_;
+    nav_nmea_nmea_request* pending_;    /* requests waiting, oldest first */
+    nav_nmea_nmea_request* completed_;  /* finished, callbacks not run yet */
 } nav_nmea_nmea_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after nav_nmea_nmea_endpoint_init(). */
+typedef struct nav_nmea_nmea_endpoint {
+    nav_nmea_nmea_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[NAV_NMEA_NMEA_MAX_FRAME];  /* transmit buffer */
+} nav_nmea_nmea_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). */
 gmsg_error nav_nmea_nmea_parse(const uint8_t* data, size_t size, nav_nmea_nmea_any_view* out);
@@ -367,6 +402,39 @@ bool nav_nmea_nmea_stream_poll_message(nav_nmea_nmea_stream* s, nav_nmea_nmea_an
 gmsg_poll nav_nmea_nmea_stream_poll_event(nav_nmea_nmea_stream* s, nav_nmea_nmea_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool nav_nmea_nmea_stream_poll_for(nav_nmea_nmea_stream* s, nav_nmea_nmea_kind kind, nav_nmea_nmea_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < NAV_NMEA_NMEA_MAX_FRAME. */
+gmsg_error nav_nmea_nmea_endpoint_init(nav_nmea_nmea_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void nav_nmea_nmea_endpoint_set_clock(nav_nmea_nmea_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void nav_nmea_nmea_endpoint_set_idle(nav_nmea_nmea_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void nav_nmea_nmea_endpoint_set_send_policy(nav_nmea_nmea_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void nav_nmea_nmea_endpoint_set_idle_timeout(nav_nmea_nmea_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t nav_nmea_nmea_endpoint_service(nav_nmea_nmea_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error nav_nmea_nmea_endpoint_send_gga(nav_nmea_nmea_endpoint* ep, const nav_nmea_gga* m);
+gmsg_error nav_nmea_nmea_endpoint_send_txt(nav_nmea_nmea_endpoint* ep, const nav_nmea_txt* m);
+gmsg_error nav_nmea_nmea_endpoint_send(nav_nmea_nmea_endpoint* ep, const nav_nmea_nmea_any_message* m);
+static inline gmsg_error nav_nmea_nmea_endpoint_send_raw(nav_nmea_nmea_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out. Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error nav_nmea_nmea_endpoint_wait_for(nav_nmea_nmea_endpoint* ep, nav_nmea_nmea_kind kind, uint32_t timeout, nav_nmea_nmea_match_fn match, void* match_ctx, nav_nmea_nmea_any_message* out);
+/* Deliver what has arrived, send `request`, then _wait_for. */
+gmsg_error nav_nmea_nmea_endpoint_transact(nav_nmea_nmea_endpoint* ep, const nav_nmea_nmea_any_message* request, nav_nmea_nmea_kind kind, uint32_t timeout, nav_nmea_nmea_match_fn match, void* match_ctx, nav_nmea_nmea_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error nav_nmea_nmea_endpoint_request(nav_nmea_nmea_endpoint* ep, nav_nmea_nmea_request* r, const nav_nmea_nmea_any_message* request, nav_nmea_nmea_kind kind, uint32_t timeout, nav_nmea_nmea_match_fn match, void* match_ctx, nav_nmea_nmea_request_fn on_done, void* ctx);
+void nav_nmea_nmea_endpoint_expect(nav_nmea_nmea_endpoint* ep, nav_nmea_nmea_request* r, nav_nmea_nmea_kind kind, uint32_t timeout, nav_nmea_nmea_match_fn match, void* match_ctx, nav_nmea_nmea_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void nav_nmea_nmea_endpoint_cancel(nav_nmea_nmea_endpoint* ep, nav_nmea_nmea_request* r);
+/* Requests still waiting. */
+size_t nav_nmea_nmea_endpoint_pending(const nav_nmea_nmea_endpoint* ep);
 
 #ifdef __cplusplus
 } /* extern "C" */

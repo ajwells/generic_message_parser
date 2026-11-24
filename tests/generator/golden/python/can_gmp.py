@@ -624,6 +624,16 @@ class FixedLink:
         return gmsg.StreamParser(FixedLink, capacity)
 
     @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(FixedLink, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(FixedLink, reader, writer, **options)
+
+    @staticmethod
     def encode(m, header=None) -> bytes:
         """Encode a message of this protocol (optionally with header values: a dict or a header instance; type id and length are filled in) to a frame."""
         if isinstance(m, Sensor): return FixedLink._encode0(m, header)

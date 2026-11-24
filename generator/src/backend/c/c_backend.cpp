@@ -295,7 +295,11 @@ private:
                                        "_stream_reset", "_stream_stats", "_stream_last_error", "_stream_buffered",
                                        "_stream_generation", "_stream_poll", "_stream_poll_frame", "_stream_poll_message",
                                        "_stream_poll_event", "_stream_poll_for", "_received", "_event", "_any_view_print",
-                                       "_any_message_print"})
+                                       "_any_message_print", "_match_fn", "_endpoint", "_endpoint_init", "_endpoint_set_clock",
+                                       "_endpoint_set_idle", "_endpoint_set_send_policy", "_endpoint_set_idle_timeout",
+                                       "_endpoint_service", "_endpoint_send", "_endpoint_send_raw", "_endpoint_wait_for",
+                                       "_endpoint_transact", "_request", "_request_fn", "_endpoint_request",
+                                       "_endpoint_expect", "_endpoint_cancel", "_endpoint_pending"})
                 add(n + suffix, what, p->loc);
             add(M + "_NONE", what, p->loc);
             add(M + "_MAX_FRAME", what, p->loc);
@@ -303,6 +307,8 @@ private:
                 add(M + "_" + c::upper(c::snake(m->name)), what + " kind " + m->name, p->loc);
                 add(n + "_encode_" + c::snake(m->name), what, p->loc);
                 add(n + "_encode_" + c::snake(m->name) + "_with_header", what, p->loc);
+                add(n + "_endpoint_send_" + c::snake(m->name), what, p->loc);
+                add(n + "_endpoint_send_" + c::snake(m->name) + "_with_header", what, p->loc);
             }
         }
     }

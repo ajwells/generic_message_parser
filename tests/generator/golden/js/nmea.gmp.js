@@ -591,6 +591,8 @@
     static decode(buffer) { return Nmea.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(Nmea, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(Nmea, options); }
     /** Encode a message of this protocol to a new Uint8Array. */
     static encode(m) {
       if (m instanceof GGA) return Nmea.#encode0(m);

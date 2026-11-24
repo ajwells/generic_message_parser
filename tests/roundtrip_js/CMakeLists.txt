@@ -36,4 +36,6 @@ add_dependencies(gmp_js_crossref gmp_test_schemas_js gmp_test_codecs_js)
 if (GMP_NODE)
     add_test(NAME gmp_js_generated_tests
             COMMAND ${GMP_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/test_generated.js $<TARGET_FILE:gmp_js_crossref> ${GEN_DIR})
+    add_test(NAME gmp_js_endpoint_tests
+            COMMAND ${GMP_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/test_endpoint.js ${GEN_DIR})
 endif ()

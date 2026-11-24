@@ -75,6 +75,12 @@ public:
         return n;
     }
 
+    /// Free room for push() (producer side): bytes that can be appended now without an overrun.
+    [[nodiscard]] std::size_t room() const noexcept {
+        if (overrun_.load(std::memory_order_acquire)) return 0;
+        return N - static_cast<Index>(w_.load(std::memory_order_relaxed) - r_.load(std::memory_order_acquire));
+    }
+
     // ---- consumer side ----------------------------------------------------------------------------------------
 
     /// The oldest buffered bytes that are contiguous in storage (the whole content, or its part up to the end of

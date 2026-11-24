@@ -398,6 +398,8 @@
     static decode(buffer) { return SyncLink.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(SyncLink, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(SyncLink, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Data) return SyncLink.#encode0(m, header);
@@ -629,6 +631,8 @@
     static decode(buffer) { return WireChecksum.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(WireChecksum, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(WireChecksum, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Data) return WireChecksum.#encode0(m, header);
@@ -843,6 +847,8 @@
     static decode(buffer) { return WireLength.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(WireLength, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(WireLength, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Data) return WireLength.#encode0(m, header);
@@ -1066,6 +1072,8 @@
     static decode(buffer) { return CrcLength.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(CrcLength, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(CrcLength, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Data) return CrcLength.#encode0(m, header);
@@ -1276,6 +1284,8 @@
     static decode(buffer) { return WireCrcLength.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(WireCrcLength, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(WireCrcLength, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Data) return WireCrcLength.#encode0(m, header);
@@ -1507,6 +1517,8 @@
     static decode(buffer) { return WireCrcOverWire.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(WireCrcOverWire, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(WireCrcOverWire, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Data) return WireCrcOverWire.#encode0(m, header);
@@ -1635,6 +1647,8 @@
     static decode(buffer) { return FixedLink.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(FixedLink, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(FixedLink, options); }
     /** Encode a message of this protocol to a new Uint8Array. */
     static encode(m) {
       if (m instanceof Ping) return FixedLink.#encode0(m);
@@ -1804,6 +1818,8 @@
     static decode(buffer) { return Delimited.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(Delimited, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(Delimited, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Data) return Delimited.#encode0(m, header);

@@ -325,6 +325,16 @@ private:
             method("stream(capacity: int | None = None) -> gmsg.StreamParser", "A stream parser for this protocol (default capacity: max_frame).");
             w_.line("return gmsg.StreamParser(" + n_ + ", capacity)");
             w_.dedent();
+            if (all_struct_) {
+                method("endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint",
+                       "The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...).");
+                w_.line("return gmsg.Endpoint(" + n_ + ", source, sink, **options)");
+                w_.dedent();
+                method("async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint",
+                       "The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...).");
+                w_.line("return gmsg.AsyncEndpoint(" + n_ + ", reader, writer, **options)");
+                w_.dedent();
+            }
         }
     }
 

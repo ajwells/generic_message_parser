@@ -72,6 +72,7 @@ public:
         cs_first_ = escape_ && !text_ && p.checksum.present && !p.checksum.over_wire && !p.checksum.custom;
         stream_ = p.framing.type != FT::None && p.max_frame > 0;
         all_struct_ = std::all_of(p.messages.begin(), p.messages.end(), [](const Message* m) { return m->want_struct; });
+        endpoint_ = stream_ && all_struct_ && (!has_header_ || p.header->want_struct);
         n_ = c.names.prefix + snake(p.name);
         M_ = c.names.macro + upper(snake(p.name));
         if (has_header_) {
@@ -158,6 +159,31 @@ private:
             h_.line("size_t size;");
             h_.close("} " + n_ + "_event;");
             h_.line();
+            if (endpoint_) {
+                h_.line("/* Message filter of " + n_ + "_endpoint_wait_for / _transact: true accepts the message. */");
+                h_.line("typedef bool (*" + n_ + "_match_fn)(void* ctx, " + hdr_param() + "const " + n_ + "_any_view* v);");
+                h_.line();
+                h_.line("/* A request that does not block (" + n_ + "_endpoint_request / _expect): caller-owned, completed by a later");
+                h_.line(" * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or");
+                h_.line(" * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */");
+                h_.line("typedef struct " + n_ + "_request " + n_ + "_request;");
+                h_.line("typedef void (*" + n_ + "_request_fn)(void* ctx, " + n_ + "_request* r);");
+                h_.open("struct " + n_ + "_request {");
+                h_.line("gmsg_request_state state;");
+                h_.line("gmsg_error error;");
+                h_.line(n_ + "_any_message reply;");
+                h_.line("/* internal */");
+                h_.line(n_ + "_request* next_;");
+                h_.line(n_ + "_kind kind_;");
+                h_.line(n_ + "_match_fn match_;");
+                h_.line("void* match_ctx_;");
+                h_.line(n_ + "_request_fn on_done_;");
+                h_.line("void* ctx_;");
+                h_.line("uint32_t start_;");
+                h_.line("uint32_t timeout_;");
+                h_.close("};");
+                h_.line();
+            }
             h_.line("/* Stream parser; set callbacks in .cb after " + n_ + "_stream_init(). */");
             h_.open("typedef struct " + n_ + "_stream {");
             h_.line("gmsg_stream base;  /* first member */");
@@ -167,8 +193,25 @@ private:
             h_.line(n_ + "_kind want_;");
             h_.line(n_ + "_received got_;");
             if (all_struct_) h_.line(n_ + "_any_message* msg_;");
+            if (endpoint_) {
+                h_.line(n_ + "_match_fn match_;");
+                h_.line("void* match_ctx_;");
+                if (has_header_) h_.line(ht_ + "* hdr_;");
+                h_.line(n_ + "_request* pending_;    /* requests waiting, oldest first */");
+                h_.line(n_ + "_request* completed_;  /* finished, callbacks not run yet */");
+            }
             h_.close("} " + n_ + "_stream;");
             h_.line();
+            if (endpoint_) {
+                h_.line("/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in");
+                h_.line(" * .stream.cb after " + n_ + "_endpoint_init(). */");
+                h_.open("typedef struct " + n_ + "_endpoint {");
+                h_.line(n_ + "_stream stream;  /* first member */");
+                h_.line("gmsg_endpoint io;");
+                h_.line("uint8_t tx[" + M_ + "_MAX_FRAME];  /* transmit buffer */");
+                h_.close("} " + n_ + "_endpoint;");
+                h_.line();
+            }
         }
     }
 
@@ -247,7 +290,58 @@ private:
             h_.line("/* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */");
             h_.line("bool " + st + "_poll_for(" + st + "* s, " + n_ + "_kind kind, " + n_ + "_any_view* out);");
         }
+        if (endpoint_) emit_endpoint_prototypes();
         h_.line();
+    }
+
+    void emit_endpoint_prototypes() {
+        const auto ep = n_ + "_endpoint";
+        const auto self = ep + "* ep";
+        h_.line();
+        h_.line("/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < " + M_ + "_MAX_FRAME. */");
+        h_.line("gmsg_error " + ep + "_init(" + self + ", uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);");
+        h_.line("/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried");
+        h_.line(" * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */");
+        h_.line("static inline void " + ep + "_set_clock(" + self + ", gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }");
+        h_.line("static inline void " + ep + "_set_idle(" + self + ", void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }");
+        h_.line("static inline void " + ep + "_set_send_policy(" + self + ", gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }");
+        h_.line("static inline void " + ep + "_set_idle_timeout(" + self + ", uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }");
+        h_.line("/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the");
+        h_.line(" * idle resync. Returns the number of frames delivered. */");
+        h_.line("static inline size_t " + ep + "_service(" + self + ", size_t max) { return gmsg_endpoint_service(&ep->io, max); }");
+        h_.line("/* Encode and write to the sink with the send policy. */");
+        for (const auto* m : p_.messages) {
+            const auto t = type_name(c_, *m);
+            h_.line("gmsg_error " + ep + "_send_" + snake(m->name) + "(" + self + ", const " + t + "* m);");
+            if (has_header_)
+                h_.line("gmsg_error " + ep + "_send_" + snake(m->name) + "_with_header(" + self + ", const " + ht_ + "* h, const " + t + "* m);");
+        }
+        h_.line("gmsg_error " + ep + "_send(" + self + ", const " + n_ + "_any_message* m);");
+        h_.line("static inline gmsg_error " + ep + "_send_raw(" + self + ", const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }");
+        h_.line("/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into");
+        h_.line(" * *out" + std::string(has_header_ ? " (and its header into *header, if not NULL)" : "") +
+                ". Other messages go to the callbacks; the awaited one does not.");
+        h_.line(" * GMSG_ERR_TIMEOUT after `timeout` clock units. */");
+        h_.line("gmsg_error " + ep + "_wait_for(" + self + ", " + n_ + "_kind kind, uint32_t timeout, " + n_ + "_match_fn match, void* match_ctx, " +
+                n_ + "_any_message* out" + (has_header_ ? ", " + ht_ + "* header" : std::string()) + ");");
+        h_.line("/* Deliver what has arrived, send `request`" + std::string(has_header_ ? " (with header *h, or default values when NULL)" : "") +
+                ", then _wait_for. */");
+        h_.line("gmsg_error " + ep + "_transact(" + self + ", " + (has_header_ ? "const " + ht_ + "* h, " : std::string()) + "const " + n_ +
+                "_any_message* request, " + n_ + "_kind kind, uint32_t timeout, " + n_ + "_match_fn match, void* match_ctx, " + n_ +
+                "_any_message* out);");
+        h_.line("/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends");
+        h_.line(" * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,");
+        h_.line(" * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error");
+        h_.line(" * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */");
+        h_.line("gmsg_error " + ep + "_request(" + self + ", " + n_ + "_request* r, " + (has_header_ ? "const " + ht_ + "* h, " : std::string()) +
+                "const " + n_ + "_any_message* request, " + n_ + "_kind kind, uint32_t timeout, " + n_ + "_match_fn match, void* match_ctx, " +
+                n_ + "_request_fn on_done, void* ctx);");
+        h_.line("void " + ep + "_expect(" + self + ", " + n_ + "_request* r, " + n_ + "_kind kind, uint32_t timeout, " + n_ +
+                "_match_fn match, void* match_ctx, " + n_ + "_request_fn on_done, void* ctx);");
+        h_.line("/* Stop waiting (no callback); the request can be started again. */");
+        h_.line("void " + ep + "_cancel(" + self + ", " + n_ + "_request* r);");
+        h_.line("/* Requests still waiting. */");
+        h_.line("size_t " + ep + "_pending(const " + ep + "* ep);");
     }
 
     // ---- source file --------------------------------------------------------------------------------
@@ -708,7 +802,8 @@ private:
         const auto st = n_ + "_stream";
         const auto mode = [&](const char* m) { return n_ + "_mode_" + m + "_"; };
         s_.line("/* stream modes: deliver to callbacks (feed / next), or capture for the pull API */");
-        s_.line("enum { " + mode("deliver") + " = 0, " + mode("capture") + " = 1, " + mode("message") + " = 2, " + mode("for") + " = 3 };");
+        s_.line("enum { " + mode("deliver") + " = 0, " + mode("capture") + " = 1, " + mode("message") + " = 2, " + mode("for") + " = 3" +
+                (endpoint_ ? ", " + mode("wait") + " = 4" : std::string()) + " };");
         s_.line();
         s_.line("/* Data after the message (bytes, or tokens for text messages). */");
         s_.open("static size_t " + n_ + "_extra_(const " + n_ + "_any_view* v) {");
@@ -720,6 +815,7 @@ private:
         s_.close();
         s_.close();
         s_.line();
+        if (endpoint_) emit_offer();
         s_.open("static gmsg_error " + st + "_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {");
         s_.line(st + "* s = (" + st + "*)gs;");
         s_.line(n_ + "_frame_ f;");
@@ -729,6 +825,7 @@ private:
         s_.line(n_ + "_any_view v;");
         s_.line(try_(select_call("frame", "n", "&v")));
         s_.line("gs->last_extra = " + n_ + "_extra_(&v);");
+        if (endpoint_) emit_offer_call("&v");
         s_.line(n_ + "_deliver_(&s->cb, &f, &v);");
         s_.line("return GMSG_OK;");
         s_.close();
@@ -741,8 +838,25 @@ private:
         s_.line(n_ + "_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */");
         s_.line("s->got_.message.kind = " + M_ + "_NONE;");
         s_.close();
+        if (endpoint_) {
+            s_.open("if (s->mode_ == " + mode("wait") + ") {");
+            s_.open("if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, " +
+                    std::string(has_header_ ? "&f.header, " : "") + "&s->got_.message))) {");
+            emit_offer_call("&s->got_.message");
+            s_.line(n_ + "_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */");
+            s_.line("s->got_.message.kind = " + M_ + "_NONE;");
+            s_.line("return GMSG_OK;");
+            s_.close();
+            if (has_header_) {
+                s_.open("if (s->hdr_ && (e = " + hv_ + "_to_struct(&f.header, s->hdr_)) != GMSG_OK) {");
+                if (escape_) s_.line(n_ + "_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */");
+                s_.line("return e;");
+                s_.close();
+            }
+            s_.close();
+        }
         if (all_struct_) {
-            s_.open("if (s->mode_ == " + mode("message") + ") {");
+            s_.open("if (s->mode_ == " + mode("message") + (endpoint_ ? " || s->mode_ == " + mode("wait") : std::string()) + ") {");
             s_.open("switch (s->got_.message.kind) {");
             const std::string ret = escape_ ? "e = " : "return ";
             const std::string brk = escape_ ? " break;" : "";
@@ -834,6 +948,239 @@ private:
         s_.open("gmsg_error " + st + "_init(" + st + "* s, uint8_t* buf, size_t size) {");
         s_.line("gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */");
         s_.line("return gmsg_stream_init(&s->base, buf, size, " + M_ + "_MAX_FRAME, " + n_ + "_scan_, " + st + "_process_, " + st + "_error_);");
+        s_.close();
+        s_.line();
+        if (endpoint_) emit_endpoint(mode("wait"), mode("deliver"));
+    }
+
+    void emit_endpoint(const std::string& wait_mode, const std::string& deliver_mode) {
+        const auto ep = n_ + "_endpoint";
+        const auto self = ep + "* ep";
+        const auto of_io = "(" + ep + "*)(void*)((char*)io - offsetof(" + ep + ", io))";
+        s_.line("/* run the callbacks of finished requests (after a step, so a callback may start the next request) */");
+        s_.open("static void " + ep + "_fire_(gmsg_endpoint* io) {");
+        s_.line(n_ + "_stream* s = &(" + of_io + ")->stream;");
+        s_.open("while (s->completed_) {");
+        s_.line(n_ + "_request* r = s->completed_;");
+        s_.line("s->completed_ = r->next_;");
+        s_.line("r->next_ = NULL;");
+        s_.line("if (r->on_done_) r->on_done_(r->ctx_, r);");
+        s_.close();
+        s_.close();
+        s_.line();
+        s_.open("static void " + ep + "_expire_(gmsg_endpoint* io) {");
+        s_.line(n_ + "_stream* s = &(" + of_io + ")->stream;");
+        s_.line("const uint32_t now = gmsg_endpoint_now(io);");
+        s_.line(n_ + "_request** at = &s->pending_;");
+        s_.open("while (*at) {");
+        s_.line(n_ + "_request* r = *at;");
+        s_.open("if ((uint32_t)(now - r->start_) >= r->timeout_) {");
+        s_.line("*at = r->next_;");
+        s_.line(n_ + "_complete_(s, r, GMSG_ERR_TIMEOUT);");
+        s_.close("} else {");
+        s_.indent();
+        s_.line("at = &r->next_;");
+        s_.close();
+        s_.close();
+        s_.line(ep + "_fire_(io);");
+        s_.close();
+        s_.line();
+        s_.open("gmsg_error " + ep + "_init(" + self + ", uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {");
+        s_.line("const gmsg_error e = " + n_ + "_stream_init(&ep->stream, buf, size);");
+        s_.line("gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);");
+        s_.line("ep->io.on_step = " + ep + "_fire_;");
+        s_.line("ep->io.on_tick = " + ep + "_expire_;");
+        s_.line("return e;");
+        s_.close();
+        s_.line();
+        s_.open("void " + ep + "_cancel(" + self + ", " + n_ + "_request* r) {");
+        s_.line(n_ + "_request** at = &ep->stream.pending_;");
+        s_.line("while (*at && *at != r) at = &(*at)->next_;");
+        s_.open("if (*at) {");
+        s_.line("*at = r->next_;");
+        s_.line("r->next_ = NULL;");
+        s_.close();
+        s_.line("if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;");
+        s_.close();
+        s_.line();
+        s_.open("void " + ep + "_expect(" + self + ", " + n_ + "_request* r, " + n_ + "_kind kind, uint32_t timeout, " + n_ +
+                "_match_fn match, void* match_ctx, " + n_ + "_request_fn on_done, void* ctx) {");
+        s_.line(n_ + "_request** at;");
+        s_.line(ep + "_cancel(ep, r);");
+        s_.line("r->state = GMSG_REQUEST_WAITING;");
+        s_.line("r->error = GMSG_OK;");
+        s_.line("r->kind_ = kind;");
+        s_.line("r->match_ = match;");
+        s_.line("r->match_ctx_ = match_ctx;");
+        s_.line("r->on_done_ = on_done;");
+        s_.line("r->ctx_ = ctx;");
+        s_.line("r->start_ = gmsg_endpoint_now(&ep->io);");
+        s_.line("r->timeout_ = timeout;");
+        s_.line("r->next_ = NULL;");
+        s_.line("at = &ep->stream.pending_;");
+        s_.line("while (*at) at = &(*at)->next_;");
+        s_.line("*at = r;");
+        s_.close();
+        s_.line();
+        s_.open("size_t " + ep + "_pending(const " + ep + "* ep) {");
+        s_.line("size_t k = 0;");
+        s_.line("const " + n_ + "_request* r;");
+        s_.line("for (r = ep->stream.pending_; r; r = r->next_) ++k;");
+        s_.line("return k;");
+        s_.close();
+        s_.line();
+        for (const auto* m : p_.messages) {
+            const auto t = type_name(c_, *m);
+            const auto send = ep + "_send_" + snake(m->name);
+            s_.open("gmsg_error " + send + "(" + self + ", const " + t + "* m) {");
+            s_.line("size_t n = 0;");
+            s_.line("const gmsg_error e = " + n_ + "_encode_" + snake(m->name) + "(m, ep->tx, sizeof ep->tx, &n);");
+            s_.line("return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);");
+            s_.close();
+            s_.line();
+            if (has_header_) {
+                s_.open("gmsg_error " + send + "_with_header(" + self + ", const " + ht_ + "* h, const " + t + "* m) {");
+                s_.line("size_t n = 0;");
+                s_.line("const gmsg_error e = " + n_ + "_encode_" + snake(m->name) + "_with_header(h, m, ep->tx, sizeof ep->tx, &n);");
+                s_.line("return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);");
+                s_.close();
+                s_.line();
+            }
+        }
+        s_.open("gmsg_error " + ep + "_send(" + self + ", const " + n_ + "_any_message* m) {");
+        s_.line("size_t n = 0;");
+        s_.line("const gmsg_error e = " + n_ + "_encode(m, ep->tx, sizeof ep->tx, &n);");
+        s_.line("return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);");
+        s_.close();
+        s_.line();
+        s_.open("static bool " + ep + "_pull_(void* ctx) {");
+        s_.line(ep + "* ep = (" + ep + "*)ctx;");
+        s_.line(n_ + "_stream* s = &ep->stream;");
+        s_.open("while (gmsg_stream_pull(&s->base)) {");
+        s_.line(ep + "_fire_(&ep->io);");
+        s_.line("if (s->got_.message.kind == s->want_) return true;");
+        s_.close();
+        s_.line("return false;");
+        s_.close();
+        s_.line();
+        s_.open("gmsg_error " + ep + "_wait_for(" + self + ", " + n_ + "_kind kind, uint32_t timeout, " + n_ + "_match_fn match, void* match_ctx, " +
+                n_ + "_any_message* out" + (has_header_ ? ", " + ht_ + "* header" : std::string()) + ") {");
+        s_.line(n_ + "_stream* s = &ep->stream;");
+        s_.line("gmsg_error e;");
+        s_.line("s->mode_ = " + wait_mode + ";");
+        s_.line("s->want_ = kind;");
+        s_.line("s->match_ = match;");
+        s_.line("s->match_ctx_ = match_ctx;");
+        s_.line("s->msg_ = out;");
+        if (has_header_) s_.line("s->hdr_ = header;");
+        s_.line("e = gmsg_endpoint_wait(&ep->io, timeout, " + ep + "_pull_, ep);");
+        s_.line("s->mode_ = " + deliver_mode + ";");
+        s_.line("s->match_ = NULL;");
+        s_.line("s->match_ctx_ = NULL;");
+        s_.line("s->msg_ = NULL;");
+        if (has_header_) s_.line("s->hdr_ = NULL;");
+        s_.line("return e;");
+        s_.close();
+        s_.line();
+        s_.open("gmsg_error " + ep + "_transact(" + self + ", " + (has_header_ ? "const " + ht_ + "* h, " : std::string()) + "const " + n_ +
+                "_any_message* request, " + n_ + "_kind kind, uint32_t timeout, " + n_ + "_match_fn match, void* match_ctx, " + n_ +
+                "_any_message* out) {");
+        s_.line("gmsg_error e = GMSG_OK;");
+        s_.line("(void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */");
+        if (has_header_) {
+            s_.open("if (h) {");
+            s_.open("switch (request->kind) {");
+            for (const auto* m : p_.messages)
+                s_.line("case " + kind(*m) + ": e = " + ep + "_send_" + snake(m->name) + "_with_header(ep, h, &request->as." + member(*m) + "); break;");
+            s_.line("default: e = GMSG_ERR_UNKNOWN_TYPE; break;");
+            s_.close();
+            s_.close("} else {");
+            s_.indent();
+            s_.line("e = " + ep + "_send(ep, request);");
+            s_.close();
+        } else {
+            s_.line("e = " + ep + "_send(ep, request);");
+        }
+        s_.line("if (e != GMSG_OK) return e;");
+        s_.line("return " + ep + "_wait_for(ep, kind, timeout, match, match_ctx, out" + std::string(has_header_ ? ", NULL" : "") + ");");
+        s_.close();
+        s_.line();
+        s_.open("gmsg_error " + ep + "_request(" + self + ", " + n_ + "_request* r, " + (has_header_ ? "const " + ht_ + "* h, " : std::string()) +
+                "const " + n_ + "_any_message* request, " + n_ + "_kind kind, uint32_t timeout, " + n_ + "_match_fn match, void* match_ctx, " +
+                n_ + "_request_fn on_done, void* ctx) {");
+        s_.line("gmsg_error e = GMSG_OK;");
+        s_.line(ep + "_cancel(ep, r);");
+        s_.line("if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */");
+        if (has_header_) {
+            s_.open("if (h) {");
+            s_.open("switch (request->kind) {");
+            for (const auto* m : p_.messages)
+                s_.line("case " + kind(*m) + ": e = " + ep + "_send_" + snake(m->name) + "_with_header(ep, h, &request->as." + member(*m) + "); break;");
+            s_.line("default: e = GMSG_ERR_UNKNOWN_TYPE; break;");
+            s_.close();
+            s_.close("} else {");
+            s_.indent();
+            s_.line("e = " + ep + "_send(ep, request);");
+            s_.close();
+        } else {
+            s_.line("e = " + ep + "_send(ep, request);");
+        }
+        s_.line("if (e != GMSG_OK) return e;");
+        s_.line(ep + "_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);");
+        s_.line("return GMSG_OK;");
+        s_.close();
+        s_.line();
+    }
+
+    /// In the stream hook: offer the frame (view `v`) to the waiting requests before the callbacks.
+    void emit_offer_call(const std::string& v) {
+        s_.open("if (s->pending_) {");
+        s_.line("bool taken = false;");
+        s_.open("if ((e = " + n_ + "_offer_(s, &f, " + v + ", &taken)) != GMSG_OK) {");
+        if (escape_) s_.line(n_ + "_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */");
+        s_.line("return e;");
+        s_.close();
+        if (v != "&v") s_.line("if (taken) s->got_.message.kind = " + M_ + "_NONE;");
+        s_.line("if (taken) return GMSG_OK;");
+        s_.close();
+    }
+
+    void emit_offer() {
+        s_.open("static gmsg_error " + n_ + "_view_to_message_(const " + n_ + "_any_view* v, " + n_ + "_any_message* out) {");
+        s_.line("out->kind = v->kind;");
+        s_.open("switch (v->kind) {");
+        for (const auto* m : p_.messages)
+            s_.line("case " + kind(*m) + ": return " + view_name(c_, *m) + "_to_struct(&v->as." + member(*m) + ", &out->as." + member(*m) + ");");
+        s_.line("default: return GMSG_ERR_UNKNOWN_TYPE;");
+        s_.close();
+        s_.close();
+        s_.line();
+        s_.line("/* Mark a request done and queue its callback. */");
+        s_.open("static void " + n_ + "_complete_(" + n_ + "_stream* s, " + n_ + "_request* r, gmsg_error e) {");
+        s_.line(n_ + "_request** at = &s->completed_;");
+        s_.line("r->state = GMSG_REQUEST_DONE;");
+        s_.line("r->error = e;");
+        s_.line("r->next_ = NULL;");
+        s_.line("while (*at) at = &(*at)->next_;");
+        s_.line("*at = r;");
+        s_.close();
+        s_.line();
+        s_.line("/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */");
+        s_.open("static gmsg_error " + n_ + "_offer_(" + n_ + "_stream* s, const " + n_ + "_frame_* f, const " + n_ +
+                "_any_view* v, bool* taken) {");
+        s_.line(n_ + "_request** at;");
+        if (!has_header_) s_.line("(void)f;");
+        s_.open("for (at = &s->pending_; *at; at = &(*at)->next_) {");
+        s_.line(n_ + "_request* r = *at;");
+        s_.line("gmsg_error e;");
+        s_.line("if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, " + std::string(has_header_ ? "&f->header, " : "") + "v))) continue;");
+        s_.line("if ((e = " + n_ + "_view_to_message_(v, &r->reply)) != GMSG_OK) return e;");
+        s_.line("*at = r->next_;");
+        s_.line(n_ + "_complete_(s, r, GMSG_OK);");
+        s_.line("*taken = true;");
+        s_.line("return GMSG_OK;");
+        s_.close();
+        s_.line("return GMSG_OK;");
         s_.close();
         s_.line();
     }
@@ -1053,7 +1400,7 @@ private:
     CodeWriter& s_;
     const Protocol& p_;
     bool text_ = false, has_header_ = false, escape_ = false, wire_cs_ = false, cs_first_ = false, stream_ = false,
-         all_struct_ = false;
+         all_struct_ = false, endpoint_ = false;
     std::string n_, M_, hv_, ht_, buf_, cfg_;
 };
 

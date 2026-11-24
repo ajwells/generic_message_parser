@@ -616,6 +616,8 @@
     static decode(buffer) { return Hdlc.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(Hdlc, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(Hdlc, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Batch) return Hdlc.#encode0(m, header);
@@ -800,6 +802,8 @@
     static decode(buffer) { return Summed.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(Summed, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(Summed, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Ping) return Summed.#encode0(m, header);

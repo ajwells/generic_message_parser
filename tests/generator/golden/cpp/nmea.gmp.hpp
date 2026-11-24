@@ -604,6 +604,17 @@ struct Nmea {
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
 
+    /// CallbackStream joined to a byte source, a byte sink and an optional clock: service(), send(), wait_for<M>(),
+    /// transact<M>() (gmp/endpoint.hpp).
+    template <class Source, class Sink, class Clock = void, std::size_t Capacity = max_frame>
+    using Endpoint = gmsg::Endpoint<Nmea, Source, Sink, Clock, Capacity>;
+    /// Endpoint over `source` and `sink` (lvalues are kept by reference) and a clock (a std::chrono clock, or a
+    /// callable returning a monotonic unsigned time).
+    template <std::size_t Capacity = max_frame, class Source, class Sink>
+    static auto make_endpoint(Source&& source, Sink&& sink) { return gmsg::make_endpoint<Nmea, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink)); }
+    template <std::size_t Capacity = max_frame, class Source, class Sink, class Clock>
+    static auto make_endpoint(Source&& source, Sink&& sink, Clock&& clock) { return gmsg::make_endpoint<Nmea, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink), std::forward<Clock>(clock)); }
+
     static gmsg::Result<std::size_t> encode(const GGA& m, gmsg::mut_bytes out) noexcept {
         std::size_t pos = 0;
         if (out.size() < prefix_size) return gmsg::fail(gmsg::Error::BufferFull);

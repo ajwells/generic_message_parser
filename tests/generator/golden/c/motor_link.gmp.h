@@ -311,6 +311,29 @@ typedef struct motor_motor_link_event {
     size_t size;
 } motor_motor_link_event;
 
+/* Message filter of motor_motor_link_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*motor_motor_link_match_fn)(void* ctx, const motor_motor_link_header_view* h, const motor_motor_link_any_view* v);
+
+/* A request that does not block (motor_motor_link_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct motor_motor_link_request motor_motor_link_request;
+typedef void (*motor_motor_link_request_fn)(void* ctx, motor_motor_link_request* r);
+struct motor_motor_link_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    motor_motor_link_any_message reply;
+    /* internal */
+    motor_motor_link_request* next_;
+    motor_motor_link_kind kind_;
+    motor_motor_link_match_fn match_;
+    void* match_ctx_;
+    motor_motor_link_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after motor_motor_link_stream_init(). */
 typedef struct motor_motor_link_stream {
     gmsg_stream base;  /* first member */
@@ -320,7 +343,20 @@ typedef struct motor_motor_link_stream {
     motor_motor_link_kind want_;
     motor_motor_link_received got_;
     motor_motor_link_any_message* msg_;
+    motor_motor_link_match_fn match_;
+    void* match_ctx_;
+    motor_motor_link_header* hdr_;
+    motor_motor_link_request* pending_;    /* requests waiting, oldest first */
+    motor_motor_link_request* completed_;  /* finished, callbacks not run yet */
 } motor_motor_link_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after motor_motor_link_endpoint_init(). */
+typedef struct motor_motor_link_endpoint {
+    motor_motor_link_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[MOTOR_MOTOR_LINK_MAX_FRAME];  /* transmit buffer */
+} motor_motor_link_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). The frame is unescaped in place. */
 gmsg_error motor_motor_link_parse(uint8_t* data, size_t size, motor_motor_link_any_view* out);
@@ -373,6 +409,43 @@ bool motor_motor_link_stream_poll_message(motor_motor_link_stream* s, motor_moto
 gmsg_poll motor_motor_link_stream_poll_event(motor_motor_link_stream* s, motor_motor_link_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool motor_motor_link_stream_poll_for(motor_motor_link_stream* s, motor_motor_link_kind kind, motor_motor_link_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < MOTOR_MOTOR_LINK_MAX_FRAME. */
+gmsg_error motor_motor_link_endpoint_init(motor_motor_link_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void motor_motor_link_endpoint_set_clock(motor_motor_link_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void motor_motor_link_endpoint_set_idle(motor_motor_link_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void motor_motor_link_endpoint_set_send_policy(motor_motor_link_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void motor_motor_link_endpoint_set_idle_timeout(motor_motor_link_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t motor_motor_link_endpoint_service(motor_motor_link_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error motor_motor_link_endpoint_send_set_speed(motor_motor_link_endpoint* ep, const motor_set_speed* m);
+gmsg_error motor_motor_link_endpoint_send_set_speed_with_header(motor_motor_link_endpoint* ep, const motor_motor_link_header* h, const motor_set_speed* m);
+gmsg_error motor_motor_link_endpoint_send_telemetry(motor_motor_link_endpoint* ep, const motor_telemetry* m);
+gmsg_error motor_motor_link_endpoint_send_telemetry_with_header(motor_motor_link_endpoint* ep, const motor_motor_link_header* h, const motor_telemetry* m);
+gmsg_error motor_motor_link_endpoint_send_log(motor_motor_link_endpoint* ep, const motor_log* m);
+gmsg_error motor_motor_link_endpoint_send_log_with_header(motor_motor_link_endpoint* ep, const motor_motor_link_header* h, const motor_log* m);
+gmsg_error motor_motor_link_endpoint_send(motor_motor_link_endpoint* ep, const motor_motor_link_any_message* m);
+static inline gmsg_error motor_motor_link_endpoint_send_raw(motor_motor_link_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error motor_motor_link_endpoint_wait_for(motor_motor_link_endpoint* ep, motor_motor_link_kind kind, uint32_t timeout, motor_motor_link_match_fn match, void* match_ctx, motor_motor_link_any_message* out, motor_motor_link_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error motor_motor_link_endpoint_transact(motor_motor_link_endpoint* ep, const motor_motor_link_header* h, const motor_motor_link_any_message* request, motor_motor_link_kind kind, uint32_t timeout, motor_motor_link_match_fn match, void* match_ctx, motor_motor_link_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error motor_motor_link_endpoint_request(motor_motor_link_endpoint* ep, motor_motor_link_request* r, const motor_motor_link_header* h, const motor_motor_link_any_message* request, motor_motor_link_kind kind, uint32_t timeout, motor_motor_link_match_fn match, void* match_ctx, motor_motor_link_request_fn on_done, void* ctx);
+void motor_motor_link_endpoint_expect(motor_motor_link_endpoint* ep, motor_motor_link_request* r, motor_motor_link_kind kind, uint32_t timeout, motor_motor_link_match_fn match, void* match_ctx, motor_motor_link_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void motor_motor_link_endpoint_cancel(motor_motor_link_endpoint* ep, motor_motor_link_request* r);
+/* Requests still waiting. */
+size_t motor_motor_link_endpoint_pending(const motor_motor_link_endpoint* ep);
 
 #ifdef __cplusplus
 } /* extern "C" */

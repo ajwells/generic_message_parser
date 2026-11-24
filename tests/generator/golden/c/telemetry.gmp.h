@@ -438,6 +438,29 @@ typedef struct acme_telemetry_binary_link_event {
     size_t size;
 } acme_telemetry_binary_link_event;
 
+/* Message filter of acme_telemetry_binary_link_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*acme_telemetry_binary_link_match_fn)(void* ctx, const acme_telemetry_binary_link_header_view* h, const acme_telemetry_binary_link_any_view* v);
+
+/* A request that does not block (acme_telemetry_binary_link_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct acme_telemetry_binary_link_request acme_telemetry_binary_link_request;
+typedef void (*acme_telemetry_binary_link_request_fn)(void* ctx, acme_telemetry_binary_link_request* r);
+struct acme_telemetry_binary_link_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    acme_telemetry_binary_link_any_message reply;
+    /* internal */
+    acme_telemetry_binary_link_request* next_;
+    acme_telemetry_binary_link_kind kind_;
+    acme_telemetry_binary_link_match_fn match_;
+    void* match_ctx_;
+    acme_telemetry_binary_link_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after acme_telemetry_binary_link_stream_init(). */
 typedef struct acme_telemetry_binary_link_stream {
     gmsg_stream base;  /* first member */
@@ -447,7 +470,20 @@ typedef struct acme_telemetry_binary_link_stream {
     acme_telemetry_binary_link_kind want_;
     acme_telemetry_binary_link_received got_;
     acme_telemetry_binary_link_any_message* msg_;
+    acme_telemetry_binary_link_match_fn match_;
+    void* match_ctx_;
+    acme_telemetry_binary_link_header* hdr_;
+    acme_telemetry_binary_link_request* pending_;    /* requests waiting, oldest first */
+    acme_telemetry_binary_link_request* completed_;  /* finished, callbacks not run yet */
 } acme_telemetry_binary_link_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after acme_telemetry_binary_link_endpoint_init(). */
+typedef struct acme_telemetry_binary_link_endpoint {
+    acme_telemetry_binary_link_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[ACME_TELEMETRY_BINARY_LINK_MAX_FRAME];  /* transmit buffer */
+} acme_telemetry_binary_link_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). */
 gmsg_error acme_telemetry_binary_link_parse(const uint8_t* data, size_t size, acme_telemetry_binary_link_any_view* out);
@@ -500,6 +536,43 @@ bool acme_telemetry_binary_link_stream_poll_message(acme_telemetry_binary_link_s
 gmsg_poll acme_telemetry_binary_link_stream_poll_event(acme_telemetry_binary_link_stream* s, acme_telemetry_binary_link_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool acme_telemetry_binary_link_stream_poll_for(acme_telemetry_binary_link_stream* s, acme_telemetry_binary_link_kind kind, acme_telemetry_binary_link_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < ACME_TELEMETRY_BINARY_LINK_MAX_FRAME. */
+gmsg_error acme_telemetry_binary_link_endpoint_init(acme_telemetry_binary_link_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void acme_telemetry_binary_link_endpoint_set_clock(acme_telemetry_binary_link_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void acme_telemetry_binary_link_endpoint_set_idle(acme_telemetry_binary_link_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void acme_telemetry_binary_link_endpoint_set_send_policy(acme_telemetry_binary_link_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void acme_telemetry_binary_link_endpoint_set_idle_timeout(acme_telemetry_binary_link_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t acme_telemetry_binary_link_endpoint_service(acme_telemetry_binary_link_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error acme_telemetry_binary_link_endpoint_send_status(acme_telemetry_binary_link_endpoint* ep, const acme_telemetry_status* m);
+gmsg_error acme_telemetry_binary_link_endpoint_send_status_with_header(acme_telemetry_binary_link_endpoint* ep, const acme_telemetry_binary_link_header* h, const acme_telemetry_status* m);
+gmsg_error acme_telemetry_binary_link_endpoint_send_command(acme_telemetry_binary_link_endpoint* ep, const acme_telemetry_command* m);
+gmsg_error acme_telemetry_binary_link_endpoint_send_command_with_header(acme_telemetry_binary_link_endpoint* ep, const acme_telemetry_binary_link_header* h, const acme_telemetry_command* m);
+gmsg_error acme_telemetry_binary_link_endpoint_send_log(acme_telemetry_binary_link_endpoint* ep, const acme_telemetry_log* m);
+gmsg_error acme_telemetry_binary_link_endpoint_send_log_with_header(acme_telemetry_binary_link_endpoint* ep, const acme_telemetry_binary_link_header* h, const acme_telemetry_log* m);
+gmsg_error acme_telemetry_binary_link_endpoint_send(acme_telemetry_binary_link_endpoint* ep, const acme_telemetry_binary_link_any_message* m);
+static inline gmsg_error acme_telemetry_binary_link_endpoint_send_raw(acme_telemetry_binary_link_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error acme_telemetry_binary_link_endpoint_wait_for(acme_telemetry_binary_link_endpoint* ep, acme_telemetry_binary_link_kind kind, uint32_t timeout, acme_telemetry_binary_link_match_fn match, void* match_ctx, acme_telemetry_binary_link_any_message* out, acme_telemetry_binary_link_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error acme_telemetry_binary_link_endpoint_transact(acme_telemetry_binary_link_endpoint* ep, const acme_telemetry_binary_link_header* h, const acme_telemetry_binary_link_any_message* request, acme_telemetry_binary_link_kind kind, uint32_t timeout, acme_telemetry_binary_link_match_fn match, void* match_ctx, acme_telemetry_binary_link_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error acme_telemetry_binary_link_endpoint_request(acme_telemetry_binary_link_endpoint* ep, acme_telemetry_binary_link_request* r, const acme_telemetry_binary_link_header* h, const acme_telemetry_binary_link_any_message* request, acme_telemetry_binary_link_kind kind, uint32_t timeout, acme_telemetry_binary_link_match_fn match, void* match_ctx, acme_telemetry_binary_link_request_fn on_done, void* ctx);
+void acme_telemetry_binary_link_endpoint_expect(acme_telemetry_binary_link_endpoint* ep, acme_telemetry_binary_link_request* r, acme_telemetry_binary_link_kind kind, uint32_t timeout, acme_telemetry_binary_link_match_fn match, void* match_ctx, acme_telemetry_binary_link_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void acme_telemetry_binary_link_endpoint_cancel(acme_telemetry_binary_link_endpoint* ep, acme_telemetry_binary_link_request* r);
+/* Requests still waiting. */
+size_t acme_telemetry_binary_link_endpoint_pending(const acme_telemetry_binary_link_endpoint* ep);
 
 #ifdef __cplusplus
 } /* extern "C" */

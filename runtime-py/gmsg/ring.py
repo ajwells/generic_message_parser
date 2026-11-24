@@ -105,6 +105,11 @@ class ByteRing:
         return bytes(out)
 
     @property
+    def room(self) -> int:
+        """Free room for push_bytes (producer side): bytes that can be appended now without an overrun."""
+        return 0 if self._overrun else self._mask + 1 - (self._w - self._r)
+
+    @property
     def size(self) -> int:
         """Bytes buffered (the producer may add more at any time)."""
         return self._w - self._r

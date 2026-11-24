@@ -97,12 +97,12 @@ private:
     /// shadowed inside the struct (e.g. `encode(const Callbacks&)` would refer to the nested type).
     void check_reserved_names() {
         static const std::set<std::string> reserved = {"Header", "HeaderView", "AnyView", "AnyMessage", "Frame", "Stream",
-                                                       "StreamWith", "Callbacks", "CallbackStream", "Received"};
+                                                       "StreamWith", "Callbacks", "CallbackStream", "Received", "Endpoint"};
         auto check = [&](const std::string& name, const SourceLoc& loc, const char* what) {
             if (reserved.contains(name))
                 c_.diag.error(loc, std::string(what) + " '" + name + "' clashes with a name generated inside protocol '" +
                                        p_.name + "' (reserved: Header, HeaderView, AnyView, AnyMessage, Frame, Stream, "
-                                       "StreamWith, Callbacks, CallbackStream, Received); rename it");
+                                       "StreamWith, Callbacks, CallbackStream, Received, Endpoint); rename it");
         };
         for (const auto& m : c_.schema.messages)
             if (!m->is_header) check(m->name, m->loc, "message");
@@ -605,6 +605,20 @@ private:
         w_.line("using Callbacks::clear;");
         w_.line("[[nodiscard]] Callbacks& callbacks() noexcept { return *this; }");
         w_.close("};");
+        w_.line();
+
+        w_.line("/// CallbackStream joined to a byte source, a byte sink and an optional clock: service(), send(), wait_for<M>(),");
+        w_.line("/// transact<M>() (gmp/endpoint.hpp).");
+        w_.line("template <class Source, class Sink, class Clock = void, std::size_t Capacity = max_frame>");
+        w_.line("using Endpoint = gmsg::Endpoint<" + p_.name + ", Source, Sink, Clock, Capacity>;");
+        w_.line("/// Endpoint over `source` and `sink` (lvalues are kept by reference) and a clock (a std::chrono clock, or a");
+        w_.line("/// callable returning a monotonic unsigned time).");
+        w_.line("template <std::size_t Capacity = max_frame, class Source, class Sink>");
+        w_.line("static auto make_endpoint(Source&& source, Sink&& sink) { return gmsg::make_endpoint<" + p_.name +
+                ", Capacity>(std::forward<Source>(source), std::forward<Sink>(sink)); }");
+        w_.line("template <std::size_t Capacity = max_frame, class Source, class Sink, class Clock>");
+        w_.line("static auto make_endpoint(Source&& source, Sink&& sink, Clock&& clock) { return gmsg::make_endpoint<" + p_.name +
+                ", Capacity>(std::forward<Source>(source), std::forward<Sink>(sink), std::forward<Clock>(clock)); }");
         w_.line();
     }
 

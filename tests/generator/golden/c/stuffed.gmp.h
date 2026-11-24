@@ -209,6 +209,29 @@ typedef struct link_stuffed_sync_link_event {
     size_t size;
 } link_stuffed_sync_link_event;
 
+/* Message filter of link_stuffed_sync_link_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*link_stuffed_sync_link_match_fn)(void* ctx, const link_stuffed_sync_link_header_view* h, const link_stuffed_sync_link_any_view* v);
+
+/* A request that does not block (link_stuffed_sync_link_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct link_stuffed_sync_link_request link_stuffed_sync_link_request;
+typedef void (*link_stuffed_sync_link_request_fn)(void* ctx, link_stuffed_sync_link_request* r);
+struct link_stuffed_sync_link_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    link_stuffed_sync_link_any_message reply;
+    /* internal */
+    link_stuffed_sync_link_request* next_;
+    link_stuffed_sync_link_kind kind_;
+    link_stuffed_sync_link_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_sync_link_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after link_stuffed_sync_link_stream_init(). */
 typedef struct link_stuffed_sync_link_stream {
     gmsg_stream base;  /* first member */
@@ -218,7 +241,20 @@ typedef struct link_stuffed_sync_link_stream {
     link_stuffed_sync_link_kind want_;
     link_stuffed_sync_link_received got_;
     link_stuffed_sync_link_any_message* msg_;
+    link_stuffed_sync_link_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_sync_link_header* hdr_;
+    link_stuffed_sync_link_request* pending_;    /* requests waiting, oldest first */
+    link_stuffed_sync_link_request* completed_;  /* finished, callbacks not run yet */
 } link_stuffed_sync_link_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after link_stuffed_sync_link_endpoint_init(). */
+typedef struct link_stuffed_sync_link_endpoint {
+    link_stuffed_sync_link_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[LINK_STUFFED_SYNC_LINK_MAX_FRAME];  /* transmit buffer */
+} link_stuffed_sync_link_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). The frame is unescaped in place. */
 gmsg_error link_stuffed_sync_link_parse(uint8_t* data, size_t size, link_stuffed_sync_link_any_view* out);
@@ -269,6 +305,41 @@ bool link_stuffed_sync_link_stream_poll_message(link_stuffed_sync_link_stream* s
 gmsg_poll link_stuffed_sync_link_stream_poll_event(link_stuffed_sync_link_stream* s, link_stuffed_sync_link_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool link_stuffed_sync_link_stream_poll_for(link_stuffed_sync_link_stream* s, link_stuffed_sync_link_kind kind, link_stuffed_sync_link_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < LINK_STUFFED_SYNC_LINK_MAX_FRAME. */
+gmsg_error link_stuffed_sync_link_endpoint_init(link_stuffed_sync_link_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void link_stuffed_sync_link_endpoint_set_clock(link_stuffed_sync_link_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void link_stuffed_sync_link_endpoint_set_idle(link_stuffed_sync_link_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void link_stuffed_sync_link_endpoint_set_send_policy(link_stuffed_sync_link_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void link_stuffed_sync_link_endpoint_set_idle_timeout(link_stuffed_sync_link_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t link_stuffed_sync_link_endpoint_service(link_stuffed_sync_link_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error link_stuffed_sync_link_endpoint_send_data(link_stuffed_sync_link_endpoint* ep, const link_stuffed_data* m);
+gmsg_error link_stuffed_sync_link_endpoint_send_data_with_header(link_stuffed_sync_link_endpoint* ep, const link_stuffed_sync_link_header* h, const link_stuffed_data* m);
+gmsg_error link_stuffed_sync_link_endpoint_send_ping(link_stuffed_sync_link_endpoint* ep, const link_stuffed_ping* m);
+gmsg_error link_stuffed_sync_link_endpoint_send_ping_with_header(link_stuffed_sync_link_endpoint* ep, const link_stuffed_sync_link_header* h, const link_stuffed_ping* m);
+gmsg_error link_stuffed_sync_link_endpoint_send(link_stuffed_sync_link_endpoint* ep, const link_stuffed_sync_link_any_message* m);
+static inline gmsg_error link_stuffed_sync_link_endpoint_send_raw(link_stuffed_sync_link_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error link_stuffed_sync_link_endpoint_wait_for(link_stuffed_sync_link_endpoint* ep, link_stuffed_sync_link_kind kind, uint32_t timeout, link_stuffed_sync_link_match_fn match, void* match_ctx, link_stuffed_sync_link_any_message* out, link_stuffed_sync_link_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error link_stuffed_sync_link_endpoint_transact(link_stuffed_sync_link_endpoint* ep, const link_stuffed_sync_link_header* h, const link_stuffed_sync_link_any_message* request, link_stuffed_sync_link_kind kind, uint32_t timeout, link_stuffed_sync_link_match_fn match, void* match_ctx, link_stuffed_sync_link_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error link_stuffed_sync_link_endpoint_request(link_stuffed_sync_link_endpoint* ep, link_stuffed_sync_link_request* r, const link_stuffed_sync_link_header* h, const link_stuffed_sync_link_any_message* request, link_stuffed_sync_link_kind kind, uint32_t timeout, link_stuffed_sync_link_match_fn match, void* match_ctx, link_stuffed_sync_link_request_fn on_done, void* ctx);
+void link_stuffed_sync_link_endpoint_expect(link_stuffed_sync_link_endpoint* ep, link_stuffed_sync_link_request* r, link_stuffed_sync_link_kind kind, uint32_t timeout, link_stuffed_sync_link_match_fn match, void* match_ctx, link_stuffed_sync_link_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void link_stuffed_sync_link_endpoint_cancel(link_stuffed_sync_link_endpoint* ep, link_stuffed_sync_link_request* r);
+/* Requests still waiting. */
+size_t link_stuffed_sync_link_endpoint_pending(const link_stuffed_sync_link_endpoint* ep);
 
 /* ---- WireChecksumHeader ------------------------------------------------------------------------------ */
 
@@ -374,6 +445,29 @@ typedef struct link_stuffed_wire_checksum_event {
     size_t size;
 } link_stuffed_wire_checksum_event;
 
+/* Message filter of link_stuffed_wire_checksum_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*link_stuffed_wire_checksum_match_fn)(void* ctx, const link_stuffed_wire_checksum_header_view* h, const link_stuffed_wire_checksum_any_view* v);
+
+/* A request that does not block (link_stuffed_wire_checksum_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct link_stuffed_wire_checksum_request link_stuffed_wire_checksum_request;
+typedef void (*link_stuffed_wire_checksum_request_fn)(void* ctx, link_stuffed_wire_checksum_request* r);
+struct link_stuffed_wire_checksum_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    link_stuffed_wire_checksum_any_message reply;
+    /* internal */
+    link_stuffed_wire_checksum_request* next_;
+    link_stuffed_wire_checksum_kind kind_;
+    link_stuffed_wire_checksum_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_wire_checksum_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after link_stuffed_wire_checksum_stream_init(). */
 typedef struct link_stuffed_wire_checksum_stream {
     gmsg_stream base;  /* first member */
@@ -383,7 +477,20 @@ typedef struct link_stuffed_wire_checksum_stream {
     link_stuffed_wire_checksum_kind want_;
     link_stuffed_wire_checksum_received got_;
     link_stuffed_wire_checksum_any_message* msg_;
+    link_stuffed_wire_checksum_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_wire_checksum_header* hdr_;
+    link_stuffed_wire_checksum_request* pending_;    /* requests waiting, oldest first */
+    link_stuffed_wire_checksum_request* completed_;  /* finished, callbacks not run yet */
 } link_stuffed_wire_checksum_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after link_stuffed_wire_checksum_endpoint_init(). */
+typedef struct link_stuffed_wire_checksum_endpoint {
+    link_stuffed_wire_checksum_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[LINK_STUFFED_WIRE_CHECKSUM_MAX_FRAME];  /* transmit buffer */
+} link_stuffed_wire_checksum_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). The frame is unescaped in place. */
 gmsg_error link_stuffed_wire_checksum_parse(uint8_t* data, size_t size, link_stuffed_wire_checksum_any_view* out);
@@ -434,6 +541,41 @@ bool link_stuffed_wire_checksum_stream_poll_message(link_stuffed_wire_checksum_s
 gmsg_poll link_stuffed_wire_checksum_stream_poll_event(link_stuffed_wire_checksum_stream* s, link_stuffed_wire_checksum_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool link_stuffed_wire_checksum_stream_poll_for(link_stuffed_wire_checksum_stream* s, link_stuffed_wire_checksum_kind kind, link_stuffed_wire_checksum_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < LINK_STUFFED_WIRE_CHECKSUM_MAX_FRAME. */
+gmsg_error link_stuffed_wire_checksum_endpoint_init(link_stuffed_wire_checksum_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void link_stuffed_wire_checksum_endpoint_set_clock(link_stuffed_wire_checksum_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void link_stuffed_wire_checksum_endpoint_set_idle(link_stuffed_wire_checksum_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void link_stuffed_wire_checksum_endpoint_set_send_policy(link_stuffed_wire_checksum_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void link_stuffed_wire_checksum_endpoint_set_idle_timeout(link_stuffed_wire_checksum_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t link_stuffed_wire_checksum_endpoint_service(link_stuffed_wire_checksum_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error link_stuffed_wire_checksum_endpoint_send_data(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_data* m);
+gmsg_error link_stuffed_wire_checksum_endpoint_send_data_with_header(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_wire_checksum_header* h, const link_stuffed_data* m);
+gmsg_error link_stuffed_wire_checksum_endpoint_send_ping(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_ping* m);
+gmsg_error link_stuffed_wire_checksum_endpoint_send_ping_with_header(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_wire_checksum_header* h, const link_stuffed_ping* m);
+gmsg_error link_stuffed_wire_checksum_endpoint_send(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_wire_checksum_any_message* m);
+static inline gmsg_error link_stuffed_wire_checksum_endpoint_send_raw(link_stuffed_wire_checksum_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error link_stuffed_wire_checksum_endpoint_wait_for(link_stuffed_wire_checksum_endpoint* ep, link_stuffed_wire_checksum_kind kind, uint32_t timeout, link_stuffed_wire_checksum_match_fn match, void* match_ctx, link_stuffed_wire_checksum_any_message* out, link_stuffed_wire_checksum_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error link_stuffed_wire_checksum_endpoint_transact(link_stuffed_wire_checksum_endpoint* ep, const link_stuffed_wire_checksum_header* h, const link_stuffed_wire_checksum_any_message* request, link_stuffed_wire_checksum_kind kind, uint32_t timeout, link_stuffed_wire_checksum_match_fn match, void* match_ctx, link_stuffed_wire_checksum_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error link_stuffed_wire_checksum_endpoint_request(link_stuffed_wire_checksum_endpoint* ep, link_stuffed_wire_checksum_request* r, const link_stuffed_wire_checksum_header* h, const link_stuffed_wire_checksum_any_message* request, link_stuffed_wire_checksum_kind kind, uint32_t timeout, link_stuffed_wire_checksum_match_fn match, void* match_ctx, link_stuffed_wire_checksum_request_fn on_done, void* ctx);
+void link_stuffed_wire_checksum_endpoint_expect(link_stuffed_wire_checksum_endpoint* ep, link_stuffed_wire_checksum_request* r, link_stuffed_wire_checksum_kind kind, uint32_t timeout, link_stuffed_wire_checksum_match_fn match, void* match_ctx, link_stuffed_wire_checksum_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void link_stuffed_wire_checksum_endpoint_cancel(link_stuffed_wire_checksum_endpoint* ep, link_stuffed_wire_checksum_request* r);
+/* Requests still waiting. */
+size_t link_stuffed_wire_checksum_endpoint_pending(const link_stuffed_wire_checksum_endpoint* ep);
 
 /* ---- WireLengthHeader -------------------------------------------------------------------------------- */
 
@@ -539,6 +681,29 @@ typedef struct link_stuffed_wire_length_event {
     size_t size;
 } link_stuffed_wire_length_event;
 
+/* Message filter of link_stuffed_wire_length_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*link_stuffed_wire_length_match_fn)(void* ctx, const link_stuffed_wire_length_header_view* h, const link_stuffed_wire_length_any_view* v);
+
+/* A request that does not block (link_stuffed_wire_length_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct link_stuffed_wire_length_request link_stuffed_wire_length_request;
+typedef void (*link_stuffed_wire_length_request_fn)(void* ctx, link_stuffed_wire_length_request* r);
+struct link_stuffed_wire_length_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    link_stuffed_wire_length_any_message reply;
+    /* internal */
+    link_stuffed_wire_length_request* next_;
+    link_stuffed_wire_length_kind kind_;
+    link_stuffed_wire_length_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_wire_length_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after link_stuffed_wire_length_stream_init(). */
 typedef struct link_stuffed_wire_length_stream {
     gmsg_stream base;  /* first member */
@@ -548,7 +713,20 @@ typedef struct link_stuffed_wire_length_stream {
     link_stuffed_wire_length_kind want_;
     link_stuffed_wire_length_received got_;
     link_stuffed_wire_length_any_message* msg_;
+    link_stuffed_wire_length_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_wire_length_header* hdr_;
+    link_stuffed_wire_length_request* pending_;    /* requests waiting, oldest first */
+    link_stuffed_wire_length_request* completed_;  /* finished, callbacks not run yet */
 } link_stuffed_wire_length_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after link_stuffed_wire_length_endpoint_init(). */
+typedef struct link_stuffed_wire_length_endpoint {
+    link_stuffed_wire_length_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[LINK_STUFFED_WIRE_LENGTH_MAX_FRAME];  /* transmit buffer */
+} link_stuffed_wire_length_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). The frame is unescaped in place. */
 gmsg_error link_stuffed_wire_length_parse(uint8_t* data, size_t size, link_stuffed_wire_length_any_view* out);
@@ -599,6 +777,41 @@ bool link_stuffed_wire_length_stream_poll_message(link_stuffed_wire_length_strea
 gmsg_poll link_stuffed_wire_length_stream_poll_event(link_stuffed_wire_length_stream* s, link_stuffed_wire_length_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool link_stuffed_wire_length_stream_poll_for(link_stuffed_wire_length_stream* s, link_stuffed_wire_length_kind kind, link_stuffed_wire_length_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < LINK_STUFFED_WIRE_LENGTH_MAX_FRAME. */
+gmsg_error link_stuffed_wire_length_endpoint_init(link_stuffed_wire_length_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void link_stuffed_wire_length_endpoint_set_clock(link_stuffed_wire_length_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void link_stuffed_wire_length_endpoint_set_idle(link_stuffed_wire_length_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void link_stuffed_wire_length_endpoint_set_send_policy(link_stuffed_wire_length_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void link_stuffed_wire_length_endpoint_set_idle_timeout(link_stuffed_wire_length_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t link_stuffed_wire_length_endpoint_service(link_stuffed_wire_length_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error link_stuffed_wire_length_endpoint_send_data(link_stuffed_wire_length_endpoint* ep, const link_stuffed_data* m);
+gmsg_error link_stuffed_wire_length_endpoint_send_data_with_header(link_stuffed_wire_length_endpoint* ep, const link_stuffed_wire_length_header* h, const link_stuffed_data* m);
+gmsg_error link_stuffed_wire_length_endpoint_send_ping(link_stuffed_wire_length_endpoint* ep, const link_stuffed_ping* m);
+gmsg_error link_stuffed_wire_length_endpoint_send_ping_with_header(link_stuffed_wire_length_endpoint* ep, const link_stuffed_wire_length_header* h, const link_stuffed_ping* m);
+gmsg_error link_stuffed_wire_length_endpoint_send(link_stuffed_wire_length_endpoint* ep, const link_stuffed_wire_length_any_message* m);
+static inline gmsg_error link_stuffed_wire_length_endpoint_send_raw(link_stuffed_wire_length_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error link_stuffed_wire_length_endpoint_wait_for(link_stuffed_wire_length_endpoint* ep, link_stuffed_wire_length_kind kind, uint32_t timeout, link_stuffed_wire_length_match_fn match, void* match_ctx, link_stuffed_wire_length_any_message* out, link_stuffed_wire_length_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error link_stuffed_wire_length_endpoint_transact(link_stuffed_wire_length_endpoint* ep, const link_stuffed_wire_length_header* h, const link_stuffed_wire_length_any_message* request, link_stuffed_wire_length_kind kind, uint32_t timeout, link_stuffed_wire_length_match_fn match, void* match_ctx, link_stuffed_wire_length_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error link_stuffed_wire_length_endpoint_request(link_stuffed_wire_length_endpoint* ep, link_stuffed_wire_length_request* r, const link_stuffed_wire_length_header* h, const link_stuffed_wire_length_any_message* request, link_stuffed_wire_length_kind kind, uint32_t timeout, link_stuffed_wire_length_match_fn match, void* match_ctx, link_stuffed_wire_length_request_fn on_done, void* ctx);
+void link_stuffed_wire_length_endpoint_expect(link_stuffed_wire_length_endpoint* ep, link_stuffed_wire_length_request* r, link_stuffed_wire_length_kind kind, uint32_t timeout, link_stuffed_wire_length_match_fn match, void* match_ctx, link_stuffed_wire_length_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void link_stuffed_wire_length_endpoint_cancel(link_stuffed_wire_length_endpoint* ep, link_stuffed_wire_length_request* r);
+/* Requests still waiting. */
+size_t link_stuffed_wire_length_endpoint_pending(const link_stuffed_wire_length_endpoint* ep);
 
 /* ---- CrcLengthHeader --------------------------------------------------------------------------------- */
 
@@ -704,6 +917,29 @@ typedef struct link_stuffed_crc_length_event {
     size_t size;
 } link_stuffed_crc_length_event;
 
+/* Message filter of link_stuffed_crc_length_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*link_stuffed_crc_length_match_fn)(void* ctx, const link_stuffed_crc_length_header_view* h, const link_stuffed_crc_length_any_view* v);
+
+/* A request that does not block (link_stuffed_crc_length_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct link_stuffed_crc_length_request link_stuffed_crc_length_request;
+typedef void (*link_stuffed_crc_length_request_fn)(void* ctx, link_stuffed_crc_length_request* r);
+struct link_stuffed_crc_length_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    link_stuffed_crc_length_any_message reply;
+    /* internal */
+    link_stuffed_crc_length_request* next_;
+    link_stuffed_crc_length_kind kind_;
+    link_stuffed_crc_length_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_crc_length_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after link_stuffed_crc_length_stream_init(). */
 typedef struct link_stuffed_crc_length_stream {
     gmsg_stream base;  /* first member */
@@ -713,7 +949,20 @@ typedef struct link_stuffed_crc_length_stream {
     link_stuffed_crc_length_kind want_;
     link_stuffed_crc_length_received got_;
     link_stuffed_crc_length_any_message* msg_;
+    link_stuffed_crc_length_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_crc_length_header* hdr_;
+    link_stuffed_crc_length_request* pending_;    /* requests waiting, oldest first */
+    link_stuffed_crc_length_request* completed_;  /* finished, callbacks not run yet */
 } link_stuffed_crc_length_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after link_stuffed_crc_length_endpoint_init(). */
+typedef struct link_stuffed_crc_length_endpoint {
+    link_stuffed_crc_length_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[LINK_STUFFED_CRC_LENGTH_MAX_FRAME];  /* transmit buffer */
+} link_stuffed_crc_length_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). The frame is unescaped in place. */
 gmsg_error link_stuffed_crc_length_parse(uint8_t* data, size_t size, link_stuffed_crc_length_any_view* out);
@@ -764,6 +1013,41 @@ bool link_stuffed_crc_length_stream_poll_message(link_stuffed_crc_length_stream*
 gmsg_poll link_stuffed_crc_length_stream_poll_event(link_stuffed_crc_length_stream* s, link_stuffed_crc_length_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool link_stuffed_crc_length_stream_poll_for(link_stuffed_crc_length_stream* s, link_stuffed_crc_length_kind kind, link_stuffed_crc_length_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < LINK_STUFFED_CRC_LENGTH_MAX_FRAME. */
+gmsg_error link_stuffed_crc_length_endpoint_init(link_stuffed_crc_length_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void link_stuffed_crc_length_endpoint_set_clock(link_stuffed_crc_length_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void link_stuffed_crc_length_endpoint_set_idle(link_stuffed_crc_length_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void link_stuffed_crc_length_endpoint_set_send_policy(link_stuffed_crc_length_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void link_stuffed_crc_length_endpoint_set_idle_timeout(link_stuffed_crc_length_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t link_stuffed_crc_length_endpoint_service(link_stuffed_crc_length_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error link_stuffed_crc_length_endpoint_send_data(link_stuffed_crc_length_endpoint* ep, const link_stuffed_data* m);
+gmsg_error link_stuffed_crc_length_endpoint_send_data_with_header(link_stuffed_crc_length_endpoint* ep, const link_stuffed_crc_length_header* h, const link_stuffed_data* m);
+gmsg_error link_stuffed_crc_length_endpoint_send_ping(link_stuffed_crc_length_endpoint* ep, const link_stuffed_ping* m);
+gmsg_error link_stuffed_crc_length_endpoint_send_ping_with_header(link_stuffed_crc_length_endpoint* ep, const link_stuffed_crc_length_header* h, const link_stuffed_ping* m);
+gmsg_error link_stuffed_crc_length_endpoint_send(link_stuffed_crc_length_endpoint* ep, const link_stuffed_crc_length_any_message* m);
+static inline gmsg_error link_stuffed_crc_length_endpoint_send_raw(link_stuffed_crc_length_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error link_stuffed_crc_length_endpoint_wait_for(link_stuffed_crc_length_endpoint* ep, link_stuffed_crc_length_kind kind, uint32_t timeout, link_stuffed_crc_length_match_fn match, void* match_ctx, link_stuffed_crc_length_any_message* out, link_stuffed_crc_length_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error link_stuffed_crc_length_endpoint_transact(link_stuffed_crc_length_endpoint* ep, const link_stuffed_crc_length_header* h, const link_stuffed_crc_length_any_message* request, link_stuffed_crc_length_kind kind, uint32_t timeout, link_stuffed_crc_length_match_fn match, void* match_ctx, link_stuffed_crc_length_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error link_stuffed_crc_length_endpoint_request(link_stuffed_crc_length_endpoint* ep, link_stuffed_crc_length_request* r, const link_stuffed_crc_length_header* h, const link_stuffed_crc_length_any_message* request, link_stuffed_crc_length_kind kind, uint32_t timeout, link_stuffed_crc_length_match_fn match, void* match_ctx, link_stuffed_crc_length_request_fn on_done, void* ctx);
+void link_stuffed_crc_length_endpoint_expect(link_stuffed_crc_length_endpoint* ep, link_stuffed_crc_length_request* r, link_stuffed_crc_length_kind kind, uint32_t timeout, link_stuffed_crc_length_match_fn match, void* match_ctx, link_stuffed_crc_length_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void link_stuffed_crc_length_endpoint_cancel(link_stuffed_crc_length_endpoint* ep, link_stuffed_crc_length_request* r);
+/* Requests still waiting. */
+size_t link_stuffed_crc_length_endpoint_pending(const link_stuffed_crc_length_endpoint* ep);
 
 /* ---- WireCrcLengthHeader ----------------------------------------------------------------------------- */
 
@@ -869,6 +1153,29 @@ typedef struct link_stuffed_wire_crc_length_event {
     size_t size;
 } link_stuffed_wire_crc_length_event;
 
+/* Message filter of link_stuffed_wire_crc_length_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*link_stuffed_wire_crc_length_match_fn)(void* ctx, const link_stuffed_wire_crc_length_header_view* h, const link_stuffed_wire_crc_length_any_view* v);
+
+/* A request that does not block (link_stuffed_wire_crc_length_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct link_stuffed_wire_crc_length_request link_stuffed_wire_crc_length_request;
+typedef void (*link_stuffed_wire_crc_length_request_fn)(void* ctx, link_stuffed_wire_crc_length_request* r);
+struct link_stuffed_wire_crc_length_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    link_stuffed_wire_crc_length_any_message reply;
+    /* internal */
+    link_stuffed_wire_crc_length_request* next_;
+    link_stuffed_wire_crc_length_kind kind_;
+    link_stuffed_wire_crc_length_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_wire_crc_length_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after link_stuffed_wire_crc_length_stream_init(). */
 typedef struct link_stuffed_wire_crc_length_stream {
     gmsg_stream base;  /* first member */
@@ -878,7 +1185,20 @@ typedef struct link_stuffed_wire_crc_length_stream {
     link_stuffed_wire_crc_length_kind want_;
     link_stuffed_wire_crc_length_received got_;
     link_stuffed_wire_crc_length_any_message* msg_;
+    link_stuffed_wire_crc_length_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_wire_crc_length_header* hdr_;
+    link_stuffed_wire_crc_length_request* pending_;    /* requests waiting, oldest first */
+    link_stuffed_wire_crc_length_request* completed_;  /* finished, callbacks not run yet */
 } link_stuffed_wire_crc_length_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after link_stuffed_wire_crc_length_endpoint_init(). */
+typedef struct link_stuffed_wire_crc_length_endpoint {
+    link_stuffed_wire_crc_length_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[LINK_STUFFED_WIRE_CRC_LENGTH_MAX_FRAME];  /* transmit buffer */
+} link_stuffed_wire_crc_length_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). The frame is unescaped in place. */
 gmsg_error link_stuffed_wire_crc_length_parse(uint8_t* data, size_t size, link_stuffed_wire_crc_length_any_view* out);
@@ -929,6 +1249,41 @@ bool link_stuffed_wire_crc_length_stream_poll_message(link_stuffed_wire_crc_leng
 gmsg_poll link_stuffed_wire_crc_length_stream_poll_event(link_stuffed_wire_crc_length_stream* s, link_stuffed_wire_crc_length_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool link_stuffed_wire_crc_length_stream_poll_for(link_stuffed_wire_crc_length_stream* s, link_stuffed_wire_crc_length_kind kind, link_stuffed_wire_crc_length_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < LINK_STUFFED_WIRE_CRC_LENGTH_MAX_FRAME. */
+gmsg_error link_stuffed_wire_crc_length_endpoint_init(link_stuffed_wire_crc_length_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void link_stuffed_wire_crc_length_endpoint_set_clock(link_stuffed_wire_crc_length_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void link_stuffed_wire_crc_length_endpoint_set_idle(link_stuffed_wire_crc_length_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void link_stuffed_wire_crc_length_endpoint_set_send_policy(link_stuffed_wire_crc_length_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void link_stuffed_wire_crc_length_endpoint_set_idle_timeout(link_stuffed_wire_crc_length_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t link_stuffed_wire_crc_length_endpoint_service(link_stuffed_wire_crc_length_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error link_stuffed_wire_crc_length_endpoint_send_data(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_data* m);
+gmsg_error link_stuffed_wire_crc_length_endpoint_send_data_with_header(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_wire_crc_length_header* h, const link_stuffed_data* m);
+gmsg_error link_stuffed_wire_crc_length_endpoint_send_ping(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_ping* m);
+gmsg_error link_stuffed_wire_crc_length_endpoint_send_ping_with_header(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_wire_crc_length_header* h, const link_stuffed_ping* m);
+gmsg_error link_stuffed_wire_crc_length_endpoint_send(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_wire_crc_length_any_message* m);
+static inline gmsg_error link_stuffed_wire_crc_length_endpoint_send_raw(link_stuffed_wire_crc_length_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error link_stuffed_wire_crc_length_endpoint_wait_for(link_stuffed_wire_crc_length_endpoint* ep, link_stuffed_wire_crc_length_kind kind, uint32_t timeout, link_stuffed_wire_crc_length_match_fn match, void* match_ctx, link_stuffed_wire_crc_length_any_message* out, link_stuffed_wire_crc_length_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error link_stuffed_wire_crc_length_endpoint_transact(link_stuffed_wire_crc_length_endpoint* ep, const link_stuffed_wire_crc_length_header* h, const link_stuffed_wire_crc_length_any_message* request, link_stuffed_wire_crc_length_kind kind, uint32_t timeout, link_stuffed_wire_crc_length_match_fn match, void* match_ctx, link_stuffed_wire_crc_length_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error link_stuffed_wire_crc_length_endpoint_request(link_stuffed_wire_crc_length_endpoint* ep, link_stuffed_wire_crc_length_request* r, const link_stuffed_wire_crc_length_header* h, const link_stuffed_wire_crc_length_any_message* request, link_stuffed_wire_crc_length_kind kind, uint32_t timeout, link_stuffed_wire_crc_length_match_fn match, void* match_ctx, link_stuffed_wire_crc_length_request_fn on_done, void* ctx);
+void link_stuffed_wire_crc_length_endpoint_expect(link_stuffed_wire_crc_length_endpoint* ep, link_stuffed_wire_crc_length_request* r, link_stuffed_wire_crc_length_kind kind, uint32_t timeout, link_stuffed_wire_crc_length_match_fn match, void* match_ctx, link_stuffed_wire_crc_length_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void link_stuffed_wire_crc_length_endpoint_cancel(link_stuffed_wire_crc_length_endpoint* ep, link_stuffed_wire_crc_length_request* r);
+/* Requests still waiting. */
+size_t link_stuffed_wire_crc_length_endpoint_pending(const link_stuffed_wire_crc_length_endpoint* ep);
 
 /* ---- WireCrcOverWireHeader --------------------------------------------------------------------------- */
 
@@ -1034,6 +1389,29 @@ typedef struct link_stuffed_wire_crc_over_wire_event {
     size_t size;
 } link_stuffed_wire_crc_over_wire_event;
 
+/* Message filter of link_stuffed_wire_crc_over_wire_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*link_stuffed_wire_crc_over_wire_match_fn)(void* ctx, const link_stuffed_wire_crc_over_wire_header_view* h, const link_stuffed_wire_crc_over_wire_any_view* v);
+
+/* A request that does not block (link_stuffed_wire_crc_over_wire_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct link_stuffed_wire_crc_over_wire_request link_stuffed_wire_crc_over_wire_request;
+typedef void (*link_stuffed_wire_crc_over_wire_request_fn)(void* ctx, link_stuffed_wire_crc_over_wire_request* r);
+struct link_stuffed_wire_crc_over_wire_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    link_stuffed_wire_crc_over_wire_any_message reply;
+    /* internal */
+    link_stuffed_wire_crc_over_wire_request* next_;
+    link_stuffed_wire_crc_over_wire_kind kind_;
+    link_stuffed_wire_crc_over_wire_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_wire_crc_over_wire_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after link_stuffed_wire_crc_over_wire_stream_init(). */
 typedef struct link_stuffed_wire_crc_over_wire_stream {
     gmsg_stream base;  /* first member */
@@ -1043,7 +1421,20 @@ typedef struct link_stuffed_wire_crc_over_wire_stream {
     link_stuffed_wire_crc_over_wire_kind want_;
     link_stuffed_wire_crc_over_wire_received got_;
     link_stuffed_wire_crc_over_wire_any_message* msg_;
+    link_stuffed_wire_crc_over_wire_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_wire_crc_over_wire_header* hdr_;
+    link_stuffed_wire_crc_over_wire_request* pending_;    /* requests waiting, oldest first */
+    link_stuffed_wire_crc_over_wire_request* completed_;  /* finished, callbacks not run yet */
 } link_stuffed_wire_crc_over_wire_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after link_stuffed_wire_crc_over_wire_endpoint_init(). */
+typedef struct link_stuffed_wire_crc_over_wire_endpoint {
+    link_stuffed_wire_crc_over_wire_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[LINK_STUFFED_WIRE_CRC_OVER_WIRE_MAX_FRAME];  /* transmit buffer */
+} link_stuffed_wire_crc_over_wire_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). The frame is unescaped in place. */
 gmsg_error link_stuffed_wire_crc_over_wire_parse(uint8_t* data, size_t size, link_stuffed_wire_crc_over_wire_any_view* out);
@@ -1094,6 +1485,41 @@ bool link_stuffed_wire_crc_over_wire_stream_poll_message(link_stuffed_wire_crc_o
 gmsg_poll link_stuffed_wire_crc_over_wire_stream_poll_event(link_stuffed_wire_crc_over_wire_stream* s, link_stuffed_wire_crc_over_wire_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool link_stuffed_wire_crc_over_wire_stream_poll_for(link_stuffed_wire_crc_over_wire_stream* s, link_stuffed_wire_crc_over_wire_kind kind, link_stuffed_wire_crc_over_wire_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < LINK_STUFFED_WIRE_CRC_OVER_WIRE_MAX_FRAME. */
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_init(link_stuffed_wire_crc_over_wire_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void link_stuffed_wire_crc_over_wire_endpoint_set_clock(link_stuffed_wire_crc_over_wire_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void link_stuffed_wire_crc_over_wire_endpoint_set_idle(link_stuffed_wire_crc_over_wire_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void link_stuffed_wire_crc_over_wire_endpoint_set_send_policy(link_stuffed_wire_crc_over_wire_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void link_stuffed_wire_crc_over_wire_endpoint_set_idle_timeout(link_stuffed_wire_crc_over_wire_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t link_stuffed_wire_crc_over_wire_endpoint_service(link_stuffed_wire_crc_over_wire_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_send_data(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_data* m);
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_send_data_with_header(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_wire_crc_over_wire_header* h, const link_stuffed_data* m);
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_send_ping(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_ping* m);
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_send_ping_with_header(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_wire_crc_over_wire_header* h, const link_stuffed_ping* m);
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_send(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_wire_crc_over_wire_any_message* m);
+static inline gmsg_error link_stuffed_wire_crc_over_wire_endpoint_send_raw(link_stuffed_wire_crc_over_wire_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_wait_for(link_stuffed_wire_crc_over_wire_endpoint* ep, link_stuffed_wire_crc_over_wire_kind kind, uint32_t timeout, link_stuffed_wire_crc_over_wire_match_fn match, void* match_ctx, link_stuffed_wire_crc_over_wire_any_message* out, link_stuffed_wire_crc_over_wire_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_transact(link_stuffed_wire_crc_over_wire_endpoint* ep, const link_stuffed_wire_crc_over_wire_header* h, const link_stuffed_wire_crc_over_wire_any_message* request, link_stuffed_wire_crc_over_wire_kind kind, uint32_t timeout, link_stuffed_wire_crc_over_wire_match_fn match, void* match_ctx, link_stuffed_wire_crc_over_wire_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error link_stuffed_wire_crc_over_wire_endpoint_request(link_stuffed_wire_crc_over_wire_endpoint* ep, link_stuffed_wire_crc_over_wire_request* r, const link_stuffed_wire_crc_over_wire_header* h, const link_stuffed_wire_crc_over_wire_any_message* request, link_stuffed_wire_crc_over_wire_kind kind, uint32_t timeout, link_stuffed_wire_crc_over_wire_match_fn match, void* match_ctx, link_stuffed_wire_crc_over_wire_request_fn on_done, void* ctx);
+void link_stuffed_wire_crc_over_wire_endpoint_expect(link_stuffed_wire_crc_over_wire_endpoint* ep, link_stuffed_wire_crc_over_wire_request* r, link_stuffed_wire_crc_over_wire_kind kind, uint32_t timeout, link_stuffed_wire_crc_over_wire_match_fn match, void* match_ctx, link_stuffed_wire_crc_over_wire_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void link_stuffed_wire_crc_over_wire_endpoint_cancel(link_stuffed_wire_crc_over_wire_endpoint* ep, link_stuffed_wire_crc_over_wire_request* r);
+/* Requests still waiting. */
+size_t link_stuffed_wire_crc_over_wire_endpoint_pending(const link_stuffed_wire_crc_over_wire_endpoint* ep);
 
 /* ==== protocol FixedLink =========================================================================== */
 
@@ -1146,6 +1572,29 @@ typedef struct link_stuffed_fixed_link_event {
     size_t size;
 } link_stuffed_fixed_link_event;
 
+/* Message filter of link_stuffed_fixed_link_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*link_stuffed_fixed_link_match_fn)(void* ctx, const link_stuffed_fixed_link_any_view* v);
+
+/* A request that does not block (link_stuffed_fixed_link_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct link_stuffed_fixed_link_request link_stuffed_fixed_link_request;
+typedef void (*link_stuffed_fixed_link_request_fn)(void* ctx, link_stuffed_fixed_link_request* r);
+struct link_stuffed_fixed_link_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    link_stuffed_fixed_link_any_message reply;
+    /* internal */
+    link_stuffed_fixed_link_request* next_;
+    link_stuffed_fixed_link_kind kind_;
+    link_stuffed_fixed_link_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_fixed_link_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after link_stuffed_fixed_link_stream_init(). */
 typedef struct link_stuffed_fixed_link_stream {
     gmsg_stream base;  /* first member */
@@ -1155,7 +1604,19 @@ typedef struct link_stuffed_fixed_link_stream {
     link_stuffed_fixed_link_kind want_;
     link_stuffed_fixed_link_received got_;
     link_stuffed_fixed_link_any_message* msg_;
+    link_stuffed_fixed_link_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_fixed_link_request* pending_;    /* requests waiting, oldest first */
+    link_stuffed_fixed_link_request* completed_;  /* finished, callbacks not run yet */
 } link_stuffed_fixed_link_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after link_stuffed_fixed_link_endpoint_init(). */
+typedef struct link_stuffed_fixed_link_endpoint {
+    link_stuffed_fixed_link_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[LINK_STUFFED_FIXED_LINK_MAX_FRAME];  /* transmit buffer */
+} link_stuffed_fixed_link_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). The frame is unescaped in place. */
 gmsg_error link_stuffed_fixed_link_parse(uint8_t* data, size_t size, link_stuffed_fixed_link_any_view* out);
@@ -1203,6 +1664,38 @@ bool link_stuffed_fixed_link_stream_poll_message(link_stuffed_fixed_link_stream*
 gmsg_poll link_stuffed_fixed_link_stream_poll_event(link_stuffed_fixed_link_stream* s, link_stuffed_fixed_link_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool link_stuffed_fixed_link_stream_poll_for(link_stuffed_fixed_link_stream* s, link_stuffed_fixed_link_kind kind, link_stuffed_fixed_link_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < LINK_STUFFED_FIXED_LINK_MAX_FRAME. */
+gmsg_error link_stuffed_fixed_link_endpoint_init(link_stuffed_fixed_link_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void link_stuffed_fixed_link_endpoint_set_clock(link_stuffed_fixed_link_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void link_stuffed_fixed_link_endpoint_set_idle(link_stuffed_fixed_link_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void link_stuffed_fixed_link_endpoint_set_send_policy(link_stuffed_fixed_link_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void link_stuffed_fixed_link_endpoint_set_idle_timeout(link_stuffed_fixed_link_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t link_stuffed_fixed_link_endpoint_service(link_stuffed_fixed_link_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error link_stuffed_fixed_link_endpoint_send_ping(link_stuffed_fixed_link_endpoint* ep, const link_stuffed_ping* m);
+gmsg_error link_stuffed_fixed_link_endpoint_send(link_stuffed_fixed_link_endpoint* ep, const link_stuffed_fixed_link_any_message* m);
+static inline gmsg_error link_stuffed_fixed_link_endpoint_send_raw(link_stuffed_fixed_link_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out. Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error link_stuffed_fixed_link_endpoint_wait_for(link_stuffed_fixed_link_endpoint* ep, link_stuffed_fixed_link_kind kind, uint32_t timeout, link_stuffed_fixed_link_match_fn match, void* match_ctx, link_stuffed_fixed_link_any_message* out);
+/* Deliver what has arrived, send `request`, then _wait_for. */
+gmsg_error link_stuffed_fixed_link_endpoint_transact(link_stuffed_fixed_link_endpoint* ep, const link_stuffed_fixed_link_any_message* request, link_stuffed_fixed_link_kind kind, uint32_t timeout, link_stuffed_fixed_link_match_fn match, void* match_ctx, link_stuffed_fixed_link_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error link_stuffed_fixed_link_endpoint_request(link_stuffed_fixed_link_endpoint* ep, link_stuffed_fixed_link_request* r, const link_stuffed_fixed_link_any_message* request, link_stuffed_fixed_link_kind kind, uint32_t timeout, link_stuffed_fixed_link_match_fn match, void* match_ctx, link_stuffed_fixed_link_request_fn on_done, void* ctx);
+void link_stuffed_fixed_link_endpoint_expect(link_stuffed_fixed_link_endpoint* ep, link_stuffed_fixed_link_request* r, link_stuffed_fixed_link_kind kind, uint32_t timeout, link_stuffed_fixed_link_match_fn match, void* match_ctx, link_stuffed_fixed_link_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void link_stuffed_fixed_link_endpoint_cancel(link_stuffed_fixed_link_endpoint* ep, link_stuffed_fixed_link_request* r);
+/* Requests still waiting. */
+size_t link_stuffed_fixed_link_endpoint_pending(const link_stuffed_fixed_link_endpoint* ep);
 
 /* ---- DelimitedHeader --------------------------------------------------------------------------------- */
 
@@ -1304,6 +1797,29 @@ typedef struct link_stuffed_delimited_event {
     size_t size;
 } link_stuffed_delimited_event;
 
+/* Message filter of link_stuffed_delimited_endpoint_wait_for / _transact: true accepts the message. */
+typedef bool (*link_stuffed_delimited_match_fn)(void* ctx, const link_stuffed_delimited_header_view* h, const link_stuffed_delimited_any_view* v);
+
+/* A request that does not block (link_stuffed_delimited_endpoint_request / _expect): caller-owned, completed by a later
+ * _service() or wait. When state is GMSG_REQUEST_DONE, error is GMSG_OK (reply holds the message) or
+ * GMSG_ERR_TIMEOUT; on_done(ctx, r) runs once then. Keep it alive while it waits, or cancel it. */
+typedef struct link_stuffed_delimited_request link_stuffed_delimited_request;
+typedef void (*link_stuffed_delimited_request_fn)(void* ctx, link_stuffed_delimited_request* r);
+struct link_stuffed_delimited_request {
+    gmsg_request_state state;
+    gmsg_error error;
+    link_stuffed_delimited_any_message reply;
+    /* internal */
+    link_stuffed_delimited_request* next_;
+    link_stuffed_delimited_kind kind_;
+    link_stuffed_delimited_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_delimited_request_fn on_done_;
+    void* ctx_;
+    uint32_t start_;
+    uint32_t timeout_;
+};
+
 /* Stream parser; set callbacks in .cb after link_stuffed_delimited_stream_init(). */
 typedef struct link_stuffed_delimited_stream {
     gmsg_stream base;  /* first member */
@@ -1313,7 +1829,20 @@ typedef struct link_stuffed_delimited_stream {
     link_stuffed_delimited_kind want_;
     link_stuffed_delimited_received got_;
     link_stuffed_delimited_any_message* msg_;
+    link_stuffed_delimited_match_fn match_;
+    void* match_ctx_;
+    link_stuffed_delimited_header* hdr_;
+    link_stuffed_delimited_request* pending_;    /* requests waiting, oldest first */
+    link_stuffed_delimited_request* completed_;  /* finished, callbacks not run yet */
 } link_stuffed_delimited_stream;
+
+/* The stream joined to a byte source, a byte sink and a clock (gmp/c/endpoint.h). Set callbacks in
+ * .stream.cb after link_stuffed_delimited_endpoint_init(). */
+typedef struct link_stuffed_delimited_endpoint {
+    link_stuffed_delimited_stream stream;  /* first member */
+    gmsg_endpoint io;
+    uint8_t tx[LINK_STUFFED_DELIMITED_MAX_FRAME];  /* transmit buffer */
+} link_stuffed_delimited_endpoint;
 
 /* Parse one frame at the start of data[0..size) (whole-buffer / datagram mode). The frame is unescaped in place. */
 gmsg_error link_stuffed_delimited_parse(uint8_t* data, size_t size, link_stuffed_delimited_any_view* out);
@@ -1364,6 +1893,41 @@ bool link_stuffed_delimited_stream_poll_message(link_stuffed_delimited_stream* s
 gmsg_poll link_stuffed_delimited_stream_poll_event(link_stuffed_delimited_stream* s, link_stuffed_delimited_event* out);
 /* Wait for a message of `kind`; other messages go to the callbacks (message slot, then on_frame). */
 bool link_stuffed_delimited_stream_poll_for(link_stuffed_delimited_stream* s, link_stuffed_delimited_kind kind, link_stuffed_delimited_any_view* out);
+
+/* Endpoint. source / sink may be NULL (none); GMSG_ERR_BUFFER_FULL when size < LINK_STUFFED_DELIMITED_MAX_FRAME. */
+gmsg_error link_stuffed_delimited_endpoint_init(link_stuffed_delimited_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink);
+/* clock(ctx): any monotonic uint32 time (timeouts are in its unit); idle(ctx) runs while a wait or a retried
+ * send has nothing to do; send policy GMSG_SEND_WHOLE_FRAME (default) or GMSG_SEND_RETRY (timeout or GMSG_FOREVER). */
+static inline void link_stuffed_delimited_endpoint_set_clock(link_stuffed_delimited_endpoint* ep, gmsg_clock_fn clock, void* ctx) { gmsg_endpoint_set_clock(&ep->io, clock, ctx); }
+static inline void link_stuffed_delimited_endpoint_set_idle(link_stuffed_delimited_endpoint* ep, void (*idle)(void* ctx), void* ctx) { gmsg_endpoint_set_idle(&ep->io, idle, ctx); }
+static inline void link_stuffed_delimited_endpoint_set_send_policy(link_stuffed_delimited_endpoint* ep, gmsg_send_policy policy, uint32_t timeout) { gmsg_endpoint_set_send_policy(&ep->io, policy, timeout); }
+static inline void link_stuffed_delimited_endpoint_set_idle_timeout(link_stuffed_delimited_endpoint* ep, uint32_t t) { gmsg_stream_set_idle_timeout(&ep->stream.base, t); }
+/* Read what the source has (at most max bytes; SIZE_MAX: all), deliver every frame to .stream.cb, run the
+ * idle resync. Returns the number of frames delivered. */
+static inline size_t link_stuffed_delimited_endpoint_service(link_stuffed_delimited_endpoint* ep, size_t max) { return gmsg_endpoint_service(&ep->io, max); }
+/* Encode and write to the sink with the send policy. */
+gmsg_error link_stuffed_delimited_endpoint_send_data(link_stuffed_delimited_endpoint* ep, const link_stuffed_data* m);
+gmsg_error link_stuffed_delimited_endpoint_send_data_with_header(link_stuffed_delimited_endpoint* ep, const link_stuffed_delimited_header* h, const link_stuffed_data* m);
+gmsg_error link_stuffed_delimited_endpoint_send_ping(link_stuffed_delimited_endpoint* ep, const link_stuffed_ping* m);
+gmsg_error link_stuffed_delimited_endpoint_send_ping_with_header(link_stuffed_delimited_endpoint* ep, const link_stuffed_delimited_header* h, const link_stuffed_ping* m);
+gmsg_error link_stuffed_delimited_endpoint_send(link_stuffed_delimited_endpoint* ep, const link_stuffed_delimited_any_message* m);
+static inline gmsg_error link_stuffed_delimited_endpoint_send_raw(link_stuffed_delimited_endpoint* ep, const uint8_t* data, size_t n) { return gmsg_endpoint_write(&ep->io, data, n); }
+/* Read and process input until a message of `kind` accepted by match (NULL: any) arrives; decode it into
+ * *out (and its header into *header, if not NULL). Other messages go to the callbacks; the awaited one does not.
+ * GMSG_ERR_TIMEOUT after `timeout` clock units. */
+gmsg_error link_stuffed_delimited_endpoint_wait_for(link_stuffed_delimited_endpoint* ep, link_stuffed_delimited_kind kind, uint32_t timeout, link_stuffed_delimited_match_fn match, void* match_ctx, link_stuffed_delimited_any_message* out, link_stuffed_delimited_header* header);
+/* Deliver what has arrived, send `request` (with header *h, or default values when NULL), then _wait_for. */
+gmsg_error link_stuffed_delimited_endpoint_transact(link_stuffed_delimited_endpoint* ep, const link_stuffed_delimited_header* h, const link_stuffed_delimited_any_message* request, link_stuffed_delimited_kind kind, uint32_t timeout, link_stuffed_delimited_match_fn match, void* match_ctx, link_stuffed_delimited_any_message* out);
+/* Requests that do not block (need a clock): _request delivers what has arrived (not from a callback), sends
+ * and returns; the reply of `kind` accepted by match (NULL: any), or GMSG_ERR_TIMEOUT after `timeout`,
+ * completes *r from a later _service() / wait (r->state, r->error, r->reply, on_done). Returns the send error
+ * (then *r stays idle). _expect waits without sending. A request already waiting is restarted. */
+gmsg_error link_stuffed_delimited_endpoint_request(link_stuffed_delimited_endpoint* ep, link_stuffed_delimited_request* r, const link_stuffed_delimited_header* h, const link_stuffed_delimited_any_message* request, link_stuffed_delimited_kind kind, uint32_t timeout, link_stuffed_delimited_match_fn match, void* match_ctx, link_stuffed_delimited_request_fn on_done, void* ctx);
+void link_stuffed_delimited_endpoint_expect(link_stuffed_delimited_endpoint* ep, link_stuffed_delimited_request* r, link_stuffed_delimited_kind kind, uint32_t timeout, link_stuffed_delimited_match_fn match, void* match_ctx, link_stuffed_delimited_request_fn on_done, void* ctx);
+/* Stop waiting (no callback); the request can be started again. */
+void link_stuffed_delimited_endpoint_cancel(link_stuffed_delimited_endpoint* ep, link_stuffed_delimited_request* r);
+/* Requests still waiting. */
+size_t link_stuffed_delimited_endpoint_pending(const link_stuffed_delimited_endpoint* ep);
 
 #ifdef __cplusplus
 } /* extern "C" */

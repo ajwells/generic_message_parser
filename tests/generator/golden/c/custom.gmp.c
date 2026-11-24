@@ -277,7 +277,7 @@ gmsg_error ext_text_pos_process(const uint8_t* data, size_t size, const ext_text
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { ext_text_pos_mode_deliver_ = 0, ext_text_pos_mode_capture_ = 1, ext_text_pos_mode_message_ = 2, ext_text_pos_mode_for_ = 3 };
+enum { ext_text_pos_mode_deliver_ = 0, ext_text_pos_mode_capture_ = 1, ext_text_pos_mode_message_ = 2, ext_text_pos_mode_for_ = 3, ext_text_pos_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t ext_text_pos_extra_(const ext_text_pos_any_view* v) {
@@ -285,6 +285,41 @@ static size_t ext_text_pos_extra_(const ext_text_pos_any_view* v) {
         case EXT_TEXT_POS_POS: return ext_pos_view_extra_tokens(&v->as.pos);
         default: return 0;
     }
+}
+
+static gmsg_error ext_text_pos_view_to_message_(const ext_text_pos_any_view* v, ext_text_pos_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case EXT_TEXT_POS_POS: return ext_pos_view_to_struct(&v->as.pos, &out->as.pos);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void ext_text_pos_complete_(ext_text_pos_stream* s, ext_text_pos_request* r, gmsg_error e) {
+    ext_text_pos_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error ext_text_pos_offer_(ext_text_pos_stream* s, const ext_text_pos_frame_* f, const ext_text_pos_any_view* v, bool* taken) {
+    ext_text_pos_request** at;
+    (void)f;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        ext_text_pos_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, v))) continue;
+        if ((e = ext_text_pos_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        ext_text_pos_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error ext_text_pos_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -296,6 +331,13 @@ static gmsg_error ext_text_pos_stream_process_(gmsg_stream* gs, uint8_t* frame, 
         ext_text_pos_any_view v;
         if ((e = ext_text_pos_select_(&f, &v)) != GMSG_OK) return e;
         gs->last_extra = ext_text_pos_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = ext_text_pos_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         ext_text_pos_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -307,7 +349,22 @@ static gmsg_error ext_text_pos_stream_process_(gmsg_stream* gs, uint8_t* frame, 
         ext_text_pos_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = EXT_TEXT_POS_NONE;
     }
-    if (s->mode_ == ext_text_pos_mode_message_) {
+    if (s->mode_ == ext_text_pos_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = ext_text_pos_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    return e;
+                }
+                if (taken) s->got_.message.kind = EXT_TEXT_POS_NONE;
+                if (taken) return GMSG_OK;
+            }
+            ext_text_pos_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = EXT_TEXT_POS_NONE;
+            return GMSG_OK;
+        }
+    }
+    if (s->mode_ == ext_text_pos_mode_message_ || s->mode_ == ext_text_pos_mode_wait_) {
         switch (s->got_.message.kind) {
             case EXT_TEXT_POS_POS: s->msg_->kind = EXT_TEXT_POS_POS; return ext_pos_view_to_struct(&s->got_.message.as.pos, &s->msg_->as.pos);
             default: return GMSG_ERR_UNKNOWN_TYPE;
@@ -387,6 +444,132 @@ static void ext_text_pos_stream_error_(gmsg_stream* s, gmsg_error e, const uint8
 gmsg_error ext_text_pos_stream_init(ext_text_pos_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, EXT_TEXT_POS_MAX_FRAME, ext_text_pos_scan_, ext_text_pos_stream_process_, ext_text_pos_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void ext_text_pos_endpoint_fire_(gmsg_endpoint* io) {
+    ext_text_pos_stream* s = &((ext_text_pos_endpoint*)(void*)((char*)io - offsetof(ext_text_pos_endpoint, io)))->stream;
+    while (s->completed_) {
+        ext_text_pos_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void ext_text_pos_endpoint_expire_(gmsg_endpoint* io) {
+    ext_text_pos_stream* s = &((ext_text_pos_endpoint*)(void*)((char*)io - offsetof(ext_text_pos_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    ext_text_pos_request** at = &s->pending_;
+    while (*at) {
+        ext_text_pos_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            ext_text_pos_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    ext_text_pos_endpoint_fire_(io);
+}
+
+gmsg_error ext_text_pos_endpoint_init(ext_text_pos_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = ext_text_pos_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = ext_text_pos_endpoint_fire_;
+    ep->io.on_tick = ext_text_pos_endpoint_expire_;
+    return e;
+}
+
+void ext_text_pos_endpoint_cancel(ext_text_pos_endpoint* ep, ext_text_pos_request* r) {
+    ext_text_pos_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void ext_text_pos_endpoint_expect(ext_text_pos_endpoint* ep, ext_text_pos_request* r, ext_text_pos_kind kind, uint32_t timeout, ext_text_pos_match_fn match, void* match_ctx, ext_text_pos_request_fn on_done, void* ctx) {
+    ext_text_pos_request** at;
+    ext_text_pos_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t ext_text_pos_endpoint_pending(const ext_text_pos_endpoint* ep) {
+    size_t k = 0;
+    const ext_text_pos_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error ext_text_pos_endpoint_send_pos(ext_text_pos_endpoint* ep, const ext_pos* m) {
+    size_t n = 0;
+    const gmsg_error e = ext_text_pos_encode_pos(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error ext_text_pos_endpoint_send(ext_text_pos_endpoint* ep, const ext_text_pos_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = ext_text_pos_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool ext_text_pos_endpoint_pull_(void* ctx) {
+    ext_text_pos_endpoint* ep = (ext_text_pos_endpoint*)ctx;
+    ext_text_pos_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        ext_text_pos_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error ext_text_pos_endpoint_wait_for(ext_text_pos_endpoint* ep, ext_text_pos_kind kind, uint32_t timeout, ext_text_pos_match_fn match, void* match_ctx, ext_text_pos_any_message* out) {
+    ext_text_pos_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = ext_text_pos_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    e = gmsg_endpoint_wait(&ep->io, timeout, ext_text_pos_endpoint_pull_, ep);
+    s->mode_ = ext_text_pos_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    return e;
+}
+
+gmsg_error ext_text_pos_endpoint_transact(ext_text_pos_endpoint* ep, const ext_text_pos_any_message* request, ext_text_pos_kind kind, uint32_t timeout, ext_text_pos_match_fn match, void* match_ctx, ext_text_pos_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    e = ext_text_pos_endpoint_send(ep, request);
+    if (e != GMSG_OK) return e;
+    return ext_text_pos_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out);
+}
+
+gmsg_error ext_text_pos_endpoint_request(ext_text_pos_endpoint* ep, ext_text_pos_request* r, const ext_text_pos_any_message* request, ext_text_pos_kind kind, uint32_t timeout, ext_text_pos_match_fn match, void* match_ctx, ext_text_pos_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    ext_text_pos_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    e = ext_text_pos_endpoint_send(ep, request);
+    if (e != GMSG_OK) return e;
+    ext_text_pos_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error ext_text_pos_encode_pos(const ext_pos* m, uint8_t* out, size_t capacity, size_t* written) {

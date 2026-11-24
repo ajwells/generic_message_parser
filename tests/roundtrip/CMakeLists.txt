@@ -34,7 +34,8 @@ gmp_add_test(gmp_roundtrip_tests
         test_stream_callbacks.cpp
         test_stream_poll.cpp
         test_stream_recovery.cpp
-        test_extra.cpp)
+        test_extra.cpp
+        test_endpoint.cpp)
 target_link_libraries(gmp_roundtrip_tests PRIVATE gmp_test_schemas)
 
 # Embedded profile: generated code + runtime must build without exceptions / RTTI and never allocate.

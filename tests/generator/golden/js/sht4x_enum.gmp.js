@@ -420,6 +420,8 @@
     static decode(buffer) { return MeasurementResponse.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(MeasurementResponse, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(MeasurementResponse, options); }
     /** Encode a message of this protocol to a new Uint8Array. */
     static encode(m) {
       if (m instanceof Measurement) return MeasurementResponse.#encode0(m);
@@ -485,6 +487,8 @@
     static decode(buffer) { return SerialNumberResponse.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(SerialNumberResponse, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(SerialNumberResponse, options); }
     /** Encode a message of this protocol to a new Uint8Array. */
     static encode(m) {
       if (m instanceof SerialNumber) return SerialNumberResponse.#encode0(m);

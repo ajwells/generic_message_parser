@@ -415,6 +415,8 @@
     static decode(buffer) { return Adjusted.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(Adjusted, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(Adjusted, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Reading) return Adjusted.#encode0(m, header);
@@ -636,6 +638,8 @@
     static decode(buffer) { return WholeFrame.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(WholeFrame, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(WholeFrame, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Reading) return WholeFrame.#encode0(m, header);
@@ -857,6 +861,8 @@
     static decode(buffer) { return EscapedWithEnd.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(EscapedWithEnd, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(EscapedWithEnd, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Reading) return EscapedWithEnd.#encode0(m, header);
@@ -1051,6 +1057,8 @@
     static decode(buffer) { return FixedWithEnd.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(FixedWithEnd, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(FixedWithEnd, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Reading) return FixedWithEnd.#encode0(m, header);
@@ -1246,6 +1254,8 @@
     static decode(buffer) { return Loose.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(Loose, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(Loose, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Reading) return Loose.#encode0(m, header);
@@ -1465,6 +1475,8 @@
     static decode(buffer) { return Exact.parse(buffer).toStruct(); }
     /** A stream parser for this protocol (options: { capacity }, default maxFrame). */
     static stream(options) { return new gmsg.StreamParser(Exact, options); }
+    /** The stream joined to a byte sink and input sources (options: { write, capacity, idleTimeout, sendPolicy, ... }). */
+    static endpoint(options) { return new gmsg.Endpoint(Exact, options); }
     /** Encode a message of this protocol (optionally with header values; type id and length are filled in) to a new Uint8Array. */
     static encode(m, header) {
       if (m instanceof Reading) return Exact.#encode0(m, header);

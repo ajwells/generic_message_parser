@@ -543,6 +543,17 @@ struct SyncLink {
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
 
+    /// CallbackStream joined to a byte source, a byte sink and an optional clock: service(), send(), wait_for<M>(),
+    /// transact<M>() (gmp/endpoint.hpp).
+    template <class Source, class Sink, class Clock = void, std::size_t Capacity = max_frame>
+    using Endpoint = gmsg::Endpoint<SyncLink, Source, Sink, Clock, Capacity>;
+    /// Endpoint over `source` and `sink` (lvalues are kept by reference) and a clock (a std::chrono clock, or a
+    /// callable returning a monotonic unsigned time).
+    template <std::size_t Capacity = max_frame, class Source, class Sink>
+    static auto make_endpoint(Source&& source, Sink&& sink) { return gmsg::make_endpoint<SyncLink, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink)); }
+    template <std::size_t Capacity = max_frame, class Source, class Sink, class Clock>
+    static auto make_endpoint(Source&& source, Sink&& sink, Clock&& clock) { return gmsg::make_endpoint<SyncLink, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink), std::forward<Clock>(clock)); }
+
     static gmsg::Result<std::size_t> encode(const Data& m, gmsg::mut_bytes out) noexcept { return encode(Header{}, m, out); }
     /// Encode with explicit header values (id/length fields are filled in automatically).
     static gmsg::Result<std::size_t> encode([[maybe_unused]] Header h, const Data& m, gmsg::mut_bytes out) noexcept {
@@ -923,6 +934,17 @@ struct WireChecksum {
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
 
+    /// CallbackStream joined to a byte source, a byte sink and an optional clock: service(), send(), wait_for<M>(),
+    /// transact<M>() (gmp/endpoint.hpp).
+    template <class Source, class Sink, class Clock = void, std::size_t Capacity = max_frame>
+    using Endpoint = gmsg::Endpoint<WireChecksum, Source, Sink, Clock, Capacity>;
+    /// Endpoint over `source` and `sink` (lvalues are kept by reference) and a clock (a std::chrono clock, or a
+    /// callable returning a monotonic unsigned time).
+    template <std::size_t Capacity = max_frame, class Source, class Sink>
+    static auto make_endpoint(Source&& source, Sink&& sink) { return gmsg::make_endpoint<WireChecksum, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink)); }
+    template <std::size_t Capacity = max_frame, class Source, class Sink, class Clock>
+    static auto make_endpoint(Source&& source, Sink&& sink, Clock&& clock) { return gmsg::make_endpoint<WireChecksum, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink), std::forward<Clock>(clock)); }
+
     static gmsg::Result<std::size_t> encode(const Data& m, gmsg::mut_bytes out) noexcept { return encode(Header{}, m, out); }
     /// Encode with explicit header values (id/length fields are filled in automatically).
     static gmsg::Result<std::size_t> encode([[maybe_unused]] Header h, const Data& m, gmsg::mut_bytes out) noexcept {
@@ -1288,6 +1310,17 @@ struct WireLength {
         using Callbacks::clear;
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
+
+    /// CallbackStream joined to a byte source, a byte sink and an optional clock: service(), send(), wait_for<M>(),
+    /// transact<M>() (gmp/endpoint.hpp).
+    template <class Source, class Sink, class Clock = void, std::size_t Capacity = max_frame>
+    using Endpoint = gmsg::Endpoint<WireLength, Source, Sink, Clock, Capacity>;
+    /// Endpoint over `source` and `sink` (lvalues are kept by reference) and a clock (a std::chrono clock, or a
+    /// callable returning a monotonic unsigned time).
+    template <std::size_t Capacity = max_frame, class Source, class Sink>
+    static auto make_endpoint(Source&& source, Sink&& sink) { return gmsg::make_endpoint<WireLength, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink)); }
+    template <std::size_t Capacity = max_frame, class Source, class Sink, class Clock>
+    static auto make_endpoint(Source&& source, Sink&& sink, Clock&& clock) { return gmsg::make_endpoint<WireLength, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink), std::forward<Clock>(clock)); }
 
     static gmsg::Result<std::size_t> encode(const Data& m, gmsg::mut_bytes out) noexcept { return encode(Header{}, m, out); }
     /// Encode with explicit header values (id/length fields are filled in automatically).
@@ -1661,6 +1694,17 @@ struct CrcLength {
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
 
+    /// CallbackStream joined to a byte source, a byte sink and an optional clock: service(), send(), wait_for<M>(),
+    /// transact<M>() (gmp/endpoint.hpp).
+    template <class Source, class Sink, class Clock = void, std::size_t Capacity = max_frame>
+    using Endpoint = gmsg::Endpoint<CrcLength, Source, Sink, Clock, Capacity>;
+    /// Endpoint over `source` and `sink` (lvalues are kept by reference) and a clock (a std::chrono clock, or a
+    /// callable returning a monotonic unsigned time).
+    template <std::size_t Capacity = max_frame, class Source, class Sink>
+    static auto make_endpoint(Source&& source, Sink&& sink) { return gmsg::make_endpoint<CrcLength, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink)); }
+    template <std::size_t Capacity = max_frame, class Source, class Sink, class Clock>
+    static auto make_endpoint(Source&& source, Sink&& sink, Clock&& clock) { return gmsg::make_endpoint<CrcLength, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink), std::forward<Clock>(clock)); }
+
     static gmsg::Result<std::size_t> encode(const Data& m, gmsg::mut_bytes out) noexcept { return encode(Header{}, m, out); }
     /// Encode with explicit header values (id/length fields are filled in automatically).
     static gmsg::Result<std::size_t> encode([[maybe_unused]] Header h, const Data& m, gmsg::mut_bytes out) noexcept {
@@ -2018,6 +2062,17 @@ struct WireCrcLength {
         using Callbacks::clear;
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
+
+    /// CallbackStream joined to a byte source, a byte sink and an optional clock: service(), send(), wait_for<M>(),
+    /// transact<M>() (gmp/endpoint.hpp).
+    template <class Source, class Sink, class Clock = void, std::size_t Capacity = max_frame>
+    using Endpoint = gmsg::Endpoint<WireCrcLength, Source, Sink, Clock, Capacity>;
+    /// Endpoint over `source` and `sink` (lvalues are kept by reference) and a clock (a std::chrono clock, or a
+    /// callable returning a monotonic unsigned time).
+    template <std::size_t Capacity = max_frame, class Source, class Sink>
+    static auto make_endpoint(Source&& source, Sink&& sink) { return gmsg::make_endpoint<WireCrcLength, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink)); }
+    template <std::size_t Capacity = max_frame, class Source, class Sink, class Clock>
+    static auto make_endpoint(Source&& source, Sink&& sink, Clock&& clock) { return gmsg::make_endpoint<WireCrcLength, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink), std::forward<Clock>(clock)); }
 
     static gmsg::Result<std::size_t> encode(const Data& m, gmsg::mut_bytes out) noexcept { return encode(Header{}, m, out); }
     /// Encode with explicit header values (id/length fields are filled in automatically).
@@ -2398,6 +2453,17 @@ struct WireCrcOverWire {
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
 
+    /// CallbackStream joined to a byte source, a byte sink and an optional clock: service(), send(), wait_for<M>(),
+    /// transact<M>() (gmp/endpoint.hpp).
+    template <class Source, class Sink, class Clock = void, std::size_t Capacity = max_frame>
+    using Endpoint = gmsg::Endpoint<WireCrcOverWire, Source, Sink, Clock, Capacity>;
+    /// Endpoint over `source` and `sink` (lvalues are kept by reference) and a clock (a std::chrono clock, or a
+    /// callable returning a monotonic unsigned time).
+    template <std::size_t Capacity = max_frame, class Source, class Sink>
+    static auto make_endpoint(Source&& source, Sink&& sink) { return gmsg::make_endpoint<WireCrcOverWire, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink)); }
+    template <std::size_t Capacity = max_frame, class Source, class Sink, class Clock>
+    static auto make_endpoint(Source&& source, Sink&& sink, Clock&& clock) { return gmsg::make_endpoint<WireCrcOverWire, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink), std::forward<Clock>(clock)); }
+
     static gmsg::Result<std::size_t> encode(const Data& m, gmsg::mut_bytes out) noexcept { return encode(Header{}, m, out); }
     /// Encode with explicit header values (id/length fields are filled in automatically).
     static gmsg::Result<std::size_t> encode([[maybe_unused]] Header h, const Data& m, gmsg::mut_bytes out) noexcept {
@@ -2674,6 +2740,17 @@ struct FixedLink {
         using Callbacks::clear;
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
+
+    /// CallbackStream joined to a byte source, a byte sink and an optional clock: service(), send(), wait_for<M>(),
+    /// transact<M>() (gmp/endpoint.hpp).
+    template <class Source, class Sink, class Clock = void, std::size_t Capacity = max_frame>
+    using Endpoint = gmsg::Endpoint<FixedLink, Source, Sink, Clock, Capacity>;
+    /// Endpoint over `source` and `sink` (lvalues are kept by reference) and a clock (a std::chrono clock, or a
+    /// callable returning a monotonic unsigned time).
+    template <std::size_t Capacity = max_frame, class Source, class Sink>
+    static auto make_endpoint(Source&& source, Sink&& sink) { return gmsg::make_endpoint<FixedLink, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink)); }
+    template <std::size_t Capacity = max_frame, class Source, class Sink, class Clock>
+    static auto make_endpoint(Source&& source, Sink&& sink, Clock&& clock) { return gmsg::make_endpoint<FixedLink, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink), std::forward<Clock>(clock)); }
 
     static gmsg::Result<std::size_t> encode(const Ping& m, gmsg::mut_bytes out) noexcept {
         gmsg::ByteWriter w(out);
@@ -2997,6 +3074,17 @@ struct Delimited {
         using Callbacks::clear;
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
+
+    /// CallbackStream joined to a byte source, a byte sink and an optional clock: service(), send(), wait_for<M>(),
+    /// transact<M>() (gmp/endpoint.hpp).
+    template <class Source, class Sink, class Clock = void, std::size_t Capacity = max_frame>
+    using Endpoint = gmsg::Endpoint<Delimited, Source, Sink, Clock, Capacity>;
+    /// Endpoint over `source` and `sink` (lvalues are kept by reference) and a clock (a std::chrono clock, or a
+    /// callable returning a monotonic unsigned time).
+    template <std::size_t Capacity = max_frame, class Source, class Sink>
+    static auto make_endpoint(Source&& source, Sink&& sink) { return gmsg::make_endpoint<Delimited, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink)); }
+    template <std::size_t Capacity = max_frame, class Source, class Sink, class Clock>
+    static auto make_endpoint(Source&& source, Sink&& sink, Clock&& clock) { return gmsg::make_endpoint<Delimited, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink), std::forward<Clock>(clock)); }
 
     static gmsg::Result<std::size_t> encode(const Data& m, gmsg::mut_bytes out) noexcept { return encode(Header{}, m, out); }
     /// Encode with explicit header values (id/length fields are filled in automatically).

@@ -503,7 +503,7 @@ protocols:
 | `exact_size` | `true`: a frame with data after its message (a body longer than the message needs, or extra tokens in a text frame) fails with `BadLength`. Default `false`: such frames are decoded, the extra data is ignored and reported (see [Data after the message](#data-after-the-message)). Not for `fixed` framing, which pads shorter messages. |
 
 Each generated protocol struct declares `Header`, `HeaderView`, `AnyView`, `AnyMessage`, `Frame`, `Stream`,
-`StreamWith`, `Callbacks`, `CallbackStream` and `Received`. These names can't be used for messages or enums in a schema that has
+`StreamWith`, `Callbacks`, `CallbackStream`, `Received` and `Endpoint`. These names can't be used for messages or enums in a schema that has
 a protocol; `gmpc` reports such a clash.
 
 ### framing
@@ -812,6 +812,7 @@ Bits groups are small structs with one member per bit field, `unpack`/`pack`/`ch
 | `template <size_t Cap = max_frame> using Stream` | The stream parser for this protocol; the handler is passed on each call (see [Streaming](#streaming)). |
 | `StreamWith<H, Cap>`, `make_stream(handler)` | Stream parser that stores a handler: `feed(bytes)` / `next()` take no handler ([Storing the handler](#storing-the-handler)). |
 | `Callbacks`, `CallbackStream<Cap>` | Runtime callbacks: `on<&App::fn>(app)` per message, for every frame (`AnyView`) and for `gmsg::FrameError`. |
+| `Endpoint<Source, Sink, Clock, Cap>`, `make_endpoint(source, sink[, clock])` | The `CallbackStream` joined to a byte source, a byte sink and a clock: `service()`, `send()`, `wait_for<M>()`, `transact<M>()` ([Endpoints](#endpoints-sending-waiting-for-a-reply-send-wait_for-transact)). |
 | `Received` | What `Stream::poll_frame()` returns: `header` (protocols with a header), `message` (`AnyView`), the frame `bytes` and `extra` (data after the message) ([Pulling messages](#pulling-messages-poll)). |
 | `scan`, `open`, `visit_frame`, `select_message`, `process` | Building blocks. `scan` finds a frame boundary. `open` validates a frame and splits it into `Frame{header, body}` (binary) or `Frame{type_id, body}` (text, where `type_id` is the first token). `visit_frame`/`select_message` pick the message type. `process` is the hook used by the stream parser. |
 
@@ -1027,6 +1028,115 @@ for (;;) {                                       // consumer: main loop
 - **Python:** `gmsg.ByteRing(capacity)`, `ring.push(byte)` / `push_bytes(data)`, `stream.feed(ring, max_bytes=None)`,
   `stream.push(ring)`, `messages(ring)` / `events(ring)`: a reader thread fills the ring, the parsing thread drains it.
 
+### Endpoints: sending, waiting for a reply (`send`, `wait_for`, `transact`)
+
+An endpoint joins a protocol's `CallbackStream` to a **byte source** (where input comes from), a **byte sink** (where
+frames go) and a **clock**, so an application does not have to write the read loop, the encode buffer and the
+request / response wait itself:
+
+```cpp
+#include "link.gmp.hpp"   // gmp/endpoint.hpp comes with gmp/gmp.hpp
+
+gmsg::ByteRing<256> rx, tx;                       // filled / drained by the UART interrupts
+auto ep = demo::Link::make_endpoint(rx, tx, [] { return HAL_GetTick(); });   // or std::chrono::steady_clock{}
+ep.set_idle(+[] { __WFI(); });                    // runs while a wait has nothing to do
+ep.set_idle_timeout(20);                          // give up an incomplete frame after 20 ms of silence
+ep.on<&App::on_status>(app);                      // listeners, as on CallbackStream
+
+ep.send(demo::Ping{});                            // encode into a max_frame buffer, write to the sink
+auto ack = ep.transact<demo::Ack>(demo::Command{.opcode = 1}, 100);   // send, then wait up to 100 ticks
+if (!ack) log("no ack: %s", gmsg::to_string(ack.error()));            // Error::Timeout
+for (;;) ep.service();                            // read what has arrived, deliver it, run the idle resync
+```
+
+- **Sources** have `std::size_t read(gmsg::mut_bytes out)` (copy what has arrived, never block; 0 = nothing yet) and
+  optionally `bool take_overrun()` (input was lost before the next read: reported as `Overrun`). **Sinks** have
+  `std::size_t write(gmsg::bytes_view)` (returns the bytes taken) and optionally `std::size_t writable()` (room right
+  now). A `gmsg::ByteRing` works as either without an adapter: as a source it is drained like `feed(ring)`
+  (overruns included), as a sink it is the transmit queue a TX interrupt sends from. `gmp/io.hpp` has
+  `NoSource` / `NoSink` (one-way endpoints), `SpanSource` / `SpanSink` (memory, tests, replaying a capture),
+  `FileSource` / `FileSink` (`FILE*`), `source_fn(f)` / `sink_fn(f)` (any callable) and `DmaRingSource` (below).
+  Lvalues passed to `make_endpoint` are kept by reference, rvalues by value.
+- **Clock:** a `std::chrono` clock type (`std::chrono::steady_clock{}`: timeouts are its durations,
+  `std::chrono::milliseconds(100)` converts), or any callable returning a monotonic unsigned time in any unit
+  (a HAL tick counter; wraparound is fine; timeouts are `std::uint32_t` in that unit). Without a clock
+  (`make_endpoint(source, sink)`) there are no waits, only `service()` and `send()`.
+- **`service(max_bytes)`** reads everything the source has (at most `max_bytes`), delivers every frame to the
+  listeners and runs the idle resync (`set_idle_timeout`). It returns the number of frames delivered.
+- **`send(msg)` / `send(header, msg)` / `send_raw(bytes)`** encode into a `max_frame` buffer and write it. The
+  **send policy** decides what happens when the sink cannot take the whole frame now:
+  `SendPolicy::whole_frame` (default) is all or nothing: a sink with `writable()` (or a ring) that has too little room
+  fails with `BufferFull` and nothing is written; a sink without `writable()` is assumed to take whole frames (a
+  blocking write), so a short write fails with `BufferFull`. `set_send_policy(SendPolicy::retry[, timeout])` keeps
+  writing the rest, calling the idle hook in between, until it is out or the timeout passes (`Timeout`; part of the
+  frame may then have been sent).
+- **`wait_for<M>(timeout[, match])`** reads and processes input until a message `M` (its struct or view type) arrives
+  for which `match(view)` (or `match(header_view, view)`) is true, and returns it decoded (`Result<M>`). Messages that
+  arrive meanwhile go to their listeners and errors to the error listener; the awaited message is not passed to a
+  listener. After the timeout it returns `Error::Timeout` (a timeout of 0 still takes a message that is buffered or
+  readable now). `wait_for_reply<M>()` returns `gmsg::Reply{header, message}`.
+- **`transact<M>(request[, header], timeout[, match])`** first delivers what has already arrived (so an old reply is
+  not taken for the answer), sends the request and then waits like `wait_for<M>`. Match a sequence number with
+  `match`, e.g. `[&](const AckView& a) { return a.seq() == seq; }`.
+- **Requests that do not block:** `wait_for` / `transact` block (calling the idle hook) until the reply comes. In a
+  superloop or an RTOS task that must keep doing other work, start a request instead and let `service()` finish it:
+
+  ```cpp
+  gmsg::Pending<demo::Ack> ack;                    // caller-owned: no heap, any number at once
+  ack.on_done<&App::on_ack>(app);                  // void App::on_ack(const gmsg::Result<demo::Ack>& r)
+  ep.request(ack, demo::Command{.opcode = 1}, 100);   // returns at once (the send error, if any)
+  for (;;) {
+      ep.service();                                // the reply, or Timeout after 100 ticks, completes `ack`
+      if (ack.done()) { /* ack.result() */ }       // or poll instead of using the callback
+      do_other_work();
+  }
+  ```
+
+  `ep.expect(pending, timeout)` waits for a message without sending (an unsolicited event). A `Pending<M, Match>`
+  takes a match (`gmsg::Pending<Ack, decltype(by_seq)> ack(by_seq)`, called as `match(view)` or `match(header_view,
+  view)`). The first waiting request that accepts a frame takes it (oldest first), then the frame is not passed to
+  the listeners; requests are also served while a blocking `wait_for` runs. The callback runs once, after the frame
+  is processed, so it may start the next request (`request()` then skips draining the input). `cancel()` (also in
+  the destructor) stops waiting without a callback; `ep.pending()` counts the waiting requests. The poll API
+  (`poll_for` and friends) does not serve requests. C: a caller-owned `<p>_request` with
+  `<p>_endpoint_request(&ep, &r, [&header,] &request, kind, timeout, match, match_ctx, on_done, ctx)`,
+  `_expect`, `_cancel`, `_pending`; `r.state` (`GMSG_REQUEST_IDLE` / `_WAITING` / `_DONE`), `r.error`, `r.reply`.
+  Python: `p = ep.request(request, Ack, timeout, match=None, on_done=None)` / `ep.expect(...)` return a `gmsg.Pending`
+  (`p.done`, `p.result()`, `p.cancel()`). JavaScript and Python's `AsyncEndpoint` are already non-blocking.
+- **DMA:** `gmsg::dma_source(buffer, pos[, track_laps])` reads a circular DMA receive buffer that the hardware fills
+  continuously; `pos()` returns the index the DMA writes next (STM32: `N - __HAL_DMA_GET_COUNTER(huart.hdmarx)`).
+  With `track_laps`, call `on_half()` from the half-transfer and transfer-complete interrupts: a lap over unread input
+  (and bytes overwritten while they were being copied) is then reported as `Overrun`. Without it the endpoint must
+  read at least once per buffer length.
+- One context only: the endpoint is not thread-safe; only its rings / DMA source are fed from interrupts or threads.
+- `StreamParser` gained what the endpoint uses: `push_with(fill)` (let a source write into the buffer),
+  `push_gap()` (input was lost here, e.g. a UART overrun flag) and `space()`.
+- **C:** per protocol `<p>_endpoint` (the stream, a `gmsg_endpoint` and a `<P>_MAX_FRAME` transmit buffer) with
+  `<p>_endpoint_init(&ep, buf, size, &source, &sink)`, `_set_clock(&ep, fn, ctx)`, `_set_idle`, `_set_send_policy(&ep,
+  GMSG_SEND_WHOLE_FRAME | GMSG_SEND_RETRY, timeout or GMSG_FOREVER)`, `_set_idle_timeout`, `_service(&ep, max)`,
+  `_send_<m>` / `_send_<m>_with_header` / `_send(&ep, &any)` / `_send_raw`, `_wait_for(&ep, kind, timeout, match,
+  match_ctx, &out[, &header])` and `_transact(&ep, [&header,] &request, kind, timeout, match, match_ctx, &out)`.
+  Sources and sinks are `gmsg_source` / `gmsg_sink` (function pointers + context, or a `gmsg_ring`); adapters in
+  `gmp/c/endpoint.h`: `gmsg_source_ring`, `gmsg_sink_ring`, `gmsg_source_fn`, `gmsg_sink_fn`,
+  `gmsg_buffer_source_init`, `gmsg_buffer_sink_init`, `gmsg_source_file` / `gmsg_sink_file` (with libc) and
+  `gmsg_dma_source_init` (+ `gmsg_dma_source_on_half` from the DMA interrupts). Callbacks are set in `ep.stream.cb`.
+  Without a clock a wait looks once.
+- **JavaScript:** JavaScript cannot block, so the endpoint is event-driven and waits are Promises:
+  `const ep = Link.endpoint({ write, idleTimeout, sendPolicy, sendTimeout })`, `ep.attach(source)` (a Node stream,
+  a `ReadableStream` such as Web Serial's `port.readable`, or an async iterable) or `ep.receive(chunk)`,
+  `await ep.send(msg[, header])`, `await ep.waitFor(Ack, { timeout, match })`, `ep.waitForReply()`,
+  `await ep.transact(request, Ack, { timeout, match, header })`, `ep.close()`. A frame that a pending wait accepts
+  settles it; every other frame goes to the listeners. Sinks: a function, an object with `write()` (and optionally
+  `writable()`), a Node `Writable` ('whole' refuses while `writableNeedDrain`, 'retry' waits for `'drain'`) or a
+  `WritableStream`.
+- **Python:** `ep = Link.endpoint(source, sink, clock=time.monotonic, idle=..., idle_timeout=0.05)` is blocking like
+  C++ (times in seconds of the clock): `ep.service()`, `ep.send(msg, header=None)`, `ep.wait_for(Ack, 0.1,
+  match=...)`, `ep.wait_for_reply()`, `ep.transact(request, Ack, 0.1)`, `ep.set_send_policy("whole" | "retry",
+  timeout)`. Sources: a pyserial port (opened with a small timeout; it is also the sink), a socket (the sink too),
+  a file / BytesIO, a `gmsg.ByteRing` filled by a reader thread, or a callable. With asyncio:
+  `ep = Link.async_endpoint(reader, writer)` (asyncio streams), `await ep.transact(...)`, `async with ep:`; it works
+  like the JavaScript endpoint.
+
 ### Data after the message
 
 A frame (or buffer) can hold more data than its message uses: a `length_prefixed` length larger than the message, or
@@ -1142,6 +1252,7 @@ readable name.
 | `UnknownEnum` | A field of a `strict` enum holds a value that is not declared (on decode, or in a struct being encoded). |
 | `ValueOutOfLimits` | A value is outside its `min_value`/`max_value`/`min_raw`/`max_raw` (on decode, or in a struct being encoded). |
 | `Overrun` | Input bytes were lost before parsing: a full `ByteRing` dropped them. Reported by the stream that drains the ring; the frame in progress is dropped. See [interrupt input](#interrupt-input-byte-ring). |
+| `Timeout` | An endpoint's `wait_for` / `transact` saw no matching message in time, or a retried `send` could not finish. See [endpoints](#endpoints-sending-waiting-for-a-reply-send-wait_for-transact). |
 | `InvalidValue`, `Custom` | For use by custom codecs. |
 
 ## C output
@@ -1346,6 +1457,7 @@ checksums, protocols, streams, printing, custom extensions), written the way Jav
 | encode | into your buffer | returns a new `Uint8Array` |
 | stream callbacks | `Callbacks` / `CallbackStream`, overload sets | `stream.on('Status' \| 'frame' \| 'error', fn)` (returns a function that removes it) |
 | pull API | `poll()`, `poll_frame()`, `poll_message()`, `poll_event()`, `poll_for<V>()` | `poll()`, `pollFrame()`, `pollMessage()`, `pollEvent()`, `pollFor('Status')`, iterators `messages(chunk)` / `events(chunk)`; polled views own a copy of their frame, so they never expire |
+| endpoint | `make_endpoint(source, sink, clock)`: `service()`, `send()`, blocking `wait_for<M>()` / `transact<M>()` | `P.endpoint({ write })`: `attach(source)` / `receive(chunk)`, `await send()`, `await waitFor(M, { timeout, match })`, `await transact(req, M, opts)` ([endpoints](#endpoints-sending-waiting-for-a-reply-send-wait_for-transact)) |
 | printing | `gmsg::print(v, sink, opts)` | `gmsg.print(v, opts)` / `v.toString(opts)` return a string |
 
 The runtime is a port of the C++ runtime with the same behaviour: CRCs, framers, escaping, stream resync, exact float
@@ -1407,6 +1519,7 @@ The generated code covers everything the other backends generate, written the wa
 | encode | into your buffer | returns `bytes` |
 | stream callbacks | `Callbacks` / `CallbackStream` | `stream.on('Status' \| tm.Status \| 'frame' \| 'error', fn)` (returns a function that removes it) |
 | pull API | `poll()`, `poll_frame()`, `poll_message()`, `poll_event()`, `poll_for<V>()` | the same names; iterators `messages(data)` / `events(data)`. Frames handed to views are copies, so views never expire |
+| endpoint | `make_endpoint(source, sink, clock)`: `service()`, `send()`, `wait_for<M>()`, `transact<M>()` | `P.endpoint(source, sink)`: the same, blocking, times in seconds; `P.async_endpoint(reader, writer)` for asyncio (`await ep.transact(...)`) |
 | printing | `gmsg::print(v, sink, opts)` | `str(v)` / `v.to_text(style='single_line', ...)` / `gmsg.to_text(v, **opts)` |
 
 **Accelerator.** `runtime-py` includes an optional C extension, `gmsg._native`, built from the C runtime with the

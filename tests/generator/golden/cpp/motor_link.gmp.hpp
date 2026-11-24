@@ -737,6 +737,17 @@ struct MotorLink {
         [[nodiscard]] Callbacks& callbacks() noexcept { return *this; }
     };
 
+    /// CallbackStream joined to a byte source, a byte sink and an optional clock: service(), send(), wait_for<M>(),
+    /// transact<M>() (gmp/endpoint.hpp).
+    template <class Source, class Sink, class Clock = void, std::size_t Capacity = max_frame>
+    using Endpoint = gmsg::Endpoint<MotorLink, Source, Sink, Clock, Capacity>;
+    /// Endpoint over `source` and `sink` (lvalues are kept by reference) and a clock (a std::chrono clock, or a
+    /// callable returning a monotonic unsigned time).
+    template <std::size_t Capacity = max_frame, class Source, class Sink>
+    static auto make_endpoint(Source&& source, Sink&& sink) { return gmsg::make_endpoint<MotorLink, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink)); }
+    template <std::size_t Capacity = max_frame, class Source, class Sink, class Clock>
+    static auto make_endpoint(Source&& source, Sink&& sink, Clock&& clock) { return gmsg::make_endpoint<MotorLink, Capacity>(std::forward<Source>(source), std::forward<Sink>(sink), std::forward<Clock>(clock)); }
+
     static gmsg::Result<std::size_t> encode(const SetSpeed& m, gmsg::mut_bytes out) noexcept { return encode(Header{}, m, out); }
     /// Encode with explicit header values (id/length fields are filled in automatically).
     static gmsg::Result<std::size_t> encode([[maybe_unused]] Header h, const SetSpeed& m, gmsg::mut_bytes out) noexcept {

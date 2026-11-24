@@ -579,6 +579,16 @@ class MeasurementResponse:
         return gmsg.StreamParser(MeasurementResponse, capacity)
 
     @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(MeasurementResponse, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(MeasurementResponse, reader, writer, **options)
+
+    @staticmethod
     def encode(m) -> bytes:
         """Encode a message of this protocol to a frame."""
         if isinstance(m, Measurement): return MeasurementResponse._encode0(m)
@@ -655,6 +665,16 @@ class SerialNumberResponse:
     def stream(capacity: int | None = None) -> gmsg.StreamParser:
         """A stream parser for this protocol (default capacity: max_frame)."""
         return gmsg.StreamParser(SerialNumberResponse, capacity)
+
+    @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(SerialNumberResponse, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(SerialNumberResponse, reader, writer, **options)
 
     @staticmethod
     def encode(m) -> bytes:

@@ -26,11 +26,11 @@
   const Err = Object.freeze({
     None: 0, Truncated: 1, BadSync: 2, BadChecksum: 3, BadLength: 4, BadDelimiter: 5, BadConst: 6, OutOfRange: 7,
     UnknownType: 8, BufferFull: 9, ParseError: 10, MissingField: 11, InvalidValue: 12, Custom: 13, UnknownEnum: 14,
-    ValueOutOfLimits: 15, Overrun: 16,
+    ValueOutOfLimits: 15, Overrun: 16, Timeout: 17,
   });
   const ERR_TEXT = ['none', 'truncated', 'bad sync', 'bad checksum', 'bad length', 'bad delimiter', 'bad constant',
     'out of range', 'unknown message type', 'buffer full', 'parse error', 'missing field', 'invalid value',
-    'custom error', 'unknown enum value', 'value out of limits', 'overrun'];
+    'custom error', 'unknown enum value', 'value out of limits', 'overrun', 'timeout'];
   const ERR_NAME = Object.keys(Err);
 
   /** Text of an error code (gmsg::to_string(Error)). */
@@ -1019,6 +1019,17 @@
       }
     }
 
+    /** Free room in the buffer (bytes push() can take now). */
+    get space() { return this.capacity - (this.tail - this.head); }
+    /** Mark that input was lost after the bytes pushed so far (e.g. a UART overrun): frames complete before it are
+     *  delivered, the frame in progress is dropped as Err.Overrun. One gap at a time: false while one is pending. */
+    pushGap() {
+      if (this.gapPending) return this.gap === this.tail;
+      this.gapPending = true;
+      this.gap = this.tail;
+      return true;
+    }
+
     reset() {
       this.head = this.tail = 0;
       this.stats = { frames: 0, frameErrors: 0, bytesSkipped: 0, overflows: 0, resyncs: 0, flushes: 0, framesWithExtra: 0, overruns: 0 };
@@ -1140,6 +1151,266 @@
       this.tail -= this.head;
       if (this.gapPending) this.gap -= this.head;
       this.head = 0;
+    }
+  }
+
+  // ================================================================================================================
+  // endpoint: a stream joined to a byte sink, input sources and timers (port of gmsg::Endpoint, with Promises)
+  // ================================================================================================================
+  const realTimers = Object.freeze({
+    now: () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()),
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (t) => clearTimeout(t),
+  });
+  const keyOf = (what) => (typeof what === 'string' ? what : what && (what.messageName || what.name));
+
+  /**
+   * A StreamParser joined to a byte sink (send) and input (receive / attach). Input is processed as it arrives: a
+   * frame that a pending waitFor() / transact() accepts settles it (decoded with toStruct(); it is not passed to the
+   * listeners); every other frame goes to the listeners and errors to the 'error' listeners. The C++ / C endpoint
+   * blocks in wait_for; JavaScript cannot, so waits are Promises.
+   *
+   *   const ep = Link.endpoint({ write: (bytes) => port.write(bytes) });
+   *   ep.attach(port);                        // Node stream ('data'), ReadableStream (Web Serial), async iterable
+   *   ep.on(Status, (v) => ...);
+   *   const ack = await ep.transact(new Command({ opcode: 1 }), Ack, { timeout: 100 });
+   *
+   * options: write (the sink), capacity, idleTimeout (ms without input before an incomplete frame is given up),
+   *   sendPolicy ('whole' default | 'retry'), sendTimeout (ms, retry only; default none), retryDelay (ms between
+   *   retries of a sink without 'drain' / ready, default 1), timers ({ now, setTimeout, clearTimeout }, e.g. fakes).
+   * Sinks: a function(bytes), or an object with write(bytes), returning nothing / true (all taken), a number (bytes
+   *   taken), false (taken, but the buffer behind it is full: Node streams) or a Promise of these. With writable()
+   *   (room right now), Node's writableNeedDrain or a WritableStream writer's desiredSize, 'whole' refuses a frame
+   *   that cannot go out now (BufferFull, nothing written) and 'retry' waits for room. A WritableStream works too.
+   */
+  class Endpoint {
+    constructor(protocol, options = {}) {
+      this.protocol = protocol;
+      this.stream = new StreamParser(protocol, { capacity: options.capacity });
+      this.timers = options.timers || realTimers;
+      let sink = options.write === undefined ? null : options.write;
+      if (sink && typeof sink.getWriter === 'function') sink = sink.getWriter();
+      this.sink = sink;
+      this.setSendPolicy(options.sendPolicy || 'whole', options.sendTimeout === undefined ? Infinity : options.sendTimeout);
+      this.retryDelay = options.retryDelay === undefined ? 1 : options.retryDelay;
+      this.waiters = [];
+      this.idleTimer = null;
+      this.detachers = [];
+      this.closed = false;
+      this.setIdleTimeout(options.idleTimeout || 0);
+    }
+    get stats() { return this.stream.stats; }
+    get lastError() { return this.stream.lastError; }
+    /** Listen as on StreamParser: a message (name or class), 'frame' or 'error'. Returns a function removing it. */
+    on(what, fn) { return this.stream.on(what, fn); }
+    /** Give up an incomplete frame after `ms` without new input (0 = off). */
+    setIdleTimeout(ms) {
+      this.stream.setIdleTimeout(ms);
+      this.armIdle();
+    }
+    /** 'whole' (all or nothing: BufferFull when the sink has no room now) or 'retry' (wait for room; Timeout after
+     *  `timeout` ms, default none). */
+    setSendPolicy(policy, timeout = Infinity) {
+      if (policy !== 'whole' && policy !== 'retry') fail(Err.InvalidValue, `send policy '${policy}' (whole | retry)`);
+      this.sendPolicy = policy;
+      this.sendTimeout = timeout;
+    }
+
+    // ---- input ----
+    /** Process a chunk of input (bytes, or a ByteRing to drain). Returns the number of frames that arrived. */
+    receive(bytes) {
+      const before = this.stream.stats.frames;
+      if (bytes instanceof ByteRing) {
+        for (;;) {
+          const n = this.stream.push(bytes);
+          this.process();
+          if (!n) break;
+        }
+      } else {
+        let b = toBytes(bytes);
+        do {
+          const n = this.stream.push(b);
+          b = b.subarray(n);
+          this.process();
+        } while (b.length);
+      }
+      this.stream.tick(this.timers.now());
+      this.armIdle();
+      return this.stream.stats.frames - before;
+    }
+    /** Read input from a Node stream / EventEmitter ('data' events), a ReadableStream or an async iterable.
+     *  Returns a function that stops reading. */
+    attach(source) {
+      let detach;
+      if (source && typeof source.on === 'function' && !source.getReader) {
+        const fn = (chunk) => this.receive(chunk);
+        source.on('data', fn);
+        detach = () => (source.off ? source.off('data', fn) : source.removeListener('data', fn));
+      } else if (source && typeof source.getReader === 'function') {
+        const reader = source.getReader();
+        let live = true;
+        (async () => {
+          while (live) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value) this.receive(value);
+          }
+        })().catch(() => {});
+        detach = () => { live = false; reader.cancel().catch(() => {}); };
+      } else if (source && typeof source[Symbol.asyncIterator] === 'function') {
+        let live = true;
+        (async () => { for await (const chunk of source) { if (!live) break; this.receive(chunk); } })().catch(() => {});
+        detach = () => { live = false; };
+      } else {
+        fail(Err.InvalidValue, 'attach: expected a stream, a ReadableStream or an async iterable');
+      }
+      this.detachers.push(detach);
+      return detach;
+    }
+    /** Stop reading, stop the idle timer and reject the pending waits. */
+    close() {
+      this.closed = true;
+      for (const d of this.detachers.splice(0)) d();
+      if (this.idleTimer !== null) this.timers.clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+      for (const w of this.waiters.splice(0)) {
+        if (w.timer !== null) this.timers.clearTimeout(w.timer);
+        w.reject(new GmpError(Err.InvalidValue, 'endpoint closed'));
+      }
+    }
+
+    // ---- waiting ----
+    /** Resolve with the next message of type `what` (class or name) accepted by `match(view, header)`, decoded
+     *  (toStruct()); reject with GmpError(Err.Timeout) after `timeout` ms. opts: { timeout, match } or a timeout. */
+    waitFor(what, opts = {}) { return this.wait(what, opts, false).promise; }
+    /** Like waitFor(), resolving with { header, message } (header decoded; undefined without a header). */
+    waitForReply(what, opts = {}) { return this.wait(what, opts, true).promise; }
+    /** Send `request` (opts.header: header values), then wait for `what` (timeout counted from the send). A reply
+     *  that arrives while the request is being written is not missed. */
+    async transact(request, what, opts = {}) {
+      if (typeof opts === 'number') opts = { timeout: opts };
+      const w = this.wait(what, { match: opts.match }, false);
+      try {
+        await this.send(request, opts.header);
+      } catch (e) {
+        this.dropWaiter(w);
+        throw e;
+      }
+      this.startTimer(w, opts.timeout);
+      return w.promise;
+    }
+
+    // ---- output ----
+    /** Encode `message` (with header values, if given) and write it with the send policy. Resolves with its size. */
+    async send(message, header) {
+      const bytes = header === undefined ? this.protocol.encode(message) : this.protocol.encode(message, header);
+      await this.sendRaw(bytes);
+      return bytes.length;
+    }
+    /** Write bytes as they are (e.g. a command the schema does not describe), with the send policy. */
+    async sendRaw(bytes) {
+      let b = toBytes(bytes);
+      const k = this.sink;
+      if (!k) fail(Err.BufferFull, 'the endpoint has no sink');
+      const isWriter = typeof k === 'object' && 'desiredSize' in k && 'ready' in k;
+      const isNode = typeof k === 'object' && typeof k.once === 'function' && 'writableNeedDrain' in k;
+      const room = () => {
+        if (isWriter) return k.desiredSize === null || k.desiredSize > 0 ? Infinity : 0;
+        if (isNode) return k.writableNeedDrain ? 0 : Infinity;
+        if (typeof k === 'object' && typeof k.writable === 'function') return k.writable();
+        return Infinity;
+      };
+      const put = async (part) => {
+        const r = typeof k === 'function' ? k(part) : k.write(part);
+        const v = r && typeof r.then === 'function' && !isWriter ? await r : r;
+        if (isWriter && r && typeof r.then === 'function') r.catch(() => {});
+        return typeof v === 'number' ? Math.max(0, Math.min(v, part.length)) : part.length;
+      };
+      if (this.sendPolicy === 'whole') {
+        if (room() < b.length) fail(Err.BufferFull, `the sink cannot take ${b.length} bytes now`);
+        if ((await put(b)) < b.length) fail(Err.BufferFull, 'the sink took part of the frame');
+        return b.length;
+      }
+      const total = b.length;
+      const deadline = this.sendTimeout === Infinity ? Infinity : this.timers.now() + this.sendTimeout;
+      for (;;) {
+        if (room() > 0) b = b.subarray(await put(room() < b.length ? b.subarray(0, room()) : b));
+        if (!b.length) return total;
+        const left = deadline - this.timers.now();
+        if (left <= 0) fail(Err.Timeout, `${b.length} of ${total} bytes not sent`);
+        await this.roomOrDelay(k, isWriter, isNode, Math.min(left, isWriter || isNode ? left : this.retryDelay));
+      }
+    }
+
+    // ---- internals ----
+    roomOrDelay(k, isWriter, isNode, ms) {
+      return new Promise((resolve) => {
+        let t = null;
+        const done = () => { if (t !== null) this.timers.clearTimeout(t); t = null; resolve(); };
+        if (ms !== Infinity) t = this.timers.setTimeout(done, ms);
+        if (isWriter) k.ready.then(done, done);
+        else if (isNode) k.once('drain', done);
+      });
+    }
+    wait(what, opts, withHeader) {
+      if (typeof opts === 'number') opts = { timeout: opts };
+      const key = keyOf(what);
+      const w = { key, match: opts.match, withHeader, timer: null, resolve: null, reject: null, promise: null };
+      w.promise = new Promise((resolve, reject) => { w.resolve = resolve; w.reject = reject; });
+      if (this.closed) w.reject(new GmpError(Err.InvalidValue, 'endpoint closed'));
+      else this.waiters.push(w);
+      this.startTimer(w, opts.timeout);
+      return w;
+    }
+    startTimer(w, timeout) {
+      if (timeout === undefined || timeout === Infinity || !this.waiters.includes(w)) return;
+      w.timer = this.timers.setTimeout(() => {
+        w.timer = null;
+        if (!this.dropWaiter(w)) return;
+        w.reject(new GmpError(Err.Timeout, `no ${w.key} within ${timeout} ms`));
+      }, timeout);
+    }
+    dropWaiter(w) {
+      const i = this.waiters.indexOf(w);
+      if (i < 0) return false;
+      this.waiters.splice(i, 1);
+      if (w.timer !== null) this.timers.clearTimeout(w.timer);
+      w.timer = null;
+      return true;
+    }
+    /** Deliver every complete frame: to the first waiter accepting it, else to the listeners. */
+    process() {
+      for (;;) {
+        let taken = null;
+        const s = this.stream.step((f) => {
+          const w = this.waiters.find((x) => f.message.constructor.messageName === x.key && (!x.match || x.match(f.message, f.header)));
+          if (!w) return;
+          const message = f.message.toStruct();  // a failed decode drops the frame like any bad frame
+          const header = w.withHeader && f.header ? f.header.toStruct() : undefined;
+          taken = { w, value: w.withHeader ? { header, message } : message };
+        });
+        if (s.kind === 'need_more') return;
+        if (s.kind === 'error') { this.stream.reportError(s); continue; }
+        if (taken) {
+          this.dropWaiter(taken.w);
+          taken.w.resolve(taken.value);
+        } else {
+          this.stream.deliver(s.frame);
+        }
+      }
+    }
+    armIdle() {
+      if (this.idleTimer !== null) this.timers.clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+      const t = this.stream.idleTimeout;
+      if (!t || this.closed || !this.stream.buffered) return;
+      const wait = Math.max(1, this.stream.lastActivity + t - this.timers.now());
+      this.idleTimer = this.timers.setTimeout(() => {
+        this.idleTimer = null;
+        this.stream.tick(this.timers.now());
+        this.process();
+        this.armIdle();
+      }, wait);
     }
   }
 
@@ -1680,7 +1951,7 @@
     xorEscape, mapEscape, indexEscape, NO_ESCAPE, walkEscaped, readFrameHeader, unescapeInPlace, unescape, unescapedSize,
     escapeOverhead, escapeRange, escape,
     FrameScan, findPatternAtStart, matchesAt, scanFixed, scanLengthPrefixed, scanDelimited,
-    StreamParser, ByteRing,
+    StreamParser, ByteRing, Endpoint,
     formatFloat, formatGeneral, parseFloat: parseFloatText,
     text: Object.freeze({ split: splitTokens, parseInt: parseInt_, parseFloat: parseFloatText, parseChar, parseHexByte, hexValue,
       hexText, TextWriter }),

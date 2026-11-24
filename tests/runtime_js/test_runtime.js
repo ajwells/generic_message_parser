@@ -31,6 +31,7 @@ T.test('error codes and texts match gmsg::Error', () => {
   T.eq(Err.UnknownEnum, 14);
   T.eq(Err.ValueOutOfLimits, 15);
   T.eq(Err.Overrun, 16);
+  T.eq(Err.Timeout, 17);
   T.eq(gmsg.errorText(Err.ValueOutOfLimits), 'value out of limits');
   T.eq(gmsg.errorText(Err.BadChecksum), 'bad checksum');
   T.eq(gmsg.errorText(Err.UnknownType), 'unknown message type');

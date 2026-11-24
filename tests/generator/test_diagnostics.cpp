@@ -488,7 +488,7 @@ protocols:
     messages: [A]
 )";
     const std::string base = "messages:\n  A:\n    fields:\n      - { name: x, type: u8 }\n";
-    for (const char* name : {"Callbacks", "CallbackStream", "StreamWith", "Frame", "AnyView"}) {
+    for (const char* name : {"Callbacks", "CallbackStream", "StreamWith", "Frame", "AnyView", "Endpoint"}) {
         const auto r = compile(base + "  " + name + ":\n    fields:\n      - { name: y, type: u8 }\n" + proto, "cpp");
         INFO(r.text);
         CHECK_FALSE(r.ok);

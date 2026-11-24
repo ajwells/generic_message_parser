@@ -14,6 +14,7 @@
 #include "gmp/c/framing.h"
 #include "gmp/c/ring.h"
 #include "gmp/c/stream.h"
+#include "gmp/c/endpoint.h"
 #include "gmp/c/float_text.h"
 #include "gmp/c/text.h"
 #include "gmp/c/print.h"

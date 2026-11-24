@@ -432,7 +432,7 @@ gmsg_error test_framing_adjusted_process(const uint8_t* data, size_t size, const
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { test_framing_adjusted_mode_deliver_ = 0, test_framing_adjusted_mode_capture_ = 1, test_framing_adjusted_mode_message_ = 2, test_framing_adjusted_mode_for_ = 3 };
+enum { test_framing_adjusted_mode_deliver_ = 0, test_framing_adjusted_mode_capture_ = 1, test_framing_adjusted_mode_message_ = 2, test_framing_adjusted_mode_for_ = 3, test_framing_adjusted_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t test_framing_adjusted_extra_(const test_framing_adjusted_any_view* v) {
@@ -441,6 +441,41 @@ static size_t test_framing_adjusted_extra_(const test_framing_adjusted_any_view*
         case TEST_FRAMING_ADJUSTED_NOTE: return test_framing_note_view_extra_bytes(&v->as.note);
         default: return 0;
     }
+}
+
+static gmsg_error test_framing_adjusted_view_to_message_(const test_framing_adjusted_any_view* v, test_framing_adjusted_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case TEST_FRAMING_ADJUSTED_READING: return test_framing_reading_view_to_struct(&v->as.reading, &out->as.reading);
+        case TEST_FRAMING_ADJUSTED_NOTE: return test_framing_note_view_to_struct(&v->as.note, &out->as.note);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void test_framing_adjusted_complete_(test_framing_adjusted_stream* s, test_framing_adjusted_request* r, gmsg_error e) {
+    test_framing_adjusted_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error test_framing_adjusted_offer_(test_framing_adjusted_stream* s, const test_framing_adjusted_frame_* f, const test_framing_adjusted_any_view* v, bool* taken) {
+    test_framing_adjusted_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        test_framing_adjusted_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = test_framing_adjusted_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        test_framing_adjusted_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error test_framing_adjusted_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -452,6 +487,13 @@ static gmsg_error test_framing_adjusted_stream_process_(gmsg_stream* gs, uint8_t
         test_framing_adjusted_any_view v;
         if ((e = test_framing_adjusted_select_(&f, &v)) != GMSG_OK) return e;
         gs->last_extra = test_framing_adjusted_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = test_framing_adjusted_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         test_framing_adjusted_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -464,7 +506,25 @@ static gmsg_error test_framing_adjusted_stream_process_(gmsg_stream* gs, uint8_t
         test_framing_adjusted_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = TEST_FRAMING_ADJUSTED_NONE;
     }
-    if (s->mode_ == test_framing_adjusted_mode_message_) {
+    if (s->mode_ == test_framing_adjusted_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = test_framing_adjusted_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    return e;
+                }
+                if (taken) s->got_.message.kind = TEST_FRAMING_ADJUSTED_NONE;
+                if (taken) return GMSG_OK;
+            }
+            test_framing_adjusted_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = TEST_FRAMING_ADJUSTED_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = test_framing_adjusted_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            return e;
+        }
+    }
+    if (s->mode_ == test_framing_adjusted_mode_message_ || s->mode_ == test_framing_adjusted_mode_wait_) {
         switch (s->got_.message.kind) {
             case TEST_FRAMING_ADJUSTED_READING: s->msg_->kind = TEST_FRAMING_ADJUSTED_READING; return test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading);
             case TEST_FRAMING_ADJUSTED_NOTE: s->msg_->kind = TEST_FRAMING_ADJUSTED_NOTE; return test_framing_note_view_to_struct(&s->got_.message.as.note, &s->msg_->as.note);
@@ -545,6 +605,168 @@ static void test_framing_adjusted_stream_error_(gmsg_stream* s, gmsg_error e, co
 gmsg_error test_framing_adjusted_stream_init(test_framing_adjusted_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, TEST_FRAMING_ADJUSTED_MAX_FRAME, test_framing_adjusted_scan_, test_framing_adjusted_stream_process_, test_framing_adjusted_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void test_framing_adjusted_endpoint_fire_(gmsg_endpoint* io) {
+    test_framing_adjusted_stream* s = &((test_framing_adjusted_endpoint*)(void*)((char*)io - offsetof(test_framing_adjusted_endpoint, io)))->stream;
+    while (s->completed_) {
+        test_framing_adjusted_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void test_framing_adjusted_endpoint_expire_(gmsg_endpoint* io) {
+    test_framing_adjusted_stream* s = &((test_framing_adjusted_endpoint*)(void*)((char*)io - offsetof(test_framing_adjusted_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    test_framing_adjusted_request** at = &s->pending_;
+    while (*at) {
+        test_framing_adjusted_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            test_framing_adjusted_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    test_framing_adjusted_endpoint_fire_(io);
+}
+
+gmsg_error test_framing_adjusted_endpoint_init(test_framing_adjusted_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = test_framing_adjusted_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = test_framing_adjusted_endpoint_fire_;
+    ep->io.on_tick = test_framing_adjusted_endpoint_expire_;
+    return e;
+}
+
+void test_framing_adjusted_endpoint_cancel(test_framing_adjusted_endpoint* ep, test_framing_adjusted_request* r) {
+    test_framing_adjusted_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void test_framing_adjusted_endpoint_expect(test_framing_adjusted_endpoint* ep, test_framing_adjusted_request* r, test_framing_adjusted_kind kind, uint32_t timeout, test_framing_adjusted_match_fn match, void* match_ctx, test_framing_adjusted_request_fn on_done, void* ctx) {
+    test_framing_adjusted_request** at;
+    test_framing_adjusted_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t test_framing_adjusted_endpoint_pending(const test_framing_adjusted_endpoint* ep) {
+    size_t k = 0;
+    const test_framing_adjusted_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error test_framing_adjusted_endpoint_send_reading(test_framing_adjusted_endpoint* ep, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_adjusted_encode_reading(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_adjusted_endpoint_send_reading_with_header(test_framing_adjusted_endpoint* ep, const test_framing_adjusted_header* h, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_adjusted_encode_reading_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_adjusted_endpoint_send_note(test_framing_adjusted_endpoint* ep, const test_framing_note* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_adjusted_encode_note(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_adjusted_endpoint_send_note_with_header(test_framing_adjusted_endpoint* ep, const test_framing_adjusted_header* h, const test_framing_note* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_adjusted_encode_note_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_adjusted_endpoint_send(test_framing_adjusted_endpoint* ep, const test_framing_adjusted_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_adjusted_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool test_framing_adjusted_endpoint_pull_(void* ctx) {
+    test_framing_adjusted_endpoint* ep = (test_framing_adjusted_endpoint*)ctx;
+    test_framing_adjusted_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        test_framing_adjusted_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error test_framing_adjusted_endpoint_wait_for(test_framing_adjusted_endpoint* ep, test_framing_adjusted_kind kind, uint32_t timeout, test_framing_adjusted_match_fn match, void* match_ctx, test_framing_adjusted_any_message* out, test_framing_adjusted_header* header) {
+    test_framing_adjusted_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = test_framing_adjusted_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, test_framing_adjusted_endpoint_pull_, ep);
+    s->mode_ = test_framing_adjusted_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error test_framing_adjusted_endpoint_transact(test_framing_adjusted_endpoint* ep, const test_framing_adjusted_header* h, const test_framing_adjusted_any_message* request, test_framing_adjusted_kind kind, uint32_t timeout, test_framing_adjusted_match_fn match, void* match_ctx, test_framing_adjusted_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_ADJUSTED_READING: e = test_framing_adjusted_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            case TEST_FRAMING_ADJUSTED_NOTE: e = test_framing_adjusted_endpoint_send_note_with_header(ep, h, &request->as.note); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_adjusted_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return test_framing_adjusted_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error test_framing_adjusted_endpoint_request(test_framing_adjusted_endpoint* ep, test_framing_adjusted_request* r, const test_framing_adjusted_header* h, const test_framing_adjusted_any_message* request, test_framing_adjusted_kind kind, uint32_t timeout, test_framing_adjusted_match_fn match, void* match_ctx, test_framing_adjusted_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    test_framing_adjusted_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_ADJUSTED_READING: e = test_framing_adjusted_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            case TEST_FRAMING_ADJUSTED_NOTE: e = test_framing_adjusted_endpoint_send_note_with_header(ep, h, &request->as.note); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_adjusted_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    test_framing_adjusted_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error test_framing_adjusted_encode_reading(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -844,7 +1066,7 @@ gmsg_error test_framing_whole_frame_process(const uint8_t* data, size_t size, co
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { test_framing_whole_frame_mode_deliver_ = 0, test_framing_whole_frame_mode_capture_ = 1, test_framing_whole_frame_mode_message_ = 2, test_framing_whole_frame_mode_for_ = 3 };
+enum { test_framing_whole_frame_mode_deliver_ = 0, test_framing_whole_frame_mode_capture_ = 1, test_framing_whole_frame_mode_message_ = 2, test_framing_whole_frame_mode_for_ = 3, test_framing_whole_frame_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t test_framing_whole_frame_extra_(const test_framing_whole_frame_any_view* v) {
@@ -853,6 +1075,41 @@ static size_t test_framing_whole_frame_extra_(const test_framing_whole_frame_any
         case TEST_FRAMING_WHOLE_FRAME_NOTE: return test_framing_note_view_extra_bytes(&v->as.note);
         default: return 0;
     }
+}
+
+static gmsg_error test_framing_whole_frame_view_to_message_(const test_framing_whole_frame_any_view* v, test_framing_whole_frame_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case TEST_FRAMING_WHOLE_FRAME_READING: return test_framing_reading_view_to_struct(&v->as.reading, &out->as.reading);
+        case TEST_FRAMING_WHOLE_FRAME_NOTE: return test_framing_note_view_to_struct(&v->as.note, &out->as.note);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void test_framing_whole_frame_complete_(test_framing_whole_frame_stream* s, test_framing_whole_frame_request* r, gmsg_error e) {
+    test_framing_whole_frame_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error test_framing_whole_frame_offer_(test_framing_whole_frame_stream* s, const test_framing_whole_frame_frame_* f, const test_framing_whole_frame_any_view* v, bool* taken) {
+    test_framing_whole_frame_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        test_framing_whole_frame_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = test_framing_whole_frame_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        test_framing_whole_frame_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error test_framing_whole_frame_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -864,6 +1121,13 @@ static gmsg_error test_framing_whole_frame_stream_process_(gmsg_stream* gs, uint
         test_framing_whole_frame_any_view v;
         if ((e = test_framing_whole_frame_select_(&f, &v)) != GMSG_OK) return e;
         gs->last_extra = test_framing_whole_frame_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = test_framing_whole_frame_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         test_framing_whole_frame_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -876,7 +1140,25 @@ static gmsg_error test_framing_whole_frame_stream_process_(gmsg_stream* gs, uint
         test_framing_whole_frame_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = TEST_FRAMING_WHOLE_FRAME_NONE;
     }
-    if (s->mode_ == test_framing_whole_frame_mode_message_) {
+    if (s->mode_ == test_framing_whole_frame_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = test_framing_whole_frame_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    return e;
+                }
+                if (taken) s->got_.message.kind = TEST_FRAMING_WHOLE_FRAME_NONE;
+                if (taken) return GMSG_OK;
+            }
+            test_framing_whole_frame_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = TEST_FRAMING_WHOLE_FRAME_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = test_framing_whole_frame_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            return e;
+        }
+    }
+    if (s->mode_ == test_framing_whole_frame_mode_message_ || s->mode_ == test_framing_whole_frame_mode_wait_) {
         switch (s->got_.message.kind) {
             case TEST_FRAMING_WHOLE_FRAME_READING: s->msg_->kind = TEST_FRAMING_WHOLE_FRAME_READING; return test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading);
             case TEST_FRAMING_WHOLE_FRAME_NOTE: s->msg_->kind = TEST_FRAMING_WHOLE_FRAME_NOTE; return test_framing_note_view_to_struct(&s->got_.message.as.note, &s->msg_->as.note);
@@ -957,6 +1239,168 @@ static void test_framing_whole_frame_stream_error_(gmsg_stream* s, gmsg_error e,
 gmsg_error test_framing_whole_frame_stream_init(test_framing_whole_frame_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, TEST_FRAMING_WHOLE_FRAME_MAX_FRAME, test_framing_whole_frame_scan_, test_framing_whole_frame_stream_process_, test_framing_whole_frame_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void test_framing_whole_frame_endpoint_fire_(gmsg_endpoint* io) {
+    test_framing_whole_frame_stream* s = &((test_framing_whole_frame_endpoint*)(void*)((char*)io - offsetof(test_framing_whole_frame_endpoint, io)))->stream;
+    while (s->completed_) {
+        test_framing_whole_frame_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void test_framing_whole_frame_endpoint_expire_(gmsg_endpoint* io) {
+    test_framing_whole_frame_stream* s = &((test_framing_whole_frame_endpoint*)(void*)((char*)io - offsetof(test_framing_whole_frame_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    test_framing_whole_frame_request** at = &s->pending_;
+    while (*at) {
+        test_framing_whole_frame_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            test_framing_whole_frame_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    test_framing_whole_frame_endpoint_fire_(io);
+}
+
+gmsg_error test_framing_whole_frame_endpoint_init(test_framing_whole_frame_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = test_framing_whole_frame_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = test_framing_whole_frame_endpoint_fire_;
+    ep->io.on_tick = test_framing_whole_frame_endpoint_expire_;
+    return e;
+}
+
+void test_framing_whole_frame_endpoint_cancel(test_framing_whole_frame_endpoint* ep, test_framing_whole_frame_request* r) {
+    test_framing_whole_frame_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void test_framing_whole_frame_endpoint_expect(test_framing_whole_frame_endpoint* ep, test_framing_whole_frame_request* r, test_framing_whole_frame_kind kind, uint32_t timeout, test_framing_whole_frame_match_fn match, void* match_ctx, test_framing_whole_frame_request_fn on_done, void* ctx) {
+    test_framing_whole_frame_request** at;
+    test_framing_whole_frame_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t test_framing_whole_frame_endpoint_pending(const test_framing_whole_frame_endpoint* ep) {
+    size_t k = 0;
+    const test_framing_whole_frame_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error test_framing_whole_frame_endpoint_send_reading(test_framing_whole_frame_endpoint* ep, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_whole_frame_encode_reading(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_whole_frame_endpoint_send_reading_with_header(test_framing_whole_frame_endpoint* ep, const test_framing_whole_frame_header* h, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_whole_frame_encode_reading_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_whole_frame_endpoint_send_note(test_framing_whole_frame_endpoint* ep, const test_framing_note* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_whole_frame_encode_note(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_whole_frame_endpoint_send_note_with_header(test_framing_whole_frame_endpoint* ep, const test_framing_whole_frame_header* h, const test_framing_note* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_whole_frame_encode_note_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_whole_frame_endpoint_send(test_framing_whole_frame_endpoint* ep, const test_framing_whole_frame_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_whole_frame_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool test_framing_whole_frame_endpoint_pull_(void* ctx) {
+    test_framing_whole_frame_endpoint* ep = (test_framing_whole_frame_endpoint*)ctx;
+    test_framing_whole_frame_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        test_framing_whole_frame_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error test_framing_whole_frame_endpoint_wait_for(test_framing_whole_frame_endpoint* ep, test_framing_whole_frame_kind kind, uint32_t timeout, test_framing_whole_frame_match_fn match, void* match_ctx, test_framing_whole_frame_any_message* out, test_framing_whole_frame_header* header) {
+    test_framing_whole_frame_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = test_framing_whole_frame_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, test_framing_whole_frame_endpoint_pull_, ep);
+    s->mode_ = test_framing_whole_frame_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error test_framing_whole_frame_endpoint_transact(test_framing_whole_frame_endpoint* ep, const test_framing_whole_frame_header* h, const test_framing_whole_frame_any_message* request, test_framing_whole_frame_kind kind, uint32_t timeout, test_framing_whole_frame_match_fn match, void* match_ctx, test_framing_whole_frame_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_WHOLE_FRAME_READING: e = test_framing_whole_frame_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            case TEST_FRAMING_WHOLE_FRAME_NOTE: e = test_framing_whole_frame_endpoint_send_note_with_header(ep, h, &request->as.note); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_whole_frame_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return test_framing_whole_frame_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error test_framing_whole_frame_endpoint_request(test_framing_whole_frame_endpoint* ep, test_framing_whole_frame_request* r, const test_framing_whole_frame_header* h, const test_framing_whole_frame_any_message* request, test_framing_whole_frame_kind kind, uint32_t timeout, test_framing_whole_frame_match_fn match, void* match_ctx, test_framing_whole_frame_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    test_framing_whole_frame_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_WHOLE_FRAME_READING: e = test_framing_whole_frame_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            case TEST_FRAMING_WHOLE_FRAME_NOTE: e = test_framing_whole_frame_endpoint_send_note_with_header(ep, h, &request->as.note); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_whole_frame_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    test_framing_whole_frame_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error test_framing_whole_frame_encode_reading(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -1298,7 +1742,7 @@ gmsg_error test_framing_escaped_with_end_process(uint8_t* data, size_t size, con
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { test_framing_escaped_with_end_mode_deliver_ = 0, test_framing_escaped_with_end_mode_capture_ = 1, test_framing_escaped_with_end_mode_message_ = 2, test_framing_escaped_with_end_mode_for_ = 3 };
+enum { test_framing_escaped_with_end_mode_deliver_ = 0, test_framing_escaped_with_end_mode_capture_ = 1, test_framing_escaped_with_end_mode_message_ = 2, test_framing_escaped_with_end_mode_for_ = 3, test_framing_escaped_with_end_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t test_framing_escaped_with_end_extra_(const test_framing_escaped_with_end_any_view* v) {
@@ -1307,6 +1751,41 @@ static size_t test_framing_escaped_with_end_extra_(const test_framing_escaped_wi
         case TEST_FRAMING_ESCAPED_WITH_END_NOTE: return test_framing_note_view_extra_bytes(&v->as.note);
         default: return 0;
     }
+}
+
+static gmsg_error test_framing_escaped_with_end_view_to_message_(const test_framing_escaped_with_end_any_view* v, test_framing_escaped_with_end_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case TEST_FRAMING_ESCAPED_WITH_END_READING: return test_framing_reading_view_to_struct(&v->as.reading, &out->as.reading);
+        case TEST_FRAMING_ESCAPED_WITH_END_NOTE: return test_framing_note_view_to_struct(&v->as.note, &out->as.note);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void test_framing_escaped_with_end_complete_(test_framing_escaped_with_end_stream* s, test_framing_escaped_with_end_request* r, gmsg_error e) {
+    test_framing_escaped_with_end_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error test_framing_escaped_with_end_offer_(test_framing_escaped_with_end_stream* s, const test_framing_escaped_with_end_frame_* f, const test_framing_escaped_with_end_any_view* v, bool* taken) {
+    test_framing_escaped_with_end_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        test_framing_escaped_with_end_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = test_framing_escaped_with_end_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        test_framing_escaped_with_end_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error test_framing_escaped_with_end_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -1318,6 +1797,14 @@ static gmsg_error test_framing_escaped_with_end_stream_process_(gmsg_stream* gs,
         test_framing_escaped_with_end_any_view v;
         if ((e = test_framing_escaped_with_end_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
         gs->last_extra = test_framing_escaped_with_end_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = test_framing_escaped_with_end_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                test_framing_escaped_with_end_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         test_framing_escaped_with_end_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -1330,7 +1817,27 @@ static gmsg_error test_framing_escaped_with_end_stream_process_(gmsg_stream* gs,
         test_framing_escaped_with_end_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = TEST_FRAMING_ESCAPED_WITH_END_NONE;
     }
-    if (s->mode_ == test_framing_escaped_with_end_mode_message_) {
+    if (s->mode_ == test_framing_escaped_with_end_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = test_framing_escaped_with_end_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    test_framing_escaped_with_end_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                    return e;
+                }
+                if (taken) s->got_.message.kind = TEST_FRAMING_ESCAPED_WITH_END_NONE;
+                if (taken) return GMSG_OK;
+            }
+            test_framing_escaped_with_end_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = TEST_FRAMING_ESCAPED_WITH_END_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = test_framing_escaped_with_end_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            test_framing_escaped_with_end_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+            return e;
+        }
+    }
+    if (s->mode_ == test_framing_escaped_with_end_mode_message_ || s->mode_ == test_framing_escaped_with_end_mode_wait_) {
         switch (s->got_.message.kind) {
             case TEST_FRAMING_ESCAPED_WITH_END_READING: s->msg_->kind = TEST_FRAMING_ESCAPED_WITH_END_READING; e = test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading); break;
             case TEST_FRAMING_ESCAPED_WITH_END_NOTE: s->msg_->kind = TEST_FRAMING_ESCAPED_WITH_END_NOTE; e = test_framing_note_view_to_struct(&s->got_.message.as.note, &s->msg_->as.note); break;
@@ -1413,6 +1920,168 @@ static void test_framing_escaped_with_end_stream_error_(gmsg_stream* s, gmsg_err
 gmsg_error test_framing_escaped_with_end_stream_init(test_framing_escaped_with_end_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, TEST_FRAMING_ESCAPED_WITH_END_MAX_FRAME, test_framing_escaped_with_end_scan_, test_framing_escaped_with_end_stream_process_, test_framing_escaped_with_end_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void test_framing_escaped_with_end_endpoint_fire_(gmsg_endpoint* io) {
+    test_framing_escaped_with_end_stream* s = &((test_framing_escaped_with_end_endpoint*)(void*)((char*)io - offsetof(test_framing_escaped_with_end_endpoint, io)))->stream;
+    while (s->completed_) {
+        test_framing_escaped_with_end_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void test_framing_escaped_with_end_endpoint_expire_(gmsg_endpoint* io) {
+    test_framing_escaped_with_end_stream* s = &((test_framing_escaped_with_end_endpoint*)(void*)((char*)io - offsetof(test_framing_escaped_with_end_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    test_framing_escaped_with_end_request** at = &s->pending_;
+    while (*at) {
+        test_framing_escaped_with_end_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            test_framing_escaped_with_end_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    test_framing_escaped_with_end_endpoint_fire_(io);
+}
+
+gmsg_error test_framing_escaped_with_end_endpoint_init(test_framing_escaped_with_end_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = test_framing_escaped_with_end_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = test_framing_escaped_with_end_endpoint_fire_;
+    ep->io.on_tick = test_framing_escaped_with_end_endpoint_expire_;
+    return e;
+}
+
+void test_framing_escaped_with_end_endpoint_cancel(test_framing_escaped_with_end_endpoint* ep, test_framing_escaped_with_end_request* r) {
+    test_framing_escaped_with_end_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void test_framing_escaped_with_end_endpoint_expect(test_framing_escaped_with_end_endpoint* ep, test_framing_escaped_with_end_request* r, test_framing_escaped_with_end_kind kind, uint32_t timeout, test_framing_escaped_with_end_match_fn match, void* match_ctx, test_framing_escaped_with_end_request_fn on_done, void* ctx) {
+    test_framing_escaped_with_end_request** at;
+    test_framing_escaped_with_end_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t test_framing_escaped_with_end_endpoint_pending(const test_framing_escaped_with_end_endpoint* ep) {
+    size_t k = 0;
+    const test_framing_escaped_with_end_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error test_framing_escaped_with_end_endpoint_send_reading(test_framing_escaped_with_end_endpoint* ep, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_escaped_with_end_encode_reading(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_escaped_with_end_endpoint_send_reading_with_header(test_framing_escaped_with_end_endpoint* ep, const test_framing_escaped_with_end_header* h, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_escaped_with_end_encode_reading_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_escaped_with_end_endpoint_send_note(test_framing_escaped_with_end_endpoint* ep, const test_framing_note* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_escaped_with_end_encode_note(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_escaped_with_end_endpoint_send_note_with_header(test_framing_escaped_with_end_endpoint* ep, const test_framing_escaped_with_end_header* h, const test_framing_note* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_escaped_with_end_encode_note_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_escaped_with_end_endpoint_send(test_framing_escaped_with_end_endpoint* ep, const test_framing_escaped_with_end_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_escaped_with_end_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool test_framing_escaped_with_end_endpoint_pull_(void* ctx) {
+    test_framing_escaped_with_end_endpoint* ep = (test_framing_escaped_with_end_endpoint*)ctx;
+    test_framing_escaped_with_end_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        test_framing_escaped_with_end_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error test_framing_escaped_with_end_endpoint_wait_for(test_framing_escaped_with_end_endpoint* ep, test_framing_escaped_with_end_kind kind, uint32_t timeout, test_framing_escaped_with_end_match_fn match, void* match_ctx, test_framing_escaped_with_end_any_message* out, test_framing_escaped_with_end_header* header) {
+    test_framing_escaped_with_end_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = test_framing_escaped_with_end_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, test_framing_escaped_with_end_endpoint_pull_, ep);
+    s->mode_ = test_framing_escaped_with_end_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error test_framing_escaped_with_end_endpoint_transact(test_framing_escaped_with_end_endpoint* ep, const test_framing_escaped_with_end_header* h, const test_framing_escaped_with_end_any_message* request, test_framing_escaped_with_end_kind kind, uint32_t timeout, test_framing_escaped_with_end_match_fn match, void* match_ctx, test_framing_escaped_with_end_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_ESCAPED_WITH_END_READING: e = test_framing_escaped_with_end_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            case TEST_FRAMING_ESCAPED_WITH_END_NOTE: e = test_framing_escaped_with_end_endpoint_send_note_with_header(ep, h, &request->as.note); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_escaped_with_end_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return test_framing_escaped_with_end_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error test_framing_escaped_with_end_endpoint_request(test_framing_escaped_with_end_endpoint* ep, test_framing_escaped_with_end_request* r, const test_framing_escaped_with_end_header* h, const test_framing_escaped_with_end_any_message* request, test_framing_escaped_with_end_kind kind, uint32_t timeout, test_framing_escaped_with_end_match_fn match, void* match_ctx, test_framing_escaped_with_end_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    test_framing_escaped_with_end_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_ESCAPED_WITH_END_READING: e = test_framing_escaped_with_end_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            case TEST_FRAMING_ESCAPED_WITH_END_NOTE: e = test_framing_escaped_with_end_endpoint_send_note_with_header(ep, h, &request->as.note); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_escaped_with_end_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    test_framing_escaped_with_end_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error test_framing_escaped_with_end_encode_reading(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -1736,7 +2405,7 @@ gmsg_error test_framing_fixed_with_end_process(uint8_t* data, size_t size, const
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { test_framing_fixed_with_end_mode_deliver_ = 0, test_framing_fixed_with_end_mode_capture_ = 1, test_framing_fixed_with_end_mode_message_ = 2, test_framing_fixed_with_end_mode_for_ = 3 };
+enum { test_framing_fixed_with_end_mode_deliver_ = 0, test_framing_fixed_with_end_mode_capture_ = 1, test_framing_fixed_with_end_mode_message_ = 2, test_framing_fixed_with_end_mode_for_ = 3, test_framing_fixed_with_end_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t test_framing_fixed_with_end_extra_(const test_framing_fixed_with_end_any_view* v) {
@@ -1744,6 +2413,40 @@ static size_t test_framing_fixed_with_end_extra_(const test_framing_fixed_with_e
         case TEST_FRAMING_FIXED_WITH_END_READING: return test_framing_reading_view_extra_bytes(&v->as.reading);
         default: return 0;
     }
+}
+
+static gmsg_error test_framing_fixed_with_end_view_to_message_(const test_framing_fixed_with_end_any_view* v, test_framing_fixed_with_end_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case TEST_FRAMING_FIXED_WITH_END_READING: return test_framing_reading_view_to_struct(&v->as.reading, &out->as.reading);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void test_framing_fixed_with_end_complete_(test_framing_fixed_with_end_stream* s, test_framing_fixed_with_end_request* r, gmsg_error e) {
+    test_framing_fixed_with_end_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error test_framing_fixed_with_end_offer_(test_framing_fixed_with_end_stream* s, const test_framing_fixed_with_end_frame_* f, const test_framing_fixed_with_end_any_view* v, bool* taken) {
+    test_framing_fixed_with_end_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        test_framing_fixed_with_end_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = test_framing_fixed_with_end_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        test_framing_fixed_with_end_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error test_framing_fixed_with_end_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -1755,6 +2458,14 @@ static gmsg_error test_framing_fixed_with_end_stream_process_(gmsg_stream* gs, u
         test_framing_fixed_with_end_any_view v;
         if ((e = test_framing_fixed_with_end_select_restore_(frame, n, &f, &v)) != GMSG_OK) return e;
         gs->last_extra = test_framing_fixed_with_end_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = test_framing_fixed_with_end_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                test_framing_fixed_with_end_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         test_framing_fixed_with_end_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -1767,7 +2478,27 @@ static gmsg_error test_framing_fixed_with_end_stream_process_(gmsg_stream* gs, u
         test_framing_fixed_with_end_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = TEST_FRAMING_FIXED_WITH_END_NONE;
     }
-    if (s->mode_ == test_framing_fixed_with_end_mode_message_) {
+    if (s->mode_ == test_framing_fixed_with_end_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = test_framing_fixed_with_end_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    test_framing_fixed_with_end_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+                    return e;
+                }
+                if (taken) s->got_.message.kind = TEST_FRAMING_FIXED_WITH_END_NONE;
+                if (taken) return GMSG_OK;
+            }
+            test_framing_fixed_with_end_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = TEST_FRAMING_FIXED_WITH_END_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = test_framing_fixed_with_end_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            test_framing_fixed_with_end_restore_(frame, n, f.unescaped_n);  /* a frame that fails is left as received */
+            return e;
+        }
+    }
+    if (s->mode_ == test_framing_fixed_with_end_mode_message_ || s->mode_ == test_framing_fixed_with_end_mode_wait_) {
         switch (s->got_.message.kind) {
             case TEST_FRAMING_FIXED_WITH_END_READING: s->msg_->kind = TEST_FRAMING_FIXED_WITH_END_READING; e = test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading); break;
             default: e = GMSG_ERR_UNKNOWN_TYPE; break;
@@ -1849,6 +2580,154 @@ static void test_framing_fixed_with_end_stream_error_(gmsg_stream* s, gmsg_error
 gmsg_error test_framing_fixed_with_end_stream_init(test_framing_fixed_with_end_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, TEST_FRAMING_FIXED_WITH_END_MAX_FRAME, test_framing_fixed_with_end_scan_, test_framing_fixed_with_end_stream_process_, test_framing_fixed_with_end_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void test_framing_fixed_with_end_endpoint_fire_(gmsg_endpoint* io) {
+    test_framing_fixed_with_end_stream* s = &((test_framing_fixed_with_end_endpoint*)(void*)((char*)io - offsetof(test_framing_fixed_with_end_endpoint, io)))->stream;
+    while (s->completed_) {
+        test_framing_fixed_with_end_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void test_framing_fixed_with_end_endpoint_expire_(gmsg_endpoint* io) {
+    test_framing_fixed_with_end_stream* s = &((test_framing_fixed_with_end_endpoint*)(void*)((char*)io - offsetof(test_framing_fixed_with_end_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    test_framing_fixed_with_end_request** at = &s->pending_;
+    while (*at) {
+        test_framing_fixed_with_end_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            test_framing_fixed_with_end_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    test_framing_fixed_with_end_endpoint_fire_(io);
+}
+
+gmsg_error test_framing_fixed_with_end_endpoint_init(test_framing_fixed_with_end_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = test_framing_fixed_with_end_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = test_framing_fixed_with_end_endpoint_fire_;
+    ep->io.on_tick = test_framing_fixed_with_end_endpoint_expire_;
+    return e;
+}
+
+void test_framing_fixed_with_end_endpoint_cancel(test_framing_fixed_with_end_endpoint* ep, test_framing_fixed_with_end_request* r) {
+    test_framing_fixed_with_end_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void test_framing_fixed_with_end_endpoint_expect(test_framing_fixed_with_end_endpoint* ep, test_framing_fixed_with_end_request* r, test_framing_fixed_with_end_kind kind, uint32_t timeout, test_framing_fixed_with_end_match_fn match, void* match_ctx, test_framing_fixed_with_end_request_fn on_done, void* ctx) {
+    test_framing_fixed_with_end_request** at;
+    test_framing_fixed_with_end_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t test_framing_fixed_with_end_endpoint_pending(const test_framing_fixed_with_end_endpoint* ep) {
+    size_t k = 0;
+    const test_framing_fixed_with_end_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error test_framing_fixed_with_end_endpoint_send_reading(test_framing_fixed_with_end_endpoint* ep, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_fixed_with_end_encode_reading(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_fixed_with_end_endpoint_send_reading_with_header(test_framing_fixed_with_end_endpoint* ep, const test_framing_fixed_with_end_header* h, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_fixed_with_end_encode_reading_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_fixed_with_end_endpoint_send(test_framing_fixed_with_end_endpoint* ep, const test_framing_fixed_with_end_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_fixed_with_end_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool test_framing_fixed_with_end_endpoint_pull_(void* ctx) {
+    test_framing_fixed_with_end_endpoint* ep = (test_framing_fixed_with_end_endpoint*)ctx;
+    test_framing_fixed_with_end_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        test_framing_fixed_with_end_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error test_framing_fixed_with_end_endpoint_wait_for(test_framing_fixed_with_end_endpoint* ep, test_framing_fixed_with_end_kind kind, uint32_t timeout, test_framing_fixed_with_end_match_fn match, void* match_ctx, test_framing_fixed_with_end_any_message* out, test_framing_fixed_with_end_header* header) {
+    test_framing_fixed_with_end_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = test_framing_fixed_with_end_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, test_framing_fixed_with_end_endpoint_pull_, ep);
+    s->mode_ = test_framing_fixed_with_end_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error test_framing_fixed_with_end_endpoint_transact(test_framing_fixed_with_end_endpoint* ep, const test_framing_fixed_with_end_header* h, const test_framing_fixed_with_end_any_message* request, test_framing_fixed_with_end_kind kind, uint32_t timeout, test_framing_fixed_with_end_match_fn match, void* match_ctx, test_framing_fixed_with_end_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_FIXED_WITH_END_READING: e = test_framing_fixed_with_end_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_fixed_with_end_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return test_framing_fixed_with_end_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error test_framing_fixed_with_end_endpoint_request(test_framing_fixed_with_end_endpoint* ep, test_framing_fixed_with_end_request* r, const test_framing_fixed_with_end_header* h, const test_framing_fixed_with_end_any_message* request, test_framing_fixed_with_end_kind kind, uint32_t timeout, test_framing_fixed_with_end_match_fn match, void* match_ctx, test_framing_fixed_with_end_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    test_framing_fixed_with_end_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_FIXED_WITH_END_READING: e = test_framing_fixed_with_end_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_fixed_with_end_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    test_framing_fixed_with_end_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error test_framing_fixed_with_end_encode_reading(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -2116,7 +2995,7 @@ gmsg_error test_framing_loose_process(const uint8_t* data, size_t size, const te
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { test_framing_loose_mode_deliver_ = 0, test_framing_loose_mode_capture_ = 1, test_framing_loose_mode_message_ = 2, test_framing_loose_mode_for_ = 3 };
+enum { test_framing_loose_mode_deliver_ = 0, test_framing_loose_mode_capture_ = 1, test_framing_loose_mode_message_ = 2, test_framing_loose_mode_for_ = 3, test_framing_loose_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t test_framing_loose_extra_(const test_framing_loose_any_view* v) {
@@ -2125,6 +3004,41 @@ static size_t test_framing_loose_extra_(const test_framing_loose_any_view* v) {
         case TEST_FRAMING_LOOSE_NOTE: return test_framing_note_view_extra_bytes(&v->as.note);
         default: return 0;
     }
+}
+
+static gmsg_error test_framing_loose_view_to_message_(const test_framing_loose_any_view* v, test_framing_loose_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case TEST_FRAMING_LOOSE_READING: return test_framing_reading_view_to_struct(&v->as.reading, &out->as.reading);
+        case TEST_FRAMING_LOOSE_NOTE: return test_framing_note_view_to_struct(&v->as.note, &out->as.note);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void test_framing_loose_complete_(test_framing_loose_stream* s, test_framing_loose_request* r, gmsg_error e) {
+    test_framing_loose_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error test_framing_loose_offer_(test_framing_loose_stream* s, const test_framing_loose_frame_* f, const test_framing_loose_any_view* v, bool* taken) {
+    test_framing_loose_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        test_framing_loose_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = test_framing_loose_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        test_framing_loose_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error test_framing_loose_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -2136,6 +3050,13 @@ static gmsg_error test_framing_loose_stream_process_(gmsg_stream* gs, uint8_t* f
         test_framing_loose_any_view v;
         if ((e = test_framing_loose_select_(&f, &v)) != GMSG_OK) return e;
         gs->last_extra = test_framing_loose_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = test_framing_loose_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         test_framing_loose_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -2148,7 +3069,25 @@ static gmsg_error test_framing_loose_stream_process_(gmsg_stream* gs, uint8_t* f
         test_framing_loose_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = TEST_FRAMING_LOOSE_NONE;
     }
-    if (s->mode_ == test_framing_loose_mode_message_) {
+    if (s->mode_ == test_framing_loose_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = test_framing_loose_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    return e;
+                }
+                if (taken) s->got_.message.kind = TEST_FRAMING_LOOSE_NONE;
+                if (taken) return GMSG_OK;
+            }
+            test_framing_loose_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = TEST_FRAMING_LOOSE_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = test_framing_loose_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            return e;
+        }
+    }
+    if (s->mode_ == test_framing_loose_mode_message_ || s->mode_ == test_framing_loose_mode_wait_) {
         switch (s->got_.message.kind) {
             case TEST_FRAMING_LOOSE_READING: s->msg_->kind = TEST_FRAMING_LOOSE_READING; return test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading);
             case TEST_FRAMING_LOOSE_NOTE: s->msg_->kind = TEST_FRAMING_LOOSE_NOTE; return test_framing_note_view_to_struct(&s->got_.message.as.note, &s->msg_->as.note);
@@ -2229,6 +3168,168 @@ static void test_framing_loose_stream_error_(gmsg_stream* s, gmsg_error e, const
 gmsg_error test_framing_loose_stream_init(test_framing_loose_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, TEST_FRAMING_LOOSE_MAX_FRAME, test_framing_loose_scan_, test_framing_loose_stream_process_, test_framing_loose_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void test_framing_loose_endpoint_fire_(gmsg_endpoint* io) {
+    test_framing_loose_stream* s = &((test_framing_loose_endpoint*)(void*)((char*)io - offsetof(test_framing_loose_endpoint, io)))->stream;
+    while (s->completed_) {
+        test_framing_loose_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void test_framing_loose_endpoint_expire_(gmsg_endpoint* io) {
+    test_framing_loose_stream* s = &((test_framing_loose_endpoint*)(void*)((char*)io - offsetof(test_framing_loose_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    test_framing_loose_request** at = &s->pending_;
+    while (*at) {
+        test_framing_loose_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            test_framing_loose_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    test_framing_loose_endpoint_fire_(io);
+}
+
+gmsg_error test_framing_loose_endpoint_init(test_framing_loose_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = test_framing_loose_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = test_framing_loose_endpoint_fire_;
+    ep->io.on_tick = test_framing_loose_endpoint_expire_;
+    return e;
+}
+
+void test_framing_loose_endpoint_cancel(test_framing_loose_endpoint* ep, test_framing_loose_request* r) {
+    test_framing_loose_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void test_framing_loose_endpoint_expect(test_framing_loose_endpoint* ep, test_framing_loose_request* r, test_framing_loose_kind kind, uint32_t timeout, test_framing_loose_match_fn match, void* match_ctx, test_framing_loose_request_fn on_done, void* ctx) {
+    test_framing_loose_request** at;
+    test_framing_loose_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t test_framing_loose_endpoint_pending(const test_framing_loose_endpoint* ep) {
+    size_t k = 0;
+    const test_framing_loose_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error test_framing_loose_endpoint_send_reading(test_framing_loose_endpoint* ep, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_loose_encode_reading(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_loose_endpoint_send_reading_with_header(test_framing_loose_endpoint* ep, const test_framing_loose_header* h, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_loose_encode_reading_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_loose_endpoint_send_note(test_framing_loose_endpoint* ep, const test_framing_note* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_loose_encode_note(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_loose_endpoint_send_note_with_header(test_framing_loose_endpoint* ep, const test_framing_loose_header* h, const test_framing_note* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_loose_encode_note_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_loose_endpoint_send(test_framing_loose_endpoint* ep, const test_framing_loose_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_loose_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool test_framing_loose_endpoint_pull_(void* ctx) {
+    test_framing_loose_endpoint* ep = (test_framing_loose_endpoint*)ctx;
+    test_framing_loose_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        test_framing_loose_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error test_framing_loose_endpoint_wait_for(test_framing_loose_endpoint* ep, test_framing_loose_kind kind, uint32_t timeout, test_framing_loose_match_fn match, void* match_ctx, test_framing_loose_any_message* out, test_framing_loose_header* header) {
+    test_framing_loose_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = test_framing_loose_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, test_framing_loose_endpoint_pull_, ep);
+    s->mode_ = test_framing_loose_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error test_framing_loose_endpoint_transact(test_framing_loose_endpoint* ep, const test_framing_loose_header* h, const test_framing_loose_any_message* request, test_framing_loose_kind kind, uint32_t timeout, test_framing_loose_match_fn match, void* match_ctx, test_framing_loose_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_LOOSE_READING: e = test_framing_loose_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            case TEST_FRAMING_LOOSE_NOTE: e = test_framing_loose_endpoint_send_note_with_header(ep, h, &request->as.note); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_loose_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return test_framing_loose_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error test_framing_loose_endpoint_request(test_framing_loose_endpoint* ep, test_framing_loose_request* r, const test_framing_loose_header* h, const test_framing_loose_any_message* request, test_framing_loose_kind kind, uint32_t timeout, test_framing_loose_match_fn match, void* match_ctx, test_framing_loose_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    test_framing_loose_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_LOOSE_READING: e = test_framing_loose_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            case TEST_FRAMING_LOOSE_NOTE: e = test_framing_loose_endpoint_send_note_with_header(ep, h, &request->as.note); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_loose_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    test_framing_loose_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error test_framing_loose_encode_reading(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written) {
@@ -2524,7 +3625,7 @@ gmsg_error test_framing_exact_process(const uint8_t* data, size_t size, const te
 }
 
 /* stream modes: deliver to callbacks (feed / next), or capture for the pull API */
-enum { test_framing_exact_mode_deliver_ = 0, test_framing_exact_mode_capture_ = 1, test_framing_exact_mode_message_ = 2, test_framing_exact_mode_for_ = 3 };
+enum { test_framing_exact_mode_deliver_ = 0, test_framing_exact_mode_capture_ = 1, test_framing_exact_mode_message_ = 2, test_framing_exact_mode_for_ = 3, test_framing_exact_mode_wait_ = 4 };
 
 /* Data after the message (bytes, or tokens for text messages). */
 static size_t test_framing_exact_extra_(const test_framing_exact_any_view* v) {
@@ -2533,6 +3634,41 @@ static size_t test_framing_exact_extra_(const test_framing_exact_any_view* v) {
         case TEST_FRAMING_EXACT_NOTE: return test_framing_note_view_extra_bytes(&v->as.note);
         default: return 0;
     }
+}
+
+static gmsg_error test_framing_exact_view_to_message_(const test_framing_exact_any_view* v, test_framing_exact_any_message* out) {
+    out->kind = v->kind;
+    switch (v->kind) {
+        case TEST_FRAMING_EXACT_READING: return test_framing_reading_view_to_struct(&v->as.reading, &out->as.reading);
+        case TEST_FRAMING_EXACT_NOTE: return test_framing_note_view_to_struct(&v->as.note, &out->as.note);
+        default: return GMSG_ERR_UNKNOWN_TYPE;
+    }
+}
+
+/* Mark a request done and queue its callback. */
+static void test_framing_exact_complete_(test_framing_exact_stream* s, test_framing_exact_request* r, gmsg_error e) {
+    test_framing_exact_request** at = &s->completed_;
+    r->state = GMSG_REQUEST_DONE;
+    r->error = e;
+    r->next_ = NULL;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+/* The first waiting request that accepts the frame takes it (a failed decode drops the frame). */
+static gmsg_error test_framing_exact_offer_(test_framing_exact_stream* s, const test_framing_exact_frame_* f, const test_framing_exact_any_view* v, bool* taken) {
+    test_framing_exact_request** at;
+    for (at = &s->pending_; *at; at = &(*at)->next_) {
+        test_framing_exact_request* r = *at;
+        gmsg_error e;
+        if (r->kind_ != v->kind || (r->match_ && !r->match_(r->match_ctx_, &f->header, v))) continue;
+        if ((e = test_framing_exact_view_to_message_(v, &r->reply)) != GMSG_OK) return e;
+        *at = r->next_;
+        test_framing_exact_complete_(s, r, GMSG_OK);
+        *taken = true;
+        return GMSG_OK;
+    }
+    return GMSG_OK;
 }
 
 static gmsg_error test_framing_exact_stream_process_(gmsg_stream* gs, uint8_t* frame, size_t n) {
@@ -2544,6 +3680,13 @@ static gmsg_error test_framing_exact_stream_process_(gmsg_stream* gs, uint8_t* f
         test_framing_exact_any_view v;
         if ((e = test_framing_exact_select_(&f, &v)) != GMSG_OK) return e;
         gs->last_extra = test_framing_exact_extra_(&v);
+        if (s->pending_) {
+            bool taken = false;
+            if ((e = test_framing_exact_offer_(s, &f, &v, &taken)) != GMSG_OK) {
+                return e;
+            }
+            if (taken) return GMSG_OK;
+        }
         test_framing_exact_deliver_(&s->cb, &f, &v);
         return GMSG_OK;
     }
@@ -2556,7 +3699,25 @@ static gmsg_error test_framing_exact_stream_process_(gmsg_stream* gs, uint8_t* f
         test_framing_exact_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
         s->got_.message.kind = TEST_FRAMING_EXACT_NONE;
     }
-    if (s->mode_ == test_framing_exact_mode_message_) {
+    if (s->mode_ == test_framing_exact_mode_wait_) {
+        if (s->got_.message.kind != s->want_ || (s->match_ && !s->match_(s->match_ctx_, &f.header, &s->got_.message))) {
+            if (s->pending_) {
+                bool taken = false;
+                if ((e = test_framing_exact_offer_(s, &f, &s->got_.message, &taken)) != GMSG_OK) {
+                    return e;
+                }
+                if (taken) s->got_.message.kind = TEST_FRAMING_EXACT_NONE;
+                if (taken) return GMSG_OK;
+            }
+            test_framing_exact_deliver_(&s->cb, &f, &s->got_.message);  /* not the awaited message: to the callbacks */
+            s->got_.message.kind = TEST_FRAMING_EXACT_NONE;
+            return GMSG_OK;
+        }
+        if (s->hdr_ && (e = test_framing_exact_header_view_to_struct(&f.header, s->hdr_)) != GMSG_OK) {
+            return e;
+        }
+    }
+    if (s->mode_ == test_framing_exact_mode_message_ || s->mode_ == test_framing_exact_mode_wait_) {
         switch (s->got_.message.kind) {
             case TEST_FRAMING_EXACT_READING: s->msg_->kind = TEST_FRAMING_EXACT_READING; return test_framing_reading_view_to_struct(&s->got_.message.as.reading, &s->msg_->as.reading);
             case TEST_FRAMING_EXACT_NOTE: s->msg_->kind = TEST_FRAMING_EXACT_NOTE; return test_framing_note_view_to_struct(&s->got_.message.as.note, &s->msg_->as.note);
@@ -2637,6 +3798,168 @@ static void test_framing_exact_stream_error_(gmsg_stream* s, gmsg_error e, const
 gmsg_error test_framing_exact_stream_init(test_framing_exact_stream* s, uint8_t* buf, size_t size) {
     gmsg_memset(s, 0, sizeof *s);  /* callbacks cleared, deliver mode */
     return gmsg_stream_init(&s->base, buf, size, TEST_FRAMING_EXACT_MAX_FRAME, test_framing_exact_scan_, test_framing_exact_stream_process_, test_framing_exact_stream_error_);
+}
+
+/* run the callbacks of finished requests (after a step, so a callback may start the next request) */
+static void test_framing_exact_endpoint_fire_(gmsg_endpoint* io) {
+    test_framing_exact_stream* s = &((test_framing_exact_endpoint*)(void*)((char*)io - offsetof(test_framing_exact_endpoint, io)))->stream;
+    while (s->completed_) {
+        test_framing_exact_request* r = s->completed_;
+        s->completed_ = r->next_;
+        r->next_ = NULL;
+        if (r->on_done_) r->on_done_(r->ctx_, r);
+    }
+}
+
+static void test_framing_exact_endpoint_expire_(gmsg_endpoint* io) {
+    test_framing_exact_stream* s = &((test_framing_exact_endpoint*)(void*)((char*)io - offsetof(test_framing_exact_endpoint, io)))->stream;
+    const uint32_t now = gmsg_endpoint_now(io);
+    test_framing_exact_request** at = &s->pending_;
+    while (*at) {
+        test_framing_exact_request* r = *at;
+        if ((uint32_t)(now - r->start_) >= r->timeout_) {
+            *at = r->next_;
+            test_framing_exact_complete_(s, r, GMSG_ERR_TIMEOUT);
+        } else {
+            at = &r->next_;
+        }
+    }
+    test_framing_exact_endpoint_fire_(io);
+}
+
+gmsg_error test_framing_exact_endpoint_init(test_framing_exact_endpoint* ep, uint8_t* buf, size_t size, const gmsg_source* source, const gmsg_sink* sink) {
+    const gmsg_error e = test_framing_exact_stream_init(&ep->stream, buf, size);
+    gmsg_endpoint_init(&ep->io, &ep->stream.base, source, sink);
+    ep->io.on_step = test_framing_exact_endpoint_fire_;
+    ep->io.on_tick = test_framing_exact_endpoint_expire_;
+    return e;
+}
+
+void test_framing_exact_endpoint_cancel(test_framing_exact_endpoint* ep, test_framing_exact_request* r) {
+    test_framing_exact_request** at = &ep->stream.pending_;
+    while (*at && *at != r) at = &(*at)->next_;
+    if (*at) {
+        *at = r->next_;
+        r->next_ = NULL;
+    }
+    if (r->state == GMSG_REQUEST_WAITING) r->state = GMSG_REQUEST_IDLE;
+}
+
+void test_framing_exact_endpoint_expect(test_framing_exact_endpoint* ep, test_framing_exact_request* r, test_framing_exact_kind kind, uint32_t timeout, test_framing_exact_match_fn match, void* match_ctx, test_framing_exact_request_fn on_done, void* ctx) {
+    test_framing_exact_request** at;
+    test_framing_exact_endpoint_cancel(ep, r);
+    r->state = GMSG_REQUEST_WAITING;
+    r->error = GMSG_OK;
+    r->kind_ = kind;
+    r->match_ = match;
+    r->match_ctx_ = match_ctx;
+    r->on_done_ = on_done;
+    r->ctx_ = ctx;
+    r->start_ = gmsg_endpoint_now(&ep->io);
+    r->timeout_ = timeout;
+    r->next_ = NULL;
+    at = &ep->stream.pending_;
+    while (*at) at = &(*at)->next_;
+    *at = r;
+}
+
+size_t test_framing_exact_endpoint_pending(const test_framing_exact_endpoint* ep) {
+    size_t k = 0;
+    const test_framing_exact_request* r;
+    for (r = ep->stream.pending_; r; r = r->next_) ++k;
+    return k;
+}
+
+gmsg_error test_framing_exact_endpoint_send_reading(test_framing_exact_endpoint* ep, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_exact_encode_reading(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_exact_endpoint_send_reading_with_header(test_framing_exact_endpoint* ep, const test_framing_exact_header* h, const test_framing_reading* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_exact_encode_reading_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_exact_endpoint_send_note(test_framing_exact_endpoint* ep, const test_framing_note* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_exact_encode_note(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_exact_endpoint_send_note_with_header(test_framing_exact_endpoint* ep, const test_framing_exact_header* h, const test_framing_note* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_exact_encode_note_with_header(h, m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+gmsg_error test_framing_exact_endpoint_send(test_framing_exact_endpoint* ep, const test_framing_exact_any_message* m) {
+    size_t n = 0;
+    const gmsg_error e = test_framing_exact_encode(m, ep->tx, sizeof ep->tx, &n);
+    return e != GMSG_OK ? e : gmsg_endpoint_write(&ep->io, ep->tx, n);
+}
+
+static bool test_framing_exact_endpoint_pull_(void* ctx) {
+    test_framing_exact_endpoint* ep = (test_framing_exact_endpoint*)ctx;
+    test_framing_exact_stream* s = &ep->stream;
+    while (gmsg_stream_pull(&s->base)) {
+        test_framing_exact_endpoint_fire_(&ep->io);
+        if (s->got_.message.kind == s->want_) return true;
+    }
+    return false;
+}
+
+gmsg_error test_framing_exact_endpoint_wait_for(test_framing_exact_endpoint* ep, test_framing_exact_kind kind, uint32_t timeout, test_framing_exact_match_fn match, void* match_ctx, test_framing_exact_any_message* out, test_framing_exact_header* header) {
+    test_framing_exact_stream* s = &ep->stream;
+    gmsg_error e;
+    s->mode_ = test_framing_exact_mode_wait_;
+    s->want_ = kind;
+    s->match_ = match;
+    s->match_ctx_ = match_ctx;
+    s->msg_ = out;
+    s->hdr_ = header;
+    e = gmsg_endpoint_wait(&ep->io, timeout, test_framing_exact_endpoint_pull_, ep);
+    s->mode_ = test_framing_exact_mode_deliver_;
+    s->match_ = NULL;
+    s->match_ctx_ = NULL;
+    s->msg_ = NULL;
+    s->hdr_ = NULL;
+    return e;
+}
+
+gmsg_error test_framing_exact_endpoint_transact(test_framing_exact_endpoint* ep, const test_framing_exact_header* h, const test_framing_exact_any_message* request, test_framing_exact_kind kind, uint32_t timeout, test_framing_exact_match_fn match, void* match_ctx, test_framing_exact_any_message* out) {
+    gmsg_error e = GMSG_OK;
+    (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* frames that arrived before go to the callbacks */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_EXACT_READING: e = test_framing_exact_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            case TEST_FRAMING_EXACT_NOTE: e = test_framing_exact_endpoint_send_note_with_header(ep, h, &request->as.note); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_exact_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    return test_framing_exact_endpoint_wait_for(ep, kind, timeout, match, match_ctx, out, NULL);
+}
+
+gmsg_error test_framing_exact_endpoint_request(test_framing_exact_endpoint* ep, test_framing_exact_request* r, const test_framing_exact_header* h, const test_framing_exact_any_message* request, test_framing_exact_kind kind, uint32_t timeout, test_framing_exact_match_fn match, void* match_ctx, test_framing_exact_request_fn on_done, void* ctx) {
+    gmsg_error e = GMSG_OK;
+    test_framing_exact_endpoint_cancel(ep, r);
+    if (ep->io.depth == 0) (void)gmsg_endpoint_service(&ep->io, SIZE_MAX);  /* not from a callback */
+    if (h) {
+        switch (request->kind) {
+            case TEST_FRAMING_EXACT_READING: e = test_framing_exact_endpoint_send_reading_with_header(ep, h, &request->as.reading); break;
+            case TEST_FRAMING_EXACT_NOTE: e = test_framing_exact_endpoint_send_note_with_header(ep, h, &request->as.note); break;
+            default: e = GMSG_ERR_UNKNOWN_TYPE; break;
+        }
+    } else {
+        e = test_framing_exact_endpoint_send(ep, request);
+    }
+    if (e != GMSG_OK) return e;
+    test_framing_exact_endpoint_expect(ep, r, kind, timeout, match, match_ctx, on_done, ctx);
+    return GMSG_OK;
 }
 
 gmsg_error test_framing_exact_encode_reading(const test_framing_reading* m, uint8_t* out, size_t capacity, size_t* written) {

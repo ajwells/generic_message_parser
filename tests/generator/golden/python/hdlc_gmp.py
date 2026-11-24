@@ -731,6 +731,16 @@ class Hdlc:
         return gmsg.StreamParser(Hdlc, capacity)
 
     @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(Hdlc, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(Hdlc, reader, writer, **options)
+
+    @staticmethod
     def encode(m, header=None) -> bytes:
         """Encode a message of this protocol (optionally with header values: a dict or a header instance; type id and length are filled in) to a frame."""
         if isinstance(m, Batch): return Hdlc._encode0(m, header)
@@ -957,6 +967,16 @@ class Summed:
     def stream(capacity: int | None = None) -> gmsg.StreamParser:
         """A stream parser for this protocol (default capacity: max_frame)."""
         return gmsg.StreamParser(Summed, capacity)
+
+    @staticmethod
+    def endpoint(source: object = None, sink: object = None, **options: object) -> gmsg.Endpoint:
+        """The stream joined to a byte source and sink (blocking; options: clock, idle, idle_timeout, send_policy, ...)."""
+        return gmsg.Endpoint(Summed, source, sink, **options)
+
+    @staticmethod
+    def async_endpoint(reader: object = None, writer: object = None, **options: object) -> gmsg.AsyncEndpoint:
+        """The stream joined to an asyncio reader and writer (options: idle_timeout, send_policy, ...)."""
+        return gmsg.AsyncEndpoint(Summed, reader, writer, **options)
 
     @staticmethod
     def encode(m, header=None) -> bytes:

@@ -30,7 +30,7 @@ static void test_config(void) {
 
 static void test_error(void) {
     CHECK(GMSG_OK == 0);
-    CHECK(GMSG_ERR_OVERRUN == GMSG_ERROR_COUNT - 1);
+    CHECK(GMSG_ERR_TIMEOUT == GMSG_ERROR_COUNT - 1);
     CHECK(gmsg_memcmp(gmsg_error_str(GMSG_ERR_BAD_CHECKSUM), "bad checksum", 13) == 0);
     CHECK(gmsg_memcmp(gmsg_error_str((gmsg_error)99), "unknown", 8) == 0);
 }
@@ -466,6 +466,199 @@ static void test_stream_ring(void) {
     CHECK(gmsg_stream_buffered(&s) == 0);
 }
 
+/* ---- endpoint pieces: adapters, push_gap / push_from, write policies, the wait loop, the DMA source ---- */
+
+static uint32_t g_now = 0;
+static int g_idles = 0;
+static uint32_t t_clock(void* ctx) {
+    (void)ctx;
+    return g_now;
+}
+static void t_idle(void* ctx) {
+    (void)ctx;
+    ++g_now;
+    ++g_idles;
+}
+static size_t g_take = 1; /* bytes a slow sink takes per call */
+static uint8_t g_out[64];
+static size_t g_out_n = 0;
+static size_t t_slow_write(void* ctx, const uint8_t* d, size_t n) {
+    size_t k = n < g_take ? n : g_take;
+    (void)ctx;
+    if (g_out_n + k > sizeof g_out) k = sizeof g_out - g_out_n;
+    gmsg_memcpy(g_out + g_out_n, d, k);
+    g_out_n += k;
+    return k;
+}
+static int g_pulls = 0;
+static bool t_pull_third(void* ctx) {
+    (void)ctx;
+    return ++g_pulls >= 3;
+}
+static bool t_pull_never(void* ctx) {
+    (void)ctx;
+    ++g_pulls;
+    return false;
+}
+
+/* simulated circular DMA of 16 bytes */
+static volatile uint8_t g_dma[16];
+static size_t g_dma_pos = 0;
+static gmsg_dma_source* g_dma_src = NULL;
+static size_t t_dma_pos(void* ctx) {
+    (void)ctx;
+    return g_dma_pos;
+}
+static void dma_write(const uint8_t* d, size_t n) {
+    size_t i;
+    for (i = 0; i < n; ++i) {
+        g_dma[g_dma_pos] = d[i];
+        g_dma_pos = (g_dma_pos + 1) % sizeof g_dma;
+        if (g_dma_src && (g_dma_pos == 0 || g_dma_pos == sizeof g_dma / 2)) gmsg_dma_source_on_half(g_dma_src);
+    }
+}
+
+static void test_endpoint(void) {
+    static uint8_t sbuf[32];
+    static const uint8_t frames[] = {0x24, 2, 2, 0, 0x55, 0x24, 2, 4, 0, 0x24, 2, 8, 0};
+    static const uint8_t f1[] = {0x24, 2, 2, 0};
+    gmsg_stream s;
+    gmsg_endpoint e;
+    gmsg_buffer_source bs;
+    gmsg_buffer_sink bk;
+    gmsg_source src;
+    gmsg_sink snk;
+    uint8_t out[8];
+    uint8_t ring_buf[8];
+    gmsg_ring ring;
+    gmsg_dma_source dma;
+    size_t i;
+
+    /* service(): a chunked memory source, every frame delivered */
+    CHECK(gmsg_stream_init(&s, sbuf, sizeof sbuf, 8, t_scan, t_process, t_error) == GMSG_OK);
+    src = gmsg_buffer_source_init(&bs, frames, sizeof frames, 3);
+    gmsg_endpoint_init(&e, &s, &src, NULL);
+    g_log_n = 0;
+    g_log[0] = 0;
+    CHECK(gmsg_endpoint_service(&e, SIZE_MAX) == 3);
+    CHECK(log_is("P1 E2:1 P2 P4 "));
+    CHECK(bs.pos == sizeof frames);
+    /* service(max) reads at most max bytes */
+    gmsg_stream_reset(&s);
+    src = gmsg_buffer_source_init(&bs, frames, sizeof frames, 0);
+    gmsg_endpoint_init(&e, &s, &src, NULL);
+    CHECK(gmsg_endpoint_service(&e, 4) == 1);
+    CHECK(bs.pos == 4);
+
+    /* push_gap: the frame in progress is dropped as an overrun; one gap at a time */
+    gmsg_stream_reset(&s);
+    g_log_n = 0;
+    g_log[0] = 0;
+    CHECK(gmsg_stream_space(&s) == sizeof sbuf);
+    CHECK(gmsg_stream_push(&s, frames, 7) == 7); /* P1, garbage, half of P2 */
+    CHECK(gmsg_stream_push_gap(&s));
+    CHECK(gmsg_stream_push_gap(&s));
+    CHECK(gmsg_stream_push(&s, f1, sizeof f1) == 4);
+    CHECK(!gmsg_stream_push_gap(&s));
+    while (gmsg_stream_next(&s)) {
+    }
+    CHECK(log_is("P1 E2:1 E16:2 P1 "));
+    CHECK(s.stats.overruns == 1);
+
+    /* write: whole frame into a buffer sink, refused whole when it does not fit; a NULL sink refuses everything */
+    gmsg_stream_reset(&s);
+    snk = gmsg_buffer_sink_init(&bk, out, 6);
+    gmsg_endpoint_init(&e, &s, NULL, &snk);
+    CHECK(gmsg_endpoint_write(&e, f1, 4) == GMSG_OK);
+    CHECK(bk.used == 4);
+    CHECK(gmsg_endpoint_write(&e, f1, 4) == GMSG_ERR_BUFFER_FULL);
+    CHECK(bk.used == 4);
+    gmsg_endpoint_init(&e, &s, NULL, NULL);
+    CHECK(gmsg_endpoint_write(&e, f1, 4) == GMSG_ERR_BUFFER_FULL);
+    CHECK(gmsg_endpoint_read(&e, SIZE_MAX) == 0);
+
+    /* a sink without writable(): whole frame fails after a short write; retry finishes it (idle in between) */
+    snk = gmsg_sink_fn(t_slow_write, NULL);
+    gmsg_endpoint_init(&e, &s, NULL, &snk);
+    gmsg_endpoint_set_clock(&e, t_clock, NULL);
+    gmsg_endpoint_set_idle(&e, t_idle, NULL);
+    g_out_n = 0;
+    g_take = 1;
+    CHECK(gmsg_endpoint_write(&e, frames, 9) == GMSG_ERR_BUFFER_FULL);
+    CHECK(g_out_n == 1);
+    g_out_n = 0;
+    g_idles = 0;
+    gmsg_endpoint_set_send_policy(&e, GMSG_SEND_RETRY, GMSG_FOREVER);
+    CHECK(gmsg_endpoint_write(&e, frames, 9) == GMSG_OK);
+    CHECK(g_out_n == 9 && g_idles == 8);
+    for (i = 0; i < 9; ++i) CHECK(g_out[i] == frames[i]);
+    /* retry with a limit: a sink that stops taking bytes */
+    g_out_n = 0;
+    g_now = 100;
+    g_take = 0;
+    gmsg_endpoint_set_send_policy(&e, GMSG_SEND_RETRY, 20);
+    CHECK(gmsg_endpoint_write(&e, frames, 9) == GMSG_ERR_TIMEOUT);
+    CHECK(g_now == 120);
+
+    /* a ring as the sink: room checked first */
+    CHECK(gmsg_ring_init(&ring, ring_buf, sizeof ring_buf) == GMSG_OK);
+    snk = gmsg_sink_ring(&ring);
+    gmsg_endpoint_init(&e, &s, NULL, &snk);
+    CHECK(gmsg_ring_room(&ring) == 8);
+    CHECK(gmsg_endpoint_write(&e, f1, 4) == GMSG_OK);
+    CHECK(gmsg_endpoint_write(&e, frames, 5) == GMSG_ERR_BUFFER_FULL);
+    CHECK(gmsg_ring_size(&ring) == 4 && gmsg_ring_room(&ring) == 4);
+
+    /* the wait loop: pull until it succeeds; timeout in clock units; no clock: look once */
+    gmsg_endpoint_init(&e, &s, NULL, NULL);
+    gmsg_endpoint_set_clock(&e, t_clock, NULL);
+    gmsg_endpoint_set_idle(&e, t_idle, NULL);
+    g_pulls = 0;
+    CHECK(gmsg_endpoint_wait(&e, 10, t_pull_third, NULL) == GMSG_OK);
+    CHECK(g_pulls == 3);
+    g_now = 0xFFFFFFF0u; /* wraps during the wait */
+    g_pulls = 0;
+    CHECK(gmsg_endpoint_wait(&e, 30, t_pull_never, NULL) == GMSG_ERR_TIMEOUT);
+    CHECK(g_now == 0xFFFFFFF0u + 30u);
+    CHECK(g_pulls == 32);
+    gmsg_endpoint_set_clock(&e, NULL, NULL);
+    g_pulls = 0;
+    CHECK(gmsg_endpoint_wait(&e, 30, t_pull_never, NULL) == GMSG_ERR_TIMEOUT);
+    CHECK(g_pulls == 2);
+
+    /* DMA source across the wrap (no lap tracking) */
+    gmsg_stream_reset(&s);
+    g_dma_pos = 0;
+    g_dma_src = NULL;
+    src = gmsg_dma_source_init(&dma, g_dma, sizeof g_dma, t_dma_pos, NULL, false);
+    gmsg_endpoint_init(&e, &s, &src, NULL);
+    g_log_n = 0;
+    g_log[0] = 0;
+    for (i = 0; i < 6; ++i) { /* 9 bytes at a time into 16: wraps */
+        dma_write(frames + 4, 9);
+        (void)gmsg_endpoint_service(&e, SIZE_MAX);
+    }
+    CHECK(log_is("E2:1 P2 P4 E2:1 P2 P4 E2:1 P2 P4 E2:1 P2 P4 E2:1 P2 P4 E2:1 P2 P4 "));
+    /* with lap tracking: more than 16 unread bytes is an overrun; a frame in progress is dropped */
+    gmsg_stream_reset(&s);
+    g_dma_pos = 0;
+    src = gmsg_dma_source_init(&dma, g_dma, sizeof g_dma, t_dma_pos, NULL, true);
+    g_dma_src = &dma;
+    gmsg_endpoint_init(&e, &s, &src, NULL);
+    g_log_n = 0;
+    g_log[0] = 0;
+    dma_write(frames, 2); /* the start of P1 */
+    (void)gmsg_endpoint_service(&e, SIZE_MAX);
+    for (i = 0; i < 5; ++i) dma_write(frames + 9, 4); /* 20 bytes: laps */
+    (void)gmsg_endpoint_service(&e, SIZE_MAX);
+    dma_write(f1, 4);
+    (void)gmsg_endpoint_service(&e, SIZE_MAX);
+    CHECK(log_is("E16:2 P1 "));
+    CHECK(dma.overruns == 1);
+    CHECK(s.stats.overruns == 1);
+    g_dma_src = NULL;
+}
+
 int main(void) {
     test_config();
     test_error();
@@ -478,6 +671,7 @@ int main(void) {
     test_float_text();
     test_ring();
     test_stream_ring();
+    test_endpoint();
     printf("%d checks, %d failed (C%s, GMSG_USE_LIBC=%d, GMSG_CRC_TABLES=%d, GMSG_RUNTIME_LIBRARY=%d)\n", g_checks,
            g_failures, GMSG_C11 ? "11" : "99", GMSG_USE_LIBC, GMSG_CRC_TABLES, GMSG_RUNTIME_LIBRARY);
     return g_failures;

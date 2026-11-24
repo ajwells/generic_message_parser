@@ -167,6 +167,12 @@ parser.push(chunk);
 while (auto m = parser.poll()) { std::visit(handlers, *m); }   // also poll_frame() (header), poll_message()
 auto reply = link.poll_for<acme::link::StatusView>();          // (struct copy), poll_event(), poll_for<V>()
 
+// Or an endpoint: the CallbackStream plus a byte source, a byte sink and a clock (gmp/endpoint.hpp)
+auto ep = acme::link::Link::make_endpoint(rx_ring, tx_ring, [] { return HAL_GetTick(); });  // or steady_clock{}
+ep.on<&App::on_status>(app);
+auto ack = ep.transact<acme::link::Ack>(acme::link::Command{.opcode = 1}, 100);  // send, wait 100 ticks: Timeout
+for (;;) ep.service();                            // read what arrived, deliver, idle resync
+
 // A message on its own, no framing
 auto st = acme::link::Status::decode(bytes);     // gmsg::Result<Status>
 auto view = acme::link::StatusView::from(bytes); // gmsg::Result<StatusView>
@@ -182,7 +188,8 @@ per message. It never allocates. Bounded sinks keep what fits and return `Buffer
 
 Errors are values (`gmsg::Result<T>` = `std::expected<T, gmsg::Error>`): `Truncated`, `BadSync`, `BadChecksum`,
 `BadLength`, `BadDelimiter`, `BadConst`, `OutOfRange`, `UnknownType`, `UnknownEnum`, `ValueOutOfLimits`,
-`BufferFull`, `ParseError`, `MissingField`, `Overrun` (a full `ByteRing` dropped input). Full API and streaming details: `references/cpp-api.md`.
+`BufferFull`, `ParseError`, `MissingField`, `Overrun` (a full `ByteRing` dropped input), `Timeout` (an endpoint wait
+or retried send ran out of time). Full API and streaming details: `references/cpp-api.md`.
 
 ## Things that trip people up
 
@@ -207,7 +214,18 @@ Errors are values (`gmsg::Result<T>` = `std::expected<T, gmsg::Error>`): `Trunca
   use `optional: true` for fields that may be empty, `width` / `precision` to control encoding.
 - **Strict enums:** by default undeclared enum values decode fine (check with `is_known()`); set `strict: true` on the
   enum or `defaults.strict_enums: true` to reject them.
-- **Per-frame I/O is the app's job.** GMP doesn't own a UART or socket; read bytes yourself and pass them to `feed()`.
+- **Don't hand-write the read loop, encode buffer or reply wait:** use an endpoint (`P::make_endpoint(source, sink,
+  clock)`; C `<p>_endpoint`; JS `P.endpoint({ write })`, Promise waits; Python `P.endpoint(port)` blocking or
+  `P.async_endpoint(reader, writer)`). Sources / sinks: a `ByteRing` (ISR in, TX ISR out), memory, `FILE*`, a callable
+  (`gmsg::source_fn` / `sink_fn`), a circular DMA buffer (`gmsg::dma_source(buf, pos, true)` + `on_half()` from the
+  DMA interrupts, laps reported as `Overrun`). `wait_for<M>(timeout, match)` / `transact<M>(req, timeout, match)`
+  return the decoded reply or `Timeout`; other messages go to the listeners meanwhile. They block (calling the idle
+  hook); in a superloop / RTOS task use `gmsg::Pending<Ack> p; ep.request(p, cmd, timeout)` (C `<p>_request` +
+  `<p>_endpoint_request`, Python `ep.request(...)` returning a `gmsg.Pending`) and let `service()` complete it
+  (`p.done()`, `p.result()`, `on_done` callback). Send policy:
+  `SendPolicy::whole_frame` (default, all or nothing, `BufferFull`) or `retry` (with a timeout). GMP still doesn't own
+  the UART: the app opens it and wraps it as a source / sink (a struct with `read()` / `write()`).
+- **Without an endpoint, per-frame I/O is the app's job:** read bytes yourself and pass them to `feed()`.
   Handlers run synchronously inside `feed()`, so feeding from an ISR runs the checksum, the decode and your handlers
   inside the ISR. On an MCU, keep the ISR short instead:
   - The RX interrupt (or DMA callback) only appends bytes to a `gmsg::ByteRing<N>` (`gmp/byte_ring.hpp`; N a power
@@ -230,8 +248,8 @@ Errors are values (`gmsg::Result<T>` = `std::expected<T, gmsg::Error>`): `Trunca
 - **Stored handlers:** `make_stream(h)` / `StreamWith<H>` keep a compile-time handler; `CallbackStream` keeps runtime
   listeners (one per message, plus `AnyView` for every frame and `gmsg::FrameError`; registering again replaces).
   Contexts passed to `on<Fn>(ctx)` must outlive the registration. Messages and enums can't be named `Header`,
-  `HeaderView`, `AnyView`, `AnyMessage`, `Frame`, `Stream`, `StreamWith`, `Callbacks`, `CallbackStream` or `Received` (the
-  names declared inside each generated protocol struct).
+  `HeaderView`, `AnyView`, `AnyMessage`, `Frame`, `Stream`, `StreamWith`, `Callbacks`, `CallbackStream`, `Received` or
+  `Endpoint` (the names declared inside each generated protocol struct).
 
 ## When modelling a new protocol
 
