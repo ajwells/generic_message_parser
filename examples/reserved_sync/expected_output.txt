@@ -1,0 +1,15 @@
+Escaped frames (escape pairs in brackets: [81 00] = 0x80, [81 01] = 0x81):
+SetSpeed   80 01 05 07 [81 00] 00 01 [81 01] 02 DA   (12 bytes)
+Telemetry  80 02 08 00 [81 00] 07 [81 00] 01 41 01 [81 01] B9 95   (16 bytes)
+Log        80 03 12 11 72 70 6D 20 6C 69 6D 69 74 20 72 65 61 63 68 65 64 CA FA   (23 bytes)
+
+parse(): SetSpeed rpm=1920 direction=forward ramp=385ms
+
+Stream of 66 bytes, fed in 3-byte chunks:
+  Telemetry seq=128 rpm=1920 current=3.21A temperature=38.5C
+  dropped 9 byte(s): bad delimiter
+  Telemetry seq=129 rpm=1920 current=3.21A temperature=38.5C
+  dropped 1 byte(s): bad sync
+  dropped 1 byte(s): bad sync
+  Log "rpm limit reached"
+frames=3 errors=0 skipped=11

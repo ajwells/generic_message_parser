@@ -245,6 +245,10 @@ gmsg_error test_framing_adjusted_stream_init(test_framing_adjusted_stream* s, ui
 static inline size_t test_framing_adjusted_stream_feed(test_framing_adjusted_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t test_framing_adjusted_stream_push(test_framing_adjusted_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool test_framing_adjusted_stream_next(test_framing_adjusted_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t test_framing_adjusted_stream_feed_ring(test_framing_adjusted_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t test_framing_adjusted_stream_push_ring(test_framing_adjusted_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -406,6 +410,10 @@ gmsg_error test_framing_whole_frame_stream_init(test_framing_whole_frame_stream*
 static inline size_t test_framing_whole_frame_stream_feed(test_framing_whole_frame_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t test_framing_whole_frame_stream_push(test_framing_whole_frame_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool test_framing_whole_frame_stream_next(test_framing_whole_frame_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t test_framing_whole_frame_stream_feed_ring(test_framing_whole_frame_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t test_framing_whole_frame_stream_push_ring(test_framing_whole_frame_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -567,6 +575,10 @@ gmsg_error test_framing_escaped_with_end_stream_init(test_framing_escaped_with_e
 static inline size_t test_framing_escaped_with_end_stream_feed(test_framing_escaped_with_end_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t test_framing_escaped_with_end_stream_push(test_framing_escaped_with_end_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool test_framing_escaped_with_end_stream_next(test_framing_escaped_with_end_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t test_framing_escaped_with_end_stream_feed_ring(test_framing_escaped_with_end_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t test_framing_escaped_with_end_stream_push_ring(test_framing_escaped_with_end_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -718,6 +730,10 @@ gmsg_error test_framing_fixed_with_end_stream_init(test_framing_fixed_with_end_s
 static inline size_t test_framing_fixed_with_end_stream_feed(test_framing_fixed_with_end_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t test_framing_fixed_with_end_stream_push(test_framing_fixed_with_end_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool test_framing_fixed_with_end_stream_next(test_framing_fixed_with_end_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t test_framing_fixed_with_end_stream_feed_ring(test_framing_fixed_with_end_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t test_framing_fixed_with_end_stream_push_ring(test_framing_fixed_with_end_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -879,6 +895,10 @@ gmsg_error test_framing_loose_stream_init(test_framing_loose_stream* s, uint8_t*
 static inline size_t test_framing_loose_stream_feed(test_framing_loose_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t test_framing_loose_stream_push(test_framing_loose_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool test_framing_loose_stream_next(test_framing_loose_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t test_framing_loose_stream_feed_ring(test_framing_loose_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t test_framing_loose_stream_push_ring(test_framing_loose_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -1040,6 +1060,10 @@ gmsg_error test_framing_exact_stream_init(test_framing_exact_stream* s, uint8_t*
 static inline size_t test_framing_exact_stream_feed(test_framing_exact_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t test_framing_exact_stream_push(test_framing_exact_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool test_framing_exact_stream_next(test_framing_exact_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t test_framing_exact_stream_feed_ring(test_framing_exact_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t test_framing_exact_stream_push_ring(test_framing_exact_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */

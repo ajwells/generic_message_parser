@@ -12,6 +12,7 @@
 #include "gmp/c/checksum.h"
 #include "gmp/c/types.h"
 #include "gmp/c/framing.h"
+#include "gmp/c/ring.h"
 #include "gmp/c/stream.h"
 #include "gmp/c/float_text.h"
 #include "gmp/c/text.h"

@@ -25,5 +25,8 @@ int main() {
     if (!ts) return 1;
     std::printf("%04d-%02d-%02d %02d:%02d:%02d  %.2f kWh\n", ts->year, ts->month, ts->day, ts->hour, ts->minute,
                 ts->second, v.kwh_scaled());
+
+    // print uses the gmsg_print hook of the custom type (meter_codecs.hpp)
+    gmsg::println(*any, stdout);
     return 0;
 }

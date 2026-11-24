@@ -47,6 +47,22 @@ target_link_libraries(gmsg_c_runtime_tests_float_libc PRIVATE gmp::runtime_c)
 target_link_options(gmsg_c_runtime_tests_float_libc PRIVATE ${GMP_STATIC_LINK})
 add_test(NAME gmsg_c_runtime_tests_float_libc COMMAND gmsg_c_runtime_tests_float_libc)
 
+# 8-bit ring indices (GMSG_RING_INDEX_BITS=8), and C11 with the fence fallback instead of atomics.
+foreach (variant IN ITEMS ring8 ring_fence)
+    set(name gmsg_c_runtime_tests_${variant})
+    add_executable(${name} test_c_runtime.c)
+    set_target_properties(${name} PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    if (variant STREQUAL "ring8")
+        target_compile_definitions(${name} PRIVATE GMSG_RING_INDEX_BITS=8)
+    else ()
+        target_compile_definitions(${name} PRIVATE GMSG_RING_ATOMICS=0 GMP_TEST_RING_FENCE=1)
+    endif ()
+    target_compile_options(${name} PRIVATE ${GMP_C_WARNINGS})
+    target_link_libraries(${name} PRIVATE gmp::runtime_c)
+    target_link_options(${name} PRIVATE ${GMP_STATIC_LINK})
+    add_test(NAME ${name} COMMAND ${name})
+endforeach ()
+
 # C/C++ cross-check: the C side is compiled as C11, the comparison is a Catch2 test against the C++ runtime.
 add_library(gmp_c_crosscheck_c STATIC crosscheck_c.c crosscheck_framing_c.c crosscheck_text_c.c)
 set_target_properties(gmp_c_crosscheck_c PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)

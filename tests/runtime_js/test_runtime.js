@@ -30,6 +30,7 @@ const attempt = (fn) => {
 T.test('error codes and texts match gmsg::Error', () => {
   T.eq(Err.UnknownEnum, 14);
   T.eq(Err.ValueOutOfLimits, 15);
+  T.eq(Err.Overrun, 16);
   T.eq(gmsg.errorText(Err.ValueOutOfLimits), 'value out of limits');
   T.eq(gmsg.errorText(Err.BadChecksum), 'bad checksum');
   T.eq(gmsg.errorText(Err.UnknownType), 'unknown message type');
@@ -345,6 +346,156 @@ vectors('printer matches gmsg::Printer for every option set', () => {
     const got = gmsg.print({ printTo: scenario }, { style, indent, maxItems, maxBytes, precision });
     T.eq(got, text, `${style} indent ${indent} items ${maxItems} bytes ${maxBytes} precision ${precision}`);
   }
+});
+
+// ---- ByteRing ------------------------------------------------------------------------------------------------------
+T.test('ByteRing: push, wrap, readable parts, full, drop and overrun', () => {
+  const r = new gmsg.ByteRing(8);
+  T.eq(r.capacity, 8);
+  T.eq(r.empty, true);
+  for (let i = 0; i < 6; i++) T.eq(r.push(i), true);
+  r.consume(5);
+  T.eq(r.pushBytes([10, 11, 12, 13, 14, 15, 16]), 7);
+  T.eq(r.size, 8);
+  T.eq(r.highWater, 8);
+  T.eq(r.readable().length, 3);
+  T.eqList(Array.from(r.read()), [5, 10, 11, 12, 13, 14, 15, 16]);
+  T.eq(r.overrunPending, false);
+  for (let i = 0; i < 8; i++) r.push(i);
+  T.eq(r.push(99), false);
+  T.eq(r.overrunPending, true);
+  r.consume(4);
+  T.eq(r.push(98), false);
+  T.eq(r.pushBytes([1, 2, 3, 4, 5, 6, 7]), 0);
+  T.eq(r.dropped, 9);
+  r.consume(4);
+  r.clearOverrun();
+  T.eq(r.push(7), true);
+  T.eq(r.pushBytes(new Uint8Array(10)), 7);
+  T.eq(r.dropped, 12);
+  T.eq(attempt(() => new gmsg.ByteRing(6))[0], Err.OutOfRange);
+  // a shared ring attached elsewhere sees the same state
+  const s = new gmsg.ByteRing(16, { shared: true });
+  T.eq(s.buffer instanceof SharedArrayBuffer, true);
+  const t2 = gmsg.ByteRing.attach(s.buffer);
+  s.pushBytes([1, 2, 3]);
+  T.eqList(Array.from(t2.read()), [1, 2, 3]);
+  T.eq(s.empty, true);
+  // the free-running indices wrap at 2^32
+  const w = new gmsg.ByteRing(4);
+  w.h[0] = w.h[1] = -2;  // both indices at 2^32 - 2
+  for (let i = 0; i < 10; i++) { T.eq(w.pushBytes([i, i + 1, i + 2]), 3); T.eqList(Array.from(w.read()), [i, i + 1, i + 2]); }
+});
+
+/** 0x24 <len> <payload...>: a Ping per frame; payload byte 0 odd = bad checksum. */
+const ringProtocol = (() => {
+  class Ping { static messageName = 'Ping'; constructor(b) { this.b = b; } }
+  return {
+    maxFrame: 16,
+    scan: (b) => gmsg.scanLengthPrefixed(b, { sync: Uint8Array.of(0x24), lengthOffset: 1, lengthSize: 1, add: 2, maxFrame: 16 }),
+    process: (f) => { if (f[2] & 1) gmsg.fail(Err.BadChecksum); return { message: new Ping(f) }; },
+  };
+})();
+
+T.test('StreamParser drains a ByteRing; an overrun drops the frame in progress', () => {
+  const ping = (n) => [0x24, 2, 2 * n, 0];        // 4 bytes
+  const ping5 = (n) => [0x24, 3, 2 * n, 0, 0];    // 5 bytes
+  const ring = new gmsg.ByteRing(16);
+  const s = new gmsg.StreamParser(ringProtocol);
+  const seen = [];
+  s.on('Ping', (v) => seen.push(`P${v.b[2] / 2}`));
+  s.on('error', (e) => seen.push(`E${e.code}:${e.bytes.length}@${e.offset}`));
+  // a gap between frames: 16 bytes fill the ring exactly, the next frame is dropped
+  T.eq(ring.pushBytes([...ping(1), ...ping(2), ...ping(3), ...ping(4)]), 16);
+  T.eq(ring.overrunPending, false);
+  T.eq(ring.pushBytes(ping(5)), 0);
+  T.eq(ring.overrunPending, true);
+  T.eq(s.feed(ring), 4);
+  T.eq(seen.join(' '), 'P1 P2 P3 P4 E16:0@16');
+  T.eq(s.stats.overruns, 1);
+  T.eq(s.lastError, Err.Overrun);
+  T.eq(ring.overrunPending, false);
+  // a byte limit, then a gap at a frame boundary again (14 + 2 bytes fit, the rest of the push is dropped)
+  seen.length = 0;
+  T.eq(ring.pushBytes([...ping(6), ...ping(7), ...ping(8), 0x24, 2]), 14);
+  T.eq(ring.pushBytes([18, 0, ...ping(10)]), 2);
+  T.eq(s.feed(ring, 5), 1);  // only 5 bytes are taken
+  T.eq(ring.size, 11);
+  T.eq(s.feed(ring), 3);
+  T.eq(seen.join(' '), 'P6 P7 P8 P9 E16:0@32');
+  // pull API: a gap inside a frame; push(ring) + pollEvent() returns the overrun inline, with the frame's first byte
+  T.eq(ring.pushBytes([...ping5(1), ...ping5(2), ...ping5(3), ...ping5(4)]), 16);
+  T.eq(s.push(ring), 16);
+  T.eq(ring.overrunPending, false);  // the gap is now in the parser
+  const ev = [];
+  for (let e; (e = s.pollEvent());) ev.push(e.error ? `E${e.error.code}:${e.error.bytes.length}` : `M${e.message.b[2] / 2}`);
+  T.eq(ev.join(' '), 'M1 M2 M3 E16:1');
+  T.eq(s.stats.overruns, 3);
+  T.eq(ring.push(1), true);  // input flows again
+  // flush with a gap waiting: the overrun is reported first
+  s.reset();
+  ring.read();
+  ring.pushBytes([...ping5(1), ...ping5(2), ...ping5(3), ...ping5(4)]);
+  s.push(ring);
+  seen.length = 0;
+  T.eq(s.resync(), false);
+  T.eq(s.flush(), true);
+  T.eq(seen.join(' '), 'E16:16@0');
+  T.eq(s.buffered, 0);
+});
+
+T.test('StreamParser: bytes pushed after a taken-over gap (scan stops at the gap; compaction moves it)', () => {
+  for (const capacity of [40, 16]) {
+    const ring = new gmsg.ByteRing(16);
+    const s = new gmsg.StreamParser(ringProtocol, { capacity });
+    const seen = [];
+    s.on('Ping', (v) => seen.push(`P${v.b[2] / 2}`));
+    s.on('error', (e) => seen.push(`E${e.code}:${e.bytes.length}`));
+    ring.pushBytes([0x24, 2, 2, 0, 0x24, 2, 4, 0]);
+    T.eq(ring.pushBytes([0x24, 8, 6, 0, 0, 0, 0, 0, 0, 0]), 8);  // the last 2 bytes are dropped
+    T.eq(s.push(ring), 16);
+    T.eq(s.next(), true);  // P1
+    T.eq(s.push([0x24, 2, 8, 0]), 4);  // capacity 16: compacts
+    while (s.next()) { /* deliver */ }
+    T.eq(seen.join(' '), 'P1 P2 E16:8 P4', `capacity ${capacity}`);
+  }
+});
+
+T.test('ByteRing filled by a worker thread (SharedArrayBuffer)', async () => {
+  const { Worker } = require('worker_threads');
+  const count = 20000;
+  const ring = new gmsg.ByteRing(64, { shared: true });
+  const done = new Int32Array(new SharedArrayBuffer(4));
+  const worker = new Worker(`
+    const { workerData } = require('worker_threads');
+    const gmsg = require(workerData.gmsg);
+    const ring = gmsg.ByteRing.attach(workerData.buffer);
+    const done = new Int32Array(workerData.done);
+    let seed = 1;
+    const frame = (i) => [0x24, 2, (i & 0x7F) << 1, (i >> 7) & 0xFF];
+    for (let i = 0; i < workerData.count; i++) {
+      let f = frame(i);
+      while (f.length) {  // wait for room: a waiting producer never drops
+        seed = (seed * 1103515245 + 12345) >>> 0;
+        const n = Math.min(f.length, 1 + seed % 4, ring.capacity - ring.size);
+        f = f.slice(ring.pushBytes(f.slice(0, n)));
+      }
+    }
+    Atomics.store(done, 0, 1);
+  `, { eval: true, workerData: { gmsg: path.join(__dirname, '..', '..', 'runtime-js', 'gmsg.js'), buffer: ring.buffer,
+    done: done.buffer, count } });
+  const exited = new Promise((resolve) => worker.on('exit', resolve));
+  const s = new gmsg.StreamParser(ringProtocol);
+  const ids = [];
+  s.on('Ping', (v) => ids.push((v.b[2] >> 1) | (v.b[3] << 7)));
+  let errors = 0;
+  s.on('error', () => errors++);
+  while (!Atomics.load(done, 0) || !ring.empty) s.feed(ring, 50);
+  await exited;
+  T.eq(ring.dropped, 0);
+  T.eq(errors, 0);
+  T.eq(ids.length, count);
+  T.eq(ids.every((id, i) => id === i), true);
 });
 
 T.run();

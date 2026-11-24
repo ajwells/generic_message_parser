@@ -4,7 +4,7 @@ Read this first when starting a new working session. It records what exists, why
 known to be rough, and what is planned. Update it at the end of each session (newest entries at the top of
 "Session history").
 
-Last updated: 2026-11-23 (C++ names renamed to gmsg).
+Last updated: 2026-11-23 (examples in all four languages, output tests).
 
 ---
 
@@ -24,7 +24,7 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 - Toolchain PATH (Git Bash):
   `export PATH="/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/mingw/bin:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/ninja/win/x64:/c/Users/Tabarious/AppData/Local/Programs/CLion/bin/cmake/win/x64/bin:$PATH"`
   (MinGW GCC 15, Ninja, CMake; yaml-cpp and Catch2 via FetchContent).
-- Debug build + tests: `cmake --build build && ctest --test-dir build` (276 tests, all passing, including `gmp_studio_tests`, the C runtime tests in C11 / C99 / library builds, the generated-C cross-checks, the JS runtime and generated-JS cross-checks, the Python runtime / generated / API tests pure and with the accelerator, and `gmp_studio_gmpc_fresh`). Keep the MinGW `bin` on PATH when running ctest: without it the test executables fail with 0xc0000139.
+- Debug build + tests: `cmake --build build && ctest --test-dir build` (325 tests, all passing, including `gmp_studio_tests`, the C runtime tests in C11 / C99 / library builds, the generated-C cross-checks, the JS runtime and generated-JS cross-checks, the Python runtime / generated / API tests pure and with the accelerator, and `gmp_studio_gmpc_fresh`). Keep the MinGW `bin` on PATH when running ctest: without it the test executables fail with 0xc0000139.
 - Node.js: none on PATH; CMake finds the copy inside emsdk (`~/emsdk/node/24.19.0_64bit/node.exe`, variable `GMP_NODE`). JS tests: `node tests/runtime_js/test_runtime.js build/tests/runtime_js/gmp_js_vectors.exe` and `node tests/roundtrip_js/test_generated.js build/tests/roundtrip_js/gmp_js_crossref.exe build/tests/roundtrip_js/gen`.
 - emsdk is installed in `~/emsdk` (latest). It needs Python 3.10+: a portable Python 3.12 is in `~/tools/python312`, and emsdk brings Python 3.13 and Node. `py tools/schema-studio/gmpc/build.py` (with the CLion CMake + Ninja on PATH) builds `gmpc.wasm` in `build-wasm/` (about 20 s) and writes `tools/schema-studio/gmpc/gmpc.js`, `gmpc.stamp`, `gmpc-info.js`. Rebuild after any change under `generator/` (the freshness test fails otherwise).
 - Release build: `cmake --build build-release` (Release, bench ON, tests and examples OFF; it is a compile check only).
@@ -41,7 +41,7 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 - Regenerate golden files after an intentional generator change:
   `GMP_UPDATE_GOLDEN=1 ctest --test-dir build -R golden`, then check that only the expected files changed.
 - Generator directly: `./build/generator/gmpc.exe --out <dir> schema.yaml` / `--check`.
-- Examples run from `build/examples/*/example_*.exe` (6 programs).
+- Examples: 7 programs, each in C++ / C (`build/examples/*/example_*.exe`, `_c.exe`), JS and Python (`build/examples/<dir>/example_<name>_js|_py/`, run `node main.js` / `python main.py` there, Python with `PYTHONPATH=runtime-py`). `ctest -R example` compares every run with the example's `expected_output*.txt` (35 tests incl. Python with the accelerator). After an intentional output change, regenerate the expected file from the C++ program (strip ``).
 - Quick standalone compiles need `-static-libgcc -static-libstdc++` (full `-static` fails to link with this MinGW;
   binaries without static libstdc++ fail with 0xc0000139 when the DLLs are not on PATH).
 - Python is the `py` launcher (3.9, no PyYAML). Node.js only comes with emsdk (see above). Tools that need Python 3.10+ (e.g. the
@@ -64,14 +64,14 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 
 | path | what |
 |------|------|
-| `runtime-c/include/gmp/c/` | C runtime (C99 or later; header-only, or the library build in `runtime-c/src/`): `config.h` (`GMSG_USE_LIBC`, `GMSG_FLOAT_TEXT`, `GMSG_RUNTIME_LIBRARY`, `GMSG_CRC_TABLES`, `GMSG_API`, `GMSG_ASSERT`, `GMSG_C11`, C11 wrappers with C99 fallbacks), `error.h`, `mem.h`, `endian.h`, `bits.h`, `reader.h` (reader + writer), `checksum.h` (+ generated `crc_tables.h`), `types.h`, `framing.h` (scanners, escaping), `stream.h` (`gmsg_stream`, pull support), `float_text.h` (exact float <-> text), `text.h` (tokenizer, integer parsing, text writer), `print.h` (`gmsg_printer`, same text as `gmsg::print`), `runtime.h` (includes all). Names use `gmsg_` / `GMSG_`. Targets `gmp::runtime_c` (header-only), `gmp::runtime_c_lib` (compiled) |
+| `runtime-c/include/gmp/c/` | C runtime (C99 or later; header-only, or the library build in `runtime-c/src/`): `config.h` (`GMSG_USE_LIBC`, `GMSG_FLOAT_TEXT`, `GMSG_RUNTIME_LIBRARY`, `GMSG_CRC_TABLES`, `GMSG_API`, `GMSG_ASSERT`, `GMSG_C11`, C11 wrappers with C99 fallbacks), `error.h`, `mem.h`, `endian.h`, `bits.h`, `reader.h` (reader + writer), `checksum.h` (+ generated `crc_tables.h`), `types.h`, `framing.h` (scanners, escaping), `ring.h` (`gmsg_ring`, interrupt input), `stream.h` (`gmsg_stream`, pull support), `float_text.h` (exact float <-> text), `text.h` (tokenizer, integer parsing, text writer), `print.h` (`gmsg_printer`, same text as `gmsg::print`), `runtime.h` (includes all). Names use `gmsg_` / `GMSG_`. Targets `gmp::runtime_c` (header-only), `gmp::runtime_c_lib` (compiled) |
 | `runtime-c/src/`, `runtime-c/tools/` | library build of the C runtime: one `.c` per library header (checksum, framing, stream, float_text, text, print), each defining `GMSG_IMPL_<PART>_`; `tools/crc_tables.py` writes `crc_tables.h` |
 | `runtime-js/gmsg.js` | JavaScript runtime (one UMD file, global `gmsg`): errors (`GmpError`, `Err`), Reader / Writer, bits, checksums (tables; BigInt for 64-bit), escaping, scanners, `StreamParser` (listeners, pull API, iterators, `offset`), exact float text (port of `float_text.h`), text tokens, `Printer` / `print`, `enumType`, helpers for generated code |
 | `generator/src/backend/js/` | JS backend: `js_backend.cpp` (UMD wrapper, enums, `js:` checks, reserved names, options runtime / global), `js_common.cpp` (ident, literals, BigInt int64 expressions, print calls), `emit_binary_message.cpp`, `emit_text_message.cpp`, `emit_protocol.cpp` |
-| `runtime-py/` | Python runtime package `gmsg` (3.12+): `errors.py` (`Err` IntEnum, `GmpError`), `core.py` (Reader / Writer, int checks, C++ conversions, bits, `to_f32`), `checksum.py`, `framing.py` (escape configs, scanners, `_native_cfg` fallback for patterns > 8 bytes), `stream.py` (`StreamParser`, `Received`, `StreamStats`), `floattext.py` (exact float text), `text.py`, `printer.py`, `gen.py` (support of generated code: `GmpEnum`, `Opened`, `FieldRange`, `TextField`, `i64`, `limited`, `build`, ...), `_accel.py` (`native`, `use_native`). `native/_native.c`: the accelerator (limited API 3.12, header-only C runtime; checksums with cached CRC tables, escaping, scanners, int / float parsing, float text). `pyproject.toml` + `setup.py` (optional abi3 extension, `/std:c11` for MSVC), `README.md` |
+| `runtime-py/` | Python runtime package `gmsg` (3.12+): `errors.py` (`Err` IntEnum, `GmpError`), `core.py` (Reader / Writer, int checks, C++ conversions, bits, `to_f32`), `checksum.py`, `framing.py` (escape configs, scanners, `_native_cfg` fallback for patterns > 8 bytes), `stream.py` (`StreamParser`, `Received`, `StreamStats`), `ring.py` (`ByteRing`), `floattext.py` (exact float text), `text.py`, `printer.py`, `gen.py` (support of generated code: `GmpEnum`, `Opened`, `FieldRange`, `TextField`, `i64`, `limited`, `build`, ...), `_accel.py` (`native`, `use_native`). `native/_native.c`: the accelerator (limited API 3.12, header-only C runtime; checksums with cached CRC tables, escaping, scanners, int / float parsing, float text). `pyproject.toml` + `setup.py` (optional abi3 extension, `/std:c11` for MSVC), `README.md` |
 | `generator/src/backend/py/` | Python backend: `py_backend.cpp` (module header, enums as `gmsg.GmpEnum` with `__gmp_names__` for renamed members, `python:` checks, reserved names, option runtime, relative imports), `py_common.cpp` (ident / enum_ident, literals, int64 expressions via `gmsg.i64`, `condition()`, print calls), `emit_binary_message.cpp` (bits / message dataclasses with `slots=True`, struct runs, views), `emit_text_message.cpp`, `emit_protocol.cpp` |
 | `generator/src/wasm_main.cpp` | `gmpc_generate(yaml, file, lang, options)` → JSON for the WebAssembly build (target `gmpc_wasm`, only with Emscripten) |
-| `runtime/include/gmp/` | header-only runtime: endian, byte/bit readers and writers, checksums, text codec, containers, framing (`framing/fixed.hpp`, `length_prefixed.hpp`, `delimited.hpp`, `escape.hpp`, `frame.hpp`), `stream_parser.hpp`, `error.hpp`, `print.hpp` |
+| `runtime/include/gmp/` | header-only runtime: endian, byte/bit readers and writers, checksums, text codec, containers, framing (`framing/fixed.hpp`, `length_prefixed.hpp`, `delimited.hpp`, `escape.hpp`, `frame.hpp`), `stream_parser.hpp`, `byte_ring.hpp`, `error.hpp`, `print.hpp` |
 | `generator/src/schema/` | `loader.cpp` (YAML → IR, key checks, renamed-key hints), `expr.cpp`, `validator.cpp` |
 | `generator/src/ir/` | `ir.hpp` (language-neutral IR), `lowering.cpp` (resolution, sizes, offsets, escape tables, all semantic checks) |
 | `generator/src/backend/c/` | C backend: `c_backend.cpp` (files, enums, unsupported-feature checks, global name registry), `c_common.cpp` (naming, types, expressions), `emit_binary_message.cpp` (bits, structs, views, print), `emit_protocol.cpp` (framing, parse / decode / process, callbacks, stream, poll, encode; binary and text), `emit_text_message.cpp` |
@@ -84,7 +84,7 @@ the features (`guide.html`). An AI-assistant skill lives in `skills/gmp/`.
 | `tests/runtime_py` | `test_runtime.py` (unit checks + the same `js_vectors` reference vectors as the JS runtime), `harness.py` (no pytest); CMake finds `GMP_PYTHON` and builds the accelerator (`gmsg_native`, `gmsg_py_package`) |
 | `tests/roundtrip_py` | generated Python for every test schema + `api.yaml` (`gmp_generate(LANG python)` into `build/tests/roundtrip_py/gen`) cross-checked with `test_generated.py` against the `js_crossref` reference JSON; `test_api.py` (keywords, `&&`/`\|\|`/`!` conditions, f32 computed, encode size checks, enum members, text extra tokens, header dicts, streams, `use_native`); `test_codecs.py` (the `python:` extensions) |
 | `tests/runtime`, `tests/generator` (golden + diagnostics), `tests/roundtrip`, `tests/schemas` | test suites; goldens in `tests/generator/golden/<backend>/` (`cpp/`, `c/`, `js/`, `python/`) |
-| `examples/` | binary_telemetry, nmea_text, bitpacked_can, custom_codec, sensirion_sht4x (two schemas), reserved_sync; C versions (`main.c`, `gmp_add_example(... LANG c)`) of binary_telemetry (callbacks), nmea_text (push + poll_event) and custom_codec (`c:` codecs, print hook) |
+| `examples/` | binary_telemetry, nmea_text, bitpacked_can, custom_codec, sensirion_sht4x (two schemas), reserved_sync; every program as `main*.cpp`, `main*.c`, `main*.js`, `main*.py` printing the same text, `expected_output*.txt`; `examples/CMakeLists.txt` (`gmp_add_example[_all]`, LANG js / python run in the generated directory), `compare_output.cmake`; custom_codec has codecs for all four (`meter_codecs.hpp/.h/.js/.py`, incl. print hooks) |
 | `docs/schema.md` | compact schema reference (source for the skill's `references/schema.md`) |
 | `tools/schema-studio/` | Studio (`index.html`) and Guide (`guide.html`); JS in `js/` (see its README for the file roles; `exact.js` is the gmpc engine); `gmpc/` (committed `gmpc.js` = gmpc in WebAssembly, `build.py`); tests in `tests/` (`run_tests.py`, pages `unit` / `crosscheck` / `ui` / `guide`, C++ reference generator `crossref.cpp`) |
 | `skills/gmp/` | AI skill: `SKILL.md`, `references/` (generated by `build_references.py`), `evals/` (7 test cases for the skill-creator workflow) |
@@ -140,6 +140,19 @@ Runtime:
   `set_idle_timeout(t)` + `tick(now)` (resync after `t` without new bytes; any monotonic `uint32_t` time,
   wraparound-safe). They only drop data; errors go to the passed / stored handler. Stats `resyncs`, `flushes`. C:
   `gmsg_stream_resync/flush/set_idle_timeout/tick` + generated `<p>_stream_*` wrappers; JS: same methods.
+- Interrupt input: `gmsg::ByteRing<N, Index = uint32_t>` (`gmp/byte_ring.hpp`): lock-free SPSC byte ring, N a power
+  of two, free-running `std::atomic<Index>` indices (acquire / release), `push(byte)` / `push(span)` (producer),
+  `readable()` / `consume(n)` / `read(span)`, `dropped()`, `high_water()`, `overrun_pending()` / `clear_overrun()`.
+  `StreamParser::feed(ring[, max_bytes][, handler])` and `push(ring[, max_bytes])` (pull API). A full ring drops the
+  newest bytes and then everything until the consumer has read up to the gap (so one gap at most, at the end); the
+  parser takes the gap over (`gap_` offset in its buffer), never scans across it, delivers the frames before it and
+  drops the frame in progress as `FrameError{Overrun (16), bytes}` (`stats().overruns`). `resync` returns false while a
+  gap waits; `flush` reports the overrun first. C: `gmsg_ring` (`gmp/c/ring.h`, caller buffer, C11 `_Atomic` or
+  `volatile` + `GMSG_RING_FENCE()`, `GMSG_RING_INDEX_BITS` 8/16/32, `GMSG_RING_ATOMICS`), `gmsg_stream_feed_ring` /
+  `_push_ring`, generated `<p>_stream_feed_ring` / `_push_ring`. JS: `gmsg.ByteRing(capacity, { shared })`
+  (`Atomics` on an Int32 header, optional `SharedArrayBuffer`, `ByteRing.attach(buffer)` in a Worker), `push` /
+  `pushBytes`, `stream.feed(ring[, max])` / `push(ring[, max])` / `messages(ring)` / `events(ring)`. Python:
+  `gmsg.ByteRing(capacity)` (`push` / `push_bytes`, a reader thread as producer), same stream calls.
 - Data after the message: views `extra_bytes()` / text `extra_tokens()`, `decode(data, extra)` /
   `decode_text(s, extra)` (C `_decode_extra`, JS `decodeWithExtra`), `gmsg::extra_of(view or AnyView)`,
   `Received::extra`, `stats().frames_with_extra` (C++ `process(frame, handler, &extra)`; C `gmsg_stream.last_extra`).
@@ -325,6 +338,11 @@ C runtime (`runtime-c/`, for the C backend):
   `gmp`: the tool `gmpc`, include paths `gmp/` and `gmp/c/`, CMake targets `gmp::runtime*`, `gmp_generate`, the
   `.gmp.hpp` / `.gmp.h` / `.gmp.js` outputs, test targets. Generated C++ internals use `gmsg_` too (`gmsg_p`,
   `gmsg_data_`, `gmsg_on_<M>_`, ...). Not renamed: JS / Python class names `GmpError`, `GmpEnum`, Python `__gmp_names__`.
+- **Byte ring for interrupt input** (user, 2026-11-23): a separate ring (not the parser buffer), drained with
+  `feed(ring)`; atomics with a C99 fence fallback and a narrow index option; drop newest + `Overrun` error in all four
+  languages; JS / Python rings too (parity). After an overflow the ring keeps dropping until the consumer reaches the
+  gap: this keeps one gap per ring without storing positions (a frame is lost there anyway). The two-argument
+  `GMP_ASSERT` became the C runtime's one-argument `GMSG_ASSERT(x)` in the rename the same day.
 - **The AI skill bundles its references** (generated from docs/README/examples by a script) so it works when copied
   outside the repo.
 
@@ -359,6 +377,12 @@ C runtime (`runtime-c/`, for the C backend):
   lives (BufferError); the stream parser hands views immutable copies, so this only affects user buffers.
 - Python accelerator in CMake builds only when `GMP_PYTHON` has headers (+ `libs/python3.lib` on Windows); the 3.12
   run is manual (the portable 3.12 has no headers, the same abi3 binary loads there).
+- Byte ring: `feed(ring)` without `max_bytes` loops while the producer keeps adding bytes, so a producer faster than
+  the parser keeps it in the call; pass `max_bytes` to bound it. The C++ ring needs lock-free `std::atomic<Index>`
+  loads / stores (AVR C++ toolchains usually have no `<atomic>`: use the C ring there). The ring's `dropped` counter is
+  32-bit and only written by the producer (a torn read on 8-bit targets is possible; statistics only). Python's ring
+  relies on single-writer attributes (GIL, or per-object locking in free-threaded builds). Not done: a DMA circular
+  buffer adapter (with part D), a generic `SpscQueue<T, N>`.
 - The gmpc engine cannot run custom codecs (user code); frames using them fail with `Custom` in that engine.
 
 ## 7. Future tasks (planned, not started)
@@ -370,16 +394,54 @@ C runtime (`runtime-c/`, for the C backend):
 | Value limits: clamping (not requested) | Value limits reject; an opt-in clamp (e.g. SHT4x humidity, where slightly out-of-range values are normal) was offered and deferred. Memory note `field-value-range-todo`. |
 | Header checksum (deferred) | Optional checksum over the header alone, for protocols that have one; add only when a real protocol needs it. Memory note `bad-length-handling-todo`. |
 | Per-message `exact_size` (future) | `exact_size` is per protocol for now; a per-message option was noted for later. |
-| Stream I/O + callbacks | decided: do all four, one at a time. **A** stored handler / callbacks: **done**. **C** ISR-safe ring buffer: design presented, **tabled** (open questions C1–C6 in the memory note). **B** pull API: **done**. Remaining: **C** (when resumed) and **D**, an endpoint with source/sink adapters, `send(msg)` and a blocking `wait_for<V>(timeout)` / `transact`. |
+| Stream I/O + callbacks | decided: do all four, one at a time. **A** stored handler / callbacks, **B** pull API, **C** byte ring for interrupt input: **done**. Remaining: **D** (the user said to wait on it, 2026-11-23), an endpoint with source/sink adapters (incl. a DMA circular-buffer adapter), `send(msg)` and a blocking `wait_for<V>(timeout)` / `transact`. |
 | `gmsg::to_text<N>(msg)` (small, optional) | printing helper returning a fresh `gmsg::static_string<N>` instead of appending to a sink |
 | MicroPython (separate option) | Decided with the user: add a MicroPython variant separately later, without limiting the CPython API. Memory note `python-backend-todo`. |
-| Python follow-ups (suggested) | A Python example program run as a test, type stubs / `py.typed`, publishing the `gmsg` wheel (abi3) and an sdist that carries the C runtime headers, faster binary messages (see known issues). |
-| JS follow-ups (suggested, not requested yet) | A JS example program (`examples/*/main.js`, run as a test like the C examples), TypeScript declarations (`.d.ts`) for gmsg.js and generated modules (possibly a gmpc output), an npm package layout for the runtime (package.json, ES module entry besides UMD). Memory note `studio-js-runtime-todo`. |
+| Python follow-ups (suggested) | (Python examples: done 2026-11-23.) Type stubs / `py.typed`, publishing the `gmsg` wheel (abi3) and an sdist that carries the C runtime headers, faster binary messages (see known issues). |
+| JS follow-ups (suggested, not requested yet) | (JS examples: done 2026-11-23.) TypeScript declarations (`.d.ts`) for gmsg.js and generated modules (possibly a gmpc output), an npm package layout for the runtime (package.json, ES module entry besides UMD). Memory note `studio-js-runtime-todo`. |
 
 Each planned task has a detailed note (with open questions to ask the user) in the Claude memory directory for this
 project.
 
 ## 8. Session history
+
+
+### 2026-11-23 (examples in every language; outputs compared)
+- Request (user): wait on stream I/O part D; write the examples in all languages and use them to confirm the outputs
+  match between the versions.
+- New: C versions of bitpacked_can, reserved_sync, sensirion_sht4x (+ enum); JS and Python versions of all 7 programs;
+  `js:` / `python:` blocks + `meter_codecs.js` / `.py` (decode, encode, print hook, checksum) for custom_codec.
+- Aligned before comparing: the C nmea_text / custom_codec printed a full `print` dump that C++ did not; C++ now does
+  too (`gmsg::println` of the first GGA; a `gmsg_print` ADL hook for `meter::DateTime`), and so do JS / Python.
+- Tests: `examples/compare_output.cmake` + `expected_output*.txt` (from the C++ output, `` stripped): one ctest per
+  program and language, 35 in total (Python pure and with the accelerator). All 28 programs printed identical text on
+  the first run of each language; a changed expectation fails every language with a got / want diff (checked).
+- JS formatting uses `toFixed` (rounds exact ties differently from printf; no printed value is a tie).
+- End state: 325 ctest pass. Not committed.
+
+
+### 2026-11-23 (stream I/O part C: byte ring for interrupt input)
+- Decisions (user): C1 separate ring; C2 atomics + C99 hook, narrow index type; C3 drop newest, `dropped` +
+  `high_water`, new error `Overrun` = 16 reported on the next drain; scope: JS and Python rings too. Not now: DMA
+  adapter, generic SPSC queue.
+- Runtime: `gmp/byte_ring.hpp`, StreamParser gap handling (`push(ring)`, `feed(ring)` overloads, `scan_end()`,
+  `overrun()`, resync / flush / compact / reset), `StreamStats::overruns`; C `gmp/c/ring.h` + `stream.h`
+  (`gap_pending`, `gap`, `gmsg_stream_push_ring` / `_feed_ring`), generated `<p>_stream_feed_ring` / `_push_ring`
+  (C goldens: only these lines); JS `ByteRing` + parser; Python `gmsg/ring.py` + parser. Error 16 in all error tables.
+- Tests: `tests/runtime/test_byte_ring.cpp` (wrap, overflow, narrow index, feed(ring) = feed(bytes), gap positions,
+  push / flush / resync with a gap, stored handler, two threads with and without drops); generated protocols
+  (`test_stream_recovery.cpp`: feed / CallbackStream / poll_event); C ring unit tests in every C runtime variant plus
+  `ring8` and `ring_fence`; C vs C++ `check_ring` on every test protocol (same bursts, byte limits, events, stats, ring
+  counters); `js_crossref` ring runs (288, half with overruns) replayed by JS and Python; JS ring tests incl. a Worker
+  producer on a SharedArrayBuffer; Python ring tests incl. a producer thread.
+- Planted bugs: 16. First pass caught 10; the 5 missed showed that no test pushed bytes after a gap the parser had
+  taken over (scan across the gap, gap offset after compaction, in all four languages); a test for that now runs in
+  each language, and all 15 real mutants are caught. The 16th (`took_gap` in the feed loops) was equivalent: the
+  `next()` loop already reports a taken gap, so that flag was removed everywhere.
+- Lesson: a planted bug that drops the gap check makes `feed(ring)` loop forever; run mutants with `ctest --timeout`.
+- End state: 290 ctest pass, Studio 736 checks pass, Release build compiles, Python 3.12 run passes. Not committed.
+- Docs: README "Interrupt input (byte ring)", error table, stats; docs/schema.md; SKILL.md (no hand-written ring);
+  runtime-py README; Guide section + API rows (C++ / C / JS / Python).
 
 ### 2026-11-23 (C++ runtime renamed gmp -> gmsg)
 - Decision (user): rename the C++ names to `gmsg` so all four runtimes share one name (see section 5 for what kept

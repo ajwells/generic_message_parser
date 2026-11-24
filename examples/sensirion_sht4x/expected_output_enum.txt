@@ -1,0 +1,6 @@
+write 94  soft_reset              (no response)
+write 89  read_serial_number      serial = 0x0F4F5A3C
+write FD  measure_high_precision  T = 25.00 degC (77.00 degF), RH = 54.00 %RH
+write 15  heater_20mw_100ms       T = 25.00 degC (77.00 degF), RH = 54.00 %RH
+sniffed E0 -> measure_low_precision
+sniffed 42 -> error: unknown enum value

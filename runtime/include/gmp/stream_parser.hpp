@@ -18,6 +18,10 @@
 // automatically after `t` without new bytes (the parser has no clock: `now` is any monotonic unsigned time the
 // application passes). flush() drops everything buffered. These only drop data (reported to the error handler);
 // frames that become complete are then delivered by the usual next() / feed() / poll() calls.
+//
+// Interrupt input: an ISR pushes into a gmsg::ByteRing (gmp/byte_ring.hpp) and the main loop calls feed(ring)
+// (or push(ring) + poll()). Bytes the full ring dropped are an overrun: the frames complete before the gap are
+// delivered, then the frame in progress is dropped and reported as FrameError{Error::Overrun, its bytes}.
 
 #include <algorithm>
 #include <array>
@@ -30,6 +34,7 @@
 #include <utility>
 #include <variant>
 
+#include "gmp/byte_ring.hpp"
 #include "gmp/framing/frame.hpp"
 #include "gmp/polled.hpp"
 #include "gmp/result.hpp"
@@ -77,6 +82,7 @@ struct StreamStats {
     std::uint32_t resyncs = 0;       // incomplete frames given up by resync() (also from tick())
     std::uint32_t flushes = 0;       // flush() calls that dropped buffered bytes
     std::uint32_t frames_with_extra = 0;  // delivered frames with data after their message (ignored)
+    std::uint32_t overruns = 0;      // gaps in the input taken from a ByteRing (each drops the frame in progress)
 };
 
 namespace detail {
@@ -107,6 +113,13 @@ public:
     std::size_t feed(bytes_view in) requires(!std::is_void_v<Handler>) { return feed(in, handler_); }
     /// Process at most one scan step with the stored handler. Returns false when more input is required.
     bool next() requires(!std::is_void_v<Handler>) { return next(handler_); }
+    /// Drain `ring` (at most `max_bytes`) and deliver every complete frame to the stored handler. Returns the
+    /// number of frames delivered. An overrun in the ring is reported as FrameError{Error::Overrun, ...}.
+    template <std::size_t N, class I>
+    std::size_t feed(ByteRing<N, I>& ring, std::size_t max_bytes = static_cast<std::size_t>(-1))
+        requires(!std::is_void_v<Handler>) {
+        return feed(ring, max_bytes, handler_);
+    }
 
     /// Copy as much of `in` as fits into the internal buffer. Returns bytes accepted.
     /// Releases the frame returned by the previous poll (its view expires).
@@ -118,6 +131,36 @@ public:
         tail_ += n;
         received_ += static_cast<std::uint32_t>(n);
         return n;
+    }
+
+    /// Move as many bytes from `ring` as fit (at most `max_bytes`) into the internal buffer, without processing
+    /// them (pull API: then poll()). Returns bytes moved. When the ring has dropped input, its gap is taken over
+    /// once everything before it has been moved; the next step reports it as Error::Overrun.
+    template <std::size_t N, class I>
+    std::size_t push(ByteRing<N, I>& ring, std::size_t max_bytes = static_cast<std::size_t>(-1)) noexcept {
+        release();
+        std::size_t total = 0;
+        while (total < max_bytes) {
+            bytes_view part = ring.readable();
+            if (part.empty()) {
+                if (gap_pending_ || !ring.overrun_pending()) break;  // one gap at a time in the buffer
+                if (!ring.readable().empty()) continue;  // bytes that arrived before the gap became visible
+                ring.clear_overrun();
+                gap_pending_ = true;
+                gap_ = tail_;
+                break;
+            }
+            if (head_ > 0 && (Capacity - tail_) < part.size()) compact();
+            std::size_t n = std::min(part.size(), Capacity - tail_);
+            n = std::min(n, max_bytes - total);
+            if (n == 0) break;
+            std::copy_n(part.begin(), n, buf_.begin() + static_cast<std::ptrdiff_t>(tail_));
+            tail_ += n;
+            received_ += static_cast<std::uint32_t>(n);
+            ring.consume(n);
+            total += n;
+        }
+        return total;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -162,6 +205,26 @@ public:
         if (s.kind == StepKind::error) invoke_if(handler, FrameError{s.error, s.bytes});
         release();
         return s.kind != StepKind::need_more;
+    }
+
+    /// Drain `ring` and process every complete frame (see push(ring)). Returns the number of frames delivered.
+    template <std::size_t N, class I, class H>
+        requires(!std::is_integral_v<std::remove_cvref_t<H>>)
+    std::size_t feed(ByteRing<N, I>& ring, H&& handler) {
+        return feed(ring, static_cast<std::size_t>(-1), handler);
+    }
+    /// Drain at most `max_bytes` of `ring` (e.g. to bound the time spent per call) and process every complete frame.
+    template <std::size_t N, class I, class H>
+    std::size_t feed(ByteRing<N, I>& ring, std::size_t max_bytes, H&& handler) {
+        const auto before = stats_.frames;
+        std::size_t total = 0;
+        for (;;) {
+            const std::size_t n = push(ring, max_bytes - total);
+            total += n;
+            while (next(handler)) {}  // also reports a gap the push took over
+            if (n == 0) break;
+        }
+        return stats_.frames - before;
     }
 
     /// Push `in` and process every complete frame. Returns the number of frames delivered.
@@ -286,6 +349,8 @@ public:
         holding_ = false;
         last_error_ = Error::None;
         ticked_ = false;
+        gap_pending_ = false;
+        gap_ = 0;
         ++generation_;
     }
     [[nodiscard]] const StreamStats& stats() const noexcept { return stats_; }
@@ -321,11 +386,12 @@ private:
     Step step(Accept&& accept) {
         release();
         for (;;) {
+            if (gap_pending_ && head_ == gap_) return overrun(0);
             if (head_ == tail_) {
                 head_ = tail_ = 0;
                 return {};
             }
-            const bytes_view pending(buf_.data() + head_, tail_ - head_);
+            const bytes_view pending(buf_.data() + head_, scan_end() - head_);
             const FrameScan s = Protocol::scan(pending);
             switch (s.kind) {
                 case FrameScan::Kind::frame: {
@@ -357,6 +423,7 @@ private:
                 }
                 case FrameScan::Kind::need_more:
                 default:
+                    if (gap_pending_) return overrun(pending.size());  // the frame in progress lost bytes
                     if (pending.size() >= Capacity) {
                         // Buffer full but no frame: drop one byte and resync.
                         ++stats_.overflows;
@@ -383,6 +450,19 @@ private:
         }
     }
 
+    /// End of the bytes a scan may look at: the gap of an overrun, if one is buffered.
+    [[nodiscard]] std::size_t scan_end() const noexcept { return gap_pending_ ? gap_ : tail_; }
+
+    /// Drop the `n` bytes before the gap (the frame in progress when input was lost) as Error::Overrun.
+    Step overrun(std::size_t n) noexcept {
+        gap_pending_ = false;
+        ++stats_.overruns;
+        stats_.bytes_skipped += static_cast<std::uint32_t>(n);
+        last_error_ = Error::Overrun;
+        hold(n);
+        return {StepKind::error, Error::Overrun, bytes_view(buf_.data() + head_, n)};
+    }
+
     /// Report an error to the stored handler, if any.
     void report(const FrameError& e) {
         if constexpr (!std::is_void_v<Handler>) invoke_if(handler_, e);
@@ -392,7 +472,7 @@ private:
     template <class Report>
     bool resync_impl(Report&& report_error) {
         release();
-        if (head_ == tail_) return false;
+        if (head_ == tail_ || gap_pending_) return false;  // empty, or the next step drops it as an overrun
         const bytes_view pending(buf_.data() + head_, tail_ - head_);
         if (Protocol::scan(pending).kind != FrameScan::Kind::need_more) return false;  // nothing stuck at the head
         ++stats_.resyncs;
@@ -407,6 +487,12 @@ private:
     template <class Report>
     bool flush_impl(Report&& report_error) {
         release();
+        if (gap_pending_) {  // report the lost input first, for the bytes before the gap
+            const Step s = overrun(gap_ - head_);
+            report_error(FrameError{s.error, s.bytes});
+            release();
+            if (head_ == tail_) return true;
+        }
         if (head_ == tail_) return false;
         const bytes_view pending(buf_.data() + head_, tail_ - head_);
         ++stats_.flushes;
@@ -462,13 +548,17 @@ private:
     }
     void consume(std::size_t n) noexcept {
         head_ += std::min(n, tail_ - head_);
-        if (head_ == tail_) head_ = tail_ = 0;
+        if (head_ == tail_) {
+            head_ = tail_ = 0;
+            gap_ = 0;  // a gap left can only be at the end
+        }
     }
     void compact() noexcept {
         if (head_ == 0) return;
         std::copy(buf_.begin() + static_cast<std::ptrdiff_t>(head_), buf_.begin() + static_cast<std::ptrdiff_t>(tail_),
                   buf_.begin());
         tail_ -= head_;
+        if (gap_pending_) gap_ -= head_;
         head_ = 0;
     }
 
@@ -486,6 +576,8 @@ private:
     std::uint32_t last_activity_ = 0;  // time of the last tick that saw new bytes (or of the last idle resync)
     std::uint32_t idle_timeout_ = 0;   // 0 = off
     bool ticked_ = false;
+    bool gap_pending_ = false;  // input was lost at buf_[gap_] (taken from a ByteRing); reported by the next step
+    std::size_t gap_ = 0;
     [[no_unique_address]] Storage handler_{};
 };
 

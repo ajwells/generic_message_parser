@@ -59,6 +59,7 @@ attempt = gmsg.attempt
 def _():
     T.eq(int(Err.UNKNOWN_ENUM), 14)
     T.eq(int(Err.VALUE_OUT_OF_LIMITS), 15)
+    T.eq(int(Err.OVERRUN), 16)
     T.eq(gmsg.error_text(Err.BAD_CHECKSUM), "bad checksum")
     T.eq(gmsg.error_text(Err.UNKNOWN_TYPE), "unknown message type")
     T.eq(str(gmsg.GmpError(Err.TRUNCATED)), "truncated")
@@ -466,6 +467,167 @@ def _():
         got = gmsg.to_text(Scenario(), style=style, indent=indent, max_items=max_items, max_bytes=max_bytes,
                            precision=precision)
         T.eq(got, text, f"{style} indent {indent} items {max_items} bytes {max_bytes} precision {precision}")
+
+
+# ---- ByteRing ----------------------------------------------------------------------------------------------------
+@T.test("ByteRing: push, wrap, readable parts, full, drop and overrun")
+def _():
+    r = gmsg.ByteRing(8)
+    T.eq(r.capacity, 8)
+    T.eq(r.empty, True)
+    for i in range(6):
+        T.eq(r.push(i), True)
+    r.consume(5)
+    T.eq(r.push_bytes(bytes([10, 11, 12, 13, 14, 15, 16])), 7)
+    T.eq(r.size, 8)
+    T.eq(r.high_water, 8)
+    part = r.readable()
+    T.eq(len(part), 3)
+    part.release()
+    T.eq(list(r.read()), [5, 10, 11, 12, 13, 14, 15, 16])
+    T.eq(r.overrun_pending, False)
+    for i in range(8):
+        r.push(i)
+    T.eq(r.push(99), False)
+    T.eq(r.overrun_pending, True)
+    r.consume(4)
+    T.eq(r.push(98), False)
+    T.eq(r.push_bytes(bytes(7)), 0)
+    T.eq(r.dropped, 9)
+    r.consume(4)
+    r.clear_overrun()
+    T.eq(r.push(7), True)
+    T.eq(r.push_bytes(bytes(10)), 7)
+    T.eq(r.dropped, 12)
+    T.eq(int(attempt(lambda: gmsg.ByteRing(6))[0]), int(Err.OUT_OF_RANGE))
+    # many wraps
+    w = gmsg.ByteRing(4)
+    for i in range(50):
+        T.eq(w.push_bytes(bytes([i, i + 1, i + 2])), 3)
+        T.eq(list(w.read()), [i, i + 1, i + 2])
+
+
+def _ring_protocol():
+    cfg = gmsg.LengthPrefixedConfig(sync=b"\x24", length_offset=1, length_size=1, add=2, max_frame=16)
+
+    class Ping:
+        message_name = "Ping"
+
+        def __init__(self, b):
+            self.b = b
+
+    class Protocol:
+        max_frame = 16
+        scan = staticmethod(lambda b: gmsg.scan_length_prefixed(b, cfg))
+
+        @staticmethod
+        def process(f):
+            if f[2] & 1:
+                gmsg.fail(Err.BAD_CHECKSUM)
+            return gmsg.Received(Ping(f))
+
+    return Protocol
+
+
+@T.test("StreamParser drains a ByteRing; an overrun drops the frame in progress")
+def _():
+    def ping(n):
+        return [0x24, 2, 2 * n, 0]
+
+    def ping5(n):
+        return [0x24, 3, 2 * n, 0, 0]
+
+    ring = gmsg.ByteRing(16)
+    s = gmsg.StreamParser(_ring_protocol())
+    seen = []
+    s.on("Ping", lambda v, h: seen.append(f"P{v.b[2] // 2}"))
+    s.on("error", lambda e: seen.append(f"E{int(e.code)}:{len(e.data)}@{e.offset}"))
+    T.eq(ring.push_bytes(bytes(ping(1) + ping(2) + ping(3) + ping(4))), 16)
+    T.eq(ring.push_bytes(bytes(ping(5))), 0)
+    T.eq(ring.overrun_pending, True)
+    T.eq(s.feed(ring), 4)
+    T.eq(" ".join(seen), "P1 P2 P3 P4 E16:0@16")
+    T.eq(s.stats.overruns, 1)
+    T.eq(s.last_error, Err.OVERRUN)
+    seen.clear()
+    T.eq(ring.push_bytes(bytes(ping(6) + ping(7) + ping(8) + [0x24, 2])), 14)
+    T.eq(ring.push_bytes(bytes([18, 0] + ping(10))), 2)
+    T.eq(s.feed(ring, 5), 1)
+    T.eq(ring.size, 11)
+    T.eq(s.feed(ring), 3)
+    T.eq(" ".join(seen), "P6 P7 P8 P9 E16:0@32")
+    T.eq(ring.push_bytes(bytes(ping5(1) + ping5(2) + ping5(3) + ping5(4))), 16)
+    T.eq(s.push(ring), 16)
+    T.eq(ring.overrun_pending, False)
+    ev = []
+    while (e := s.poll_event()) is not None:
+        ev.append(f"E{int(e.code)}:{len(e.data)}" if isinstance(e, gmsg.GmpError) else f"M{e.message.b[2] // 2}")
+    T.eq(" ".join(ev), "M1 M2 M3 E16:1")
+    T.eq(s.stats.overruns, 3)
+    T.eq(ring.push(1), True)
+    s.reset()
+    ring.read()
+    ring.push_bytes(bytes(ping5(1) + ping5(2) + ping5(3) + ping5(4)))
+    s.push(ring)
+    seen.clear()
+    T.eq(s.resync(), False)
+    T.eq(s.flush(), True)
+    T.eq(" ".join(seen), "E16:16@0")
+    T.eq(s.buffered, 0)
+    # iterators over a ring
+    ring.push_bytes(bytes(ping(1) + ping(2)))
+    T.eq([v.b[2] // 2 for v in s.messages(ring)], [1, 2])
+
+
+@T.test("StreamParser: bytes pushed after a taken-over gap (scan stops at the gap; compaction moves it)")
+def _():
+    for capacity in (40, 16):
+        ring = gmsg.ByteRing(16)
+        s = gmsg.StreamParser(_ring_protocol(), capacity=capacity)
+        seen = []
+        s.on("Ping", lambda v, h: seen.append(f"P{v.b[2] // 2}"))
+        s.on("error", lambda e: seen.append(f"E{int(e.code)}:{len(e.data)}"))
+        ring.push_bytes(bytes([0x24, 2, 2, 0, 0x24, 2, 4, 0]))
+        T.eq(ring.push_bytes(bytes([0x24, 8, 6, 0, 0, 0, 0, 0, 0, 0])), 8)
+        T.eq(s.push(ring), 16)
+        T.eq(s.next(), True)
+        T.eq(s.push(bytes([0x24, 2, 8, 0])), 4)
+        while s.next():
+            pass
+        T.eq(" ".join(seen), "P1 P2 E16:8 P4", f"capacity {capacity}")
+
+
+@T.test("ByteRing filled by another thread")
+def _():
+    import threading
+
+    count = 20000
+    ring = gmsg.ByteRing(64)
+    done = threading.Event()
+
+    def producer():
+        seed = 1
+        for i in range(count):
+            f = bytes([0x24, 2, (i & 0x7F) << 1, (i >> 7) & 0xFF])
+            while f:  # wait for room: a waiting producer never drops
+                seed = (seed * 1103515245 + 12345) & 0xFFFFFFFF
+                n = min(len(f), 1 + seed % 4, ring.capacity - ring.size)
+                f = f[ring.push_bytes(f[:n]):]
+        done.set()
+
+    s = gmsg.StreamParser(_ring_protocol())
+    ids = []
+    errors = []
+    s.on("Ping", lambda v, h: ids.append((v.b[2] >> 1) | (v.b[3] << 7)))
+    s.on("error", lambda e: errors.append(e.code))
+    th = threading.Thread(target=producer)
+    th.start()
+    while not done.is_set() or not ring.empty:
+        s.feed(ring, 50)
+    th.join()
+    T.eq(ring.dropped, 0)
+    T.eq(errors, [])
+    T.eq(ids == list(range(count)), True)
 
 
 sys.exit(T.run())

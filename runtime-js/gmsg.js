@@ -26,11 +26,11 @@
   const Err = Object.freeze({
     None: 0, Truncated: 1, BadSync: 2, BadChecksum: 3, BadLength: 4, BadDelimiter: 5, BadConst: 6, OutOfRange: 7,
     UnknownType: 8, BufferFull: 9, ParseError: 10, MissingField: 11, InvalidValue: 12, Custom: 13, UnknownEnum: 14,
-    ValueOutOfLimits: 15,
+    ValueOutOfLimits: 15, Overrun: 16,
   });
   const ERR_TEXT = ['none', 'truncated', 'bad sync', 'bad checksum', 'bad length', 'bad delimiter', 'bad constant',
     'out of range', 'unknown message type', 'buffer full', 'parse error', 'missing field', 'invalid value',
-    'custom error', 'unknown enum value', 'value out of limits'];
+    'custom error', 'unknown enum value', 'value out of limits', 'overrun'];
   const ERR_NAME = Object.keys(Err);
 
   /** Text of an error code (gmsg::to_string(Error)). */
@@ -702,6 +702,111 @@
   const extraOf = (v) => (v == null ? 0 : v.extraBytes !== undefined ? v.extraBytes : v.extraTokens !== undefined ? v.extraTokens : 0);
   const errorOf = (s) => { const e = new GmpError(s.error); e.bytes = s.bytes; e.offset = s.offset; return e; };
 
+  // ================================================================================================================
+  // byte ring (gmp/byte_ring.hpp): single-producer / single-consumer input queue
+  // ================================================================================================================
+  const RW = 0, RR = 1, ROVERRUN = 2, RDROPPED = 3, RHIGH = 4, RCAP = 5, RHEADER = 8;  // Int32 header slots
+  /**
+   * Single-producer / single-consumer byte queue (port of gmsg::ByteRing). The producer calls push() / pushBytes(),
+   * the consumer drains it into a StreamParser with feed(ring) / push(ring). With `{ shared: true }` the storage is a
+   * SharedArrayBuffer: pass `ring.buffer` to a Worker and attach there with `ByteRing.attach(buffer)`, so one thread
+   * can receive while another parses (indices use Atomics, acquire / release as in C++).
+   * Overflow: a full ring drops the newest bytes (`dropped`) and marks an overrun; it then drops input until the
+   * consumer has read everything before the gap. The stream reports the gap as Err.Overrun and drops the frame in
+   * progress.
+   */
+  class ByteRing {
+    /** `capacity`: a power of two (2 .. 2^30). */
+    constructor(capacity, { shared = false } = {}) {
+      if (!(Number.isInteger(capacity) && capacity >= 2 && capacity <= 2 ** 30 && (capacity & (capacity - 1)) === 0))
+        fail(Err.OutOfRange, 'ring capacity must be a power of two (2 .. 2^30)');
+      const size = RHEADER * 4 + capacity;
+      const buffer = shared ? new SharedArrayBuffer(size) : new ArrayBuffer(size);
+      this.init(buffer);
+      Atomics.store(this.h, RCAP, capacity);
+    }
+    /** A ByteRing over the storage of another one (`ring.buffer`, e.g. received by a Worker). */
+    static attach(buffer) {
+      const r = Object.create(ByteRing.prototype);
+      r.init(buffer);
+      return r;
+    }
+    init(buffer) {
+      this.buffer = buffer;
+      this.h = new Int32Array(buffer, 0, RHEADER);
+      this.data = new Uint8Array(buffer, RHEADER * 4);
+      this.mask = this.data.length - 1;
+    }
+    get capacity() { return this.data.length; }
+
+    // ---- producer side
+    /** Append one byte. Returns false (and drops it) when the ring is full or an overrun waits to be drained. */
+    push(b) {
+      const h = this.h;
+      if (Atomics.load(h, ROVERRUN)) return this.drop(1);
+      const w = h[RW] >>> 0, r = Atomics.load(h, RR) >>> 0;
+      if (((w - r) >>> 0) === this.data.length) { this.drop(1); Atomics.store(h, ROVERRUN, 1); return false; }
+      this.data[w & this.mask] = b;
+      Atomics.store(h, RW, (w + 1) | 0);
+      this.noteFill((w + 1 - r) >>> 0);
+      return true;
+    }
+    /** Append as many bytes as fit (the rest are dropped: an overrun). Returns the number appended. */
+    pushBytes(bytes) {
+      const b = toBytes(bytes), h = this.h;
+      if (!b.length) return 0;
+      if (Atomics.load(h, ROVERRUN)) { this.drop(b.length); return 0; }
+      const w = h[RW] >>> 0, r = Atomics.load(h, RR) >>> 0;
+      const n = Math.min(b.length, this.data.length - ((w - r) >>> 0));
+      for (let i = 0; i < n; i++) this.data[(w + i) & this.mask] = b[i];
+      if (n) {
+        Atomics.store(h, RW, (w + n) | 0);
+        this.noteFill((w + n - r) >>> 0);
+      }
+      if (n < b.length) { this.drop(b.length - n); Atomics.store(h, ROVERRUN, 1); }
+      return n;
+    }
+    drop(n) { this.h[RDROPPED] = (this.h[RDROPPED] + n) | 0; return false; }
+    noteFill(fill) { if (fill > this.h[RHIGH] >>> 0) this.h[RHIGH] = fill; }
+
+    // ---- consumer side
+    /** The oldest buffered bytes that are contiguous in storage (a view, valid until consume()). */
+    readable() {
+      const w = Atomics.load(this.h, RW) >>> 0, r = this.h[RR] >>> 0;
+      const start = r & this.mask, n = (w - r) >>> 0;
+      return this.data.subarray(start, start + Math.min(n, this.data.length - start));
+    }
+    /** Release the first `n` bytes of readable() to the producer. */
+    consume(n) { Atomics.store(this.h, RR, ((this.h[RR] >>> 0) + n) | 0); }
+    /** Copy up to `max` bytes out (default: everything buffered). The overrun flag is not cleared here. */
+    read(max = Infinity) {
+      const parts = [];
+      let total = 0;
+      while (total < max) {
+        const part = this.readable();
+        if (!part.length) break;
+        const n = Math.min(part.length, max - total);
+        parts.push(part.slice(0, n));
+        this.consume(n);
+        total += n;
+      }
+      const out = new Uint8Array(total);
+      let o = 0;
+      for (const part of parts) { out.set(part, o); o += part.length; }
+      return out;
+    }
+    get size() { return ((Atomics.load(this.h, RW) >>> 0) - (this.h[RR] >>> 0)) >>> 0; }
+    get empty() { return this.size === 0; }
+    /** True when input was dropped after the buffered bytes; the producer drops input until clearOverrun(). */
+    get overrunPending() { return Atomics.load(this.h, ROVERRUN) !== 0; }
+    /** Accept input again; call only when the ring is empty. */
+    clearOverrun() { Atomics.store(this.h, ROVERRUN, 0); }
+    /** Bytes dropped because the ring was full (wraps at 2^32). */
+    get dropped() { return Atomics.load(this.h, RDROPPED) >>> 0; }
+    /** Highest fill level seen by the producer. */
+    get highWater() { return Atomics.load(this.h, RHIGH) >>> 0; }
+  }
+
   class StreamParser {
     constructor(protocol, { capacity } = {}) {
       this.protocol = protocol;
@@ -711,7 +816,7 @@
       this.head = 0;
       this.tail = 0;
       this.listeners = new Map();
-      this.stats = { frames: 0, frameErrors: 0, bytesSkipped: 0, overflows: 0, resyncs: 0, flushes: 0, framesWithExtra: 0 };
+      this.stats = { frames: 0, frameErrors: 0, bytesSkipped: 0, overflows: 0, resyncs: 0, flushes: 0, framesWithExtra: 0, overruns: 0 };
       this.lastError = Err.None;
       this.consumed = 0;  // bytes removed from the front of the buffer since construction / reset()
       this.received = 0;  // bytes pushed
@@ -719,6 +824,8 @@
       this.ticked = false;
       this.seen = 0;
       this.lastActivity = 0;
+      this.gapPending = false;  // input was lost at buf[gap] (taken from a ByteRing); reported by the next step
+      this.gap = 0;
     }
     get buffered() { return this.tail - this.head; }
     /** Stream offset of the next buffered byte (bytes consumed so far). */
@@ -740,8 +847,11 @@
     }
     reportError(s) { this.emit('error', errorOf(s)); }
 
-    /** Copy as much of `bytes` as fits; returns the number of bytes accepted. */
-    push(bytes) {
+    /** Copy as much of `bytes` as fits; returns the number of bytes accepted. With a ByteRing: move as many bytes
+     *  as fit (at most `max`) without processing them (pull API); a gap in the ring is taken over once everything
+     *  before it has been moved, and the next step reports it as Err.Overrun. */
+    push(bytes, max = Infinity) {
+      if (bytes instanceof ByteRing) return this.pushRing(bytes, max);
       const b = toBytes(bytes);
       if (this.head > 0 && this.capacity - this.tail < b.length) this.compact();
       const n = Math.min(b.length, this.capacity - this.tail);
@@ -757,7 +867,7 @@
      *  first byte and let the next scan resynchronise. Returns false when the buffer is empty or its head frame is
      *  complete. */
     resync() {
-      if (this.head === this.tail) return false;
+      if (this.head === this.tail || this.gapPending) return false;  // the next step drops it as an overrun
       const pending = this.buf.subarray(this.head, this.tail);
       if (this.protocol.scan(pending).kind !== 'need_more') return false;
       this.stats.resyncs++;
@@ -772,6 +882,10 @@
     /** Drop every buffered byte, reported to the 'error' listeners as one Truncated error. Returns false when
      *  nothing was buffered. */
     flush() {
+      if (this.gapPending) {  // report the lost input first, for the bytes before the gap
+        this.reportError(this.overrun(this.gap - this.head));
+        if (this.head === this.tail) return true;
+      }
       if (this.head === this.tail) return false;
       const offset = this.consumed;
       const bytes = this.buf.slice(this.head, this.tail);
@@ -798,8 +912,21 @@
       this.lastActivity = now;
       return this.resync();
     }
-    /** Push all of `bytes` and deliver every complete frame to the listeners. Returns the number of frames. */
-    feed(bytes) {
+    /** Push all of `bytes` and deliver every complete frame to the listeners. Returns the number of frames.
+     *  With a ByteRing: drain it (at most `max` bytes); a gap in the ring is reported to the 'error' listeners as
+     *  Err.Overrun. */
+    feed(bytes, max = Infinity) {
+      if (bytes instanceof ByteRing) {
+        const before = this.stats.frames;
+        let total = 0;
+        for (;;) {
+          const n = this.pushRing(bytes, max - total);
+          total += n;
+          while (this.next()) { /* deliver; also reports a gap the push took over */ }
+          if (!n) break;
+        }
+        return this.stats.frames - before;
+      }
       let b = toBytes(bytes);
       const before = this.stats.frames;
       do {
@@ -855,6 +982,14 @@
     }
     /** Iterate over the messages in `bytes` (pushed in pieces as room allows), then over anything already buffered. */
     *messages(bytes) {
+      if (bytes instanceof ByteRing) {
+        for (;;) {
+          const n = this.pushRing(bytes);
+          let m;
+          while ((m = this.poll())) yield m;
+          if (!n) return;
+        }
+      }
       let b = bytes === undefined ? EMPTY : toBytes(bytes);
       for (;;) {
         const n = this.push(b);
@@ -866,6 +1001,14 @@
     }
     /** Like messages(), yielding pollEvent() results (messages and errors). */
     *events(bytes) {
+      if (bytes instanceof ByteRing) {
+        for (;;) {
+          const n = this.pushRing(bytes);
+          let e;
+          while ((e = this.pollEvent())) yield e;
+          if (!n) return;
+        }
+      }
       let b = bytes === undefined ? EMPTY : toBytes(bytes);
       for (;;) {
         const n = this.push(b);
@@ -878,10 +1021,12 @@
 
     reset() {
       this.head = this.tail = 0;
-      this.stats = { frames: 0, frameErrors: 0, bytesSkipped: 0, overflows: 0, resyncs: 0, flushes: 0, framesWithExtra: 0 };
+      this.stats = { frames: 0, frameErrors: 0, bytesSkipped: 0, overflows: 0, resyncs: 0, flushes: 0, framesWithExtra: 0, overruns: 0 };
       this.lastError = Err.None;
       this.consumed = 0;
       this.ticked = false;
+      this.gapPending = false;
+      this.gap = 0;
     }
 
     // ---- internals ---------------------------------------------------------------------------------------------
@@ -897,8 +1042,9 @@
      *  and error bytes are copies. */
     step(accept) {
       for (;;) {
+        if (this.gapPending && this.head === this.gap) return this.overrun(0);
         if (this.head === this.tail) { this.head = this.tail = 0; return { kind: 'need_more' }; }
-        const pending = this.buf.subarray(this.head, this.tail);
+        const pending = this.buf.subarray(this.head, this.gapPending ? this.gap : this.tail);  // never across a gap
         const s = this.protocol.scan(pending);
         const offset = this.consumed;
         if (s.kind === 'frame') {
@@ -935,6 +1081,7 @@
           this.lastError = s.error;
           return { kind: 'error', error: s.error, bytes, offset };
         }
+        if (this.gapPending) return this.overrun(pending.length);  // the frame in progress lost bytes
         if (pending.length >= this.capacity) {
           this.stats.overflows++;
           this.stats.bytesSkipped++;
@@ -947,16 +1094,51 @@
         return { kind: 'need_more' };
       }
     }
+    /** Drop the `n` bytes before the gap (the frame in progress when input was lost) as Err.Overrun. */
+    overrun(n) {
+      this.gapPending = false;
+      this.stats.overruns++;
+      this.stats.bytesSkipped += n;
+      this.lastError = Err.Overrun;
+      const offset = this.consumed;
+      const bytes = this.buf.slice(this.head, this.head + n);
+      this.consume(n);
+      return { kind: 'error', error: Err.Overrun, bytes, offset };
+    }
+    pushRing(ring, max = Infinity) {
+      let total = 0;
+      while (total < max) {
+        const part = ring.readable();
+        if (!part.length) {
+          if (this.gapPending || !ring.overrunPending) break;  // one gap at a time in the buffer
+          if (ring.readable().length) continue;  // bytes that arrived before the gap became visible
+          ring.clearOverrun();
+          this.gapPending = true;
+          this.gap = this.tail;
+          break;
+        }
+        if (this.head > 0 && this.capacity - this.tail < part.length) this.compact();
+        const n = Math.min(part.length, this.capacity - this.tail, max - total);
+        if (!n) break;
+        this.buf.set(part.subarray(0, n), this.tail);
+        this.tail += n;
+        this.received += n;
+        ring.consume(n);
+        total += n;
+      }
+      return total;
+    }
     consume(n) {
       n = Math.min(n, this.tail - this.head);
       this.consumed += n;
       this.head += n;
-      if (this.head === this.tail) this.head = this.tail = 0;
+      if (this.head === this.tail) this.head = this.tail = this.gap = 0;  // a gap left can only be at the end
     }
     compact() {
       if (this.head === 0) return;
       this.buf.copyWithin(0, this.head, this.tail);
       this.tail -= this.head;
+      if (this.gapPending) this.gap -= this.head;
       this.head = 0;
     }
   }
@@ -1498,7 +1680,7 @@
     xorEscape, mapEscape, indexEscape, NO_ESCAPE, walkEscaped, readFrameHeader, unescapeInPlace, unescape, unescapedSize,
     escapeOverhead, escapeRange, escape,
     FrameScan, findPatternAtStart, matchesAt, scanFixed, scanLengthPrefixed, scanDelimited,
-    StreamParser,
+    StreamParser, ByteRing,
     formatFloat, formatGeneral, parseFloat: parseFloatText,
     text: Object.freeze({ split: splitTokens, parseInt: parseInt_, parseFloat: parseFloatText, parseChar, parseHexByte, hexValue,
       hexText, TextWriter }),

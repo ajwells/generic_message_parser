@@ -1,0 +1,7 @@
+write    FD
+read     66 66 93 7A E1 A4
+T = 25.00 degC (77.00 degF), RH = 54.00 %RH
+corrupted: bad checksum
+serial = 0x0F4F5A3C
+serial   0F 4F 0B 5A 3C 30
+encoded  66 66 93 7A E1 A4

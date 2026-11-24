@@ -90,7 +90,25 @@ for (const proto of ref.protocols) {
       });
       s.on('error', (e) => { ev += `E${e.code}:${e.bytes.length}\n`; });
       const wire = hexToBytes(c.hex);
-      if (c.chunk) {
+      let ring = null;
+      if (c.ring) {
+        // ring run (js_crossref.cpp): the recorded pushes into a 32-byte ByteRing and the drains
+        ring = new gmsg.ByteRing(32);
+        let pos = 0;
+        const drain = (how, max) => {
+          const limit = max || Infinity;
+          if (how === 'F') s.feed(ring, limit);
+          else { s.push(ring, limit); while (s.next()) { /* deliver */ } }
+        };
+        for (const tok of c.ring.trim().split(' ')) {
+          const n = Number(tok.slice(1));
+          if (tok[0] === 'P') { ring.pushBytes(wire.subarray(pos, pos + n)); pos += n; }
+          else if (tok[0] === 'B') { for (let i = 0; i < n; i++) ring.push(wire[pos + i]); pos += n; }
+          else drain(tok[0], n);
+        }
+        const flushed = s.flush();  // before reading ev: the flush appends its error event
+        ev += `R${flushed ? 1 : 0}\n`;
+      } else if (c.chunk) {
         for (let pos = 0; pos < wire.length; pos += c.chunk) s.feed(wire.subarray(pos, Math.min(wire.length, pos + c.chunk)));
       } else {
         // recovery run (js_crossref.cpp): chunks of 3, then the recorded resync / flush / tick ops
@@ -110,7 +128,8 @@ for (const proto of ref.protocols) {
       }
       T.eq(ev, c.events, `${proto.name} stream ${c.hex} chunk ${c.chunk}`);
       T.eqList([s.stats.frames, s.stats.frameErrors, s.stats.bytesSkipped, s.stats.overflows, s.stats.resyncs, s.stats.flushes,
-        s.stats.framesWithExtra], c.stats, `${proto.name} stream stats`);
+        s.stats.framesWithExtra, s.stats.overruns], c.stats, `${proto.name} stream stats`);
+      if (ring) T.eqList([ring.dropped, ring.highWater], c.ringStats, `${proto.name} ring stats`);
     }
   });
 }

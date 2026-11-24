@@ -182,7 +182,7 @@ per message. It never allocates. Bounded sinks keep what fits and return `Buffer
 
 Errors are values (`gmsg::Result<T>` = `std::expected<T, gmsg::Error>`): `Truncated`, `BadSync`, `BadChecksum`,
 `BadLength`, `BadDelimiter`, `BadConst`, `OutOfRange`, `UnknownType`, `UnknownEnum`, `ValueOutOfLimits`,
-`BufferFull`, `ParseError`, `MissingField`. Full API and streaming details: `references/cpp-api.md`.
+`BufferFull`, `ParseError`, `MissingField`, `Overrun` (a full `ByteRing` dropped input). Full API and streaming details: `references/cpp-api.md`.
 
 ## Things that trip people up
 
@@ -210,11 +210,15 @@ Errors are values (`gmsg::Result<T>` = `std::expected<T, gmsg::Error>`): `Trunca
 - **Per-frame I/O is the app's job.** GMP doesn't own a UART or socket; read bytes yourself and pass them to `feed()`.
   Handlers run synchronously inside `feed()`, so feeding from an ISR runs the checksum, the decode and your handlers
   inside the ISR. On an MCU, keep the ISR short instead:
-  - The RX interrupt (or DMA callback) only appends bytes to a single-producer / single-consumer ring buffer. Use
-    `std::atomic` head and tail indices, written by one side each, with a power-of-two size. GMP doesn't ship one yet.
-  - The main loop or a task drains the ring into `parser.feed(...)` (or `push()` + `poll()`).
+  - The RX interrupt (or DMA callback) only appends bytes to a `gmsg::ByteRing<N>` (`gmp/byte_ring.hpp`; N a power
+    of two): `rx.push(byte)`. Don't hand-write a ring. On 8/16-bit MCUs use `gmsg::ByteRing<128, std::uint8_t>`.
+    C: `gmsg_ring` (`gmp/c/ring.h`, `gmsg_ring_init(&r, buf, size)`, `gmsg_ring_push(&r, b)`).
+  - The main loop or a task drains it: `parser.feed(rx)` (or `feed(rx, max_bytes)`; `push(rx)` + `poll()` for the pull
+    API). C: `<p>_stream_feed_ring(&s, &rx, SIZE_MAX)`.
+  - A full ring drops input (`rx.dropped()`); the parser then drops the frame in progress and reports
+    `FrameError{Overrun, ...}` (C `GMSG_ERR_OVERRUN`), counted in `stats().overruns`.
 
-  Size the ring for bytes per second × the longest gap between drains.
+  Size the ring for bytes per second × the longest gap between drains; `rx.high_water()` shows the peak fill.
 - **Idle links and corrupted lengths:** a corrupted length can make the parser wait for bytes that never come, holding
   back good frames. Call `parser.set_idle_timeout(t)` once and `parser.tick(now)` from the main loop (any monotonic
   time unit), then `while (parser.next()) {}`; or call `resync()` / `flush()` yourself. With `length_prefixed`

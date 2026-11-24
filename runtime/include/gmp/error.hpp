@@ -23,6 +23,7 @@ enum class Error : std::uint8_t {
     Custom,         // reserved for user codecs
     UnknownEnum,    // a `strict` enum field held a value that is not one of the enum's values
     ValueOutOfLimits,  // a field value is outside its min_value / max_value / min_raw / max_raw limits
+    Overrun,        // input bytes were lost before parsing (a full gmsg::ByteRing dropped them)
 };
 
 constexpr std::string_view to_string(Error e) noexcept {
@@ -43,6 +44,7 @@ constexpr std::string_view to_string(Error e) noexcept {
         case Error::Custom: return "custom error";
         case Error::UnknownEnum: return "unknown enum value";
         case Error::ValueOutOfLimits: return "value out of limits";
+        case Error::Overrun: return "overrun";
     }
     return "unknown";
 }

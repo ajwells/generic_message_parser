@@ -345,6 +345,10 @@ gmsg_error motor_motor_link_stream_init(motor_motor_link_stream* s, uint8_t* buf
 static inline size_t motor_motor_link_stream_feed(motor_motor_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t motor_motor_link_stream_push(motor_motor_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool motor_motor_link_stream_next(motor_motor_link_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t motor_motor_link_stream_feed_ring(motor_motor_link_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t motor_motor_link_stream_push_ring(motor_motor_link_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */

@@ -1,1 +1,1 @@
-gmp_add_example(example_reserved_sync SCHEMAS ${CMAKE_CURRENT_SOURCE_DIR}/motor_link.yaml SOURCES main.cpp)
+gmp_add_example_all(example_reserved_sync SCHEMA motor_link.yaml MAIN main EXPECTED expected_output.txt)

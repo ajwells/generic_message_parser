@@ -112,6 +112,9 @@ struct Event {
     static std::size_t feed(Stream* s, const std::uint8_t* d, std::size_t n) { return CP##_stream_feed(s, d, n); } \
     static bool next(Stream* s) { return CP##_stream_next(s); } \
     static bool resync(Stream* s) { return CP##_stream_resync(s); } \
+    static std::size_t feed_ring(Stream* s, gmsg_ring* r, std::size_t max) { return CP##_stream_feed_ring(s, r, max); } \
+    static std::size_t push_ring(Stream* s, gmsg_ring* r, std::size_t max) { return CP##_stream_push_ring(s, r, max); } \
+    static std::size_t buffered(const Stream* s) { return CP##_stream_buffered(s); } \
     static bool flush(Stream* s) { return CP##_stream_flush(s); } \
     static void set_idle_timeout(Stream* s, std::uint32_t t) { CP##_stream_set_idle_timeout(s, t); } \
     static bool tick(Stream* s, std::uint32_t now) { return CP##_stream_tick(s, now); } \
@@ -668,6 +671,72 @@ void check_recovery(const std::vector<Bytes>& valid, unsigned seed) {
     CHECK(flushes > 0);
 }
 
+/// Interrupt input: the same bursts go into a gmsg::ByteRing and a gmsg_ring (small, so they overflow), and both
+/// streams drain them with the same byte limits (feed_ring, or push_ring + next): events, statistics and the ring
+/// counters must match.
+template <class T>
+void check_ring(const std::vector<Bytes>& valid, unsigned seed) {
+    using P = typename T::Cpp;
+    std::mt19937 rng(seed);
+    std::uint32_t overruns = 0;
+    for (int round = 0; round < 20; ++round) {
+        const Bytes data = noisy_stream(valid, rng);
+        INFO("round " << round);
+        std::vector<Event> expected, actual;
+        typename P::template Stream<> cpp;
+        auto handler = cpp_recorder<P>(expected);
+        static std::array<std::uint8_t, 4096> buf;
+        typename T::Stream s;
+        REQUIRE(T::stream_init(&s, buf.data(), P::max_frame) == GMSG_OK);
+        s.cb = recording_callbacks<T>(actual);
+        gmsg::ByteRing<64> cring;
+        static std::array<std::uint8_t, 64> ring_store;
+        gmsg_ring ring;
+        REQUIRE(gmsg_ring_init(&ring, ring_store.data(), ring_store.size()) == GMSG_OK);
+        auto drain = [&] {
+            const std::size_t max = rng() % 3 == 0 ? SIZE_MAX : 1 + rng() % 100;
+            if (rng() % 2) {
+                CHECK(cpp.feed(cring, max, handler) == T::feed_ring(&s, &ring, max));
+            } else {
+                CHECK(cpp.push(cring, max) == T::push_ring(&s, &ring, max));
+                while (cpp.next(handler)) {}
+                while (T::next(&s)) {}
+            }
+        };
+        for (std::size_t pos = 0; pos < data.size();) {
+            const std::size_t n = std::min<std::size_t>(1 + rng() % 80, data.size() - pos);
+            if (rng() % 3 == 0) {
+                for (std::size_t i = 0; i < n; ++i) CHECK(cring.push(data[pos + i]) == gmsg_ring_push(&ring, data[pos + i]));
+            } else {
+                CHECK(cring.push(gmsg::bytes_view(data.data() + pos, n)) == gmsg_ring_push_n(&ring, data.data() + pos, n));
+            }
+            pos += n;
+            if (rng() % 4 != 0) drain();
+        }
+        while (!cring.empty() || cring.overrun_pending()) drain();
+        // what is left is an incomplete frame: flush it in both
+        CHECK(cpp.flush(handler) == T::flush(&s));
+        REQUIRE(actual.size() == expected.size());
+        for (std::size_t i = 0; i < actual.size(); ++i) {
+            INFO("event " << i);
+            CHECK(actual[i] == expected[i]);
+        }
+        const auto* st = T::stats(&s);
+        CHECK(st->frames == cpp.stats().frames);
+        CHECK(st->frame_errors == cpp.stats().frame_errors);
+        CHECK(st->bytes_skipped == cpp.stats().bytes_skipped);
+        CHECK(st->overruns == cpp.stats().overruns);
+        CHECK(st->flushes == cpp.stats().flushes);
+        CHECK(gmsg_ring_dropped(&ring) == cring.dropped());
+        CHECK(gmsg_ring_high_water(&ring) == cring.high_water());
+        CHECK(gmsg_ring_empty(&ring));
+        CHECK(T::buffered(&s) == 0);
+        CHECK(cpp.buffered() == 0);
+        overruns += cpp.stats().overruns;
+    }
+    CHECK(overruns > 0);
+}
+
 template <class T>
 void check_frames(const std::vector<Bytes>& valid, unsigned seed) {
     for (const auto& f : valid) {
@@ -681,6 +750,7 @@ void check_frames(const std::vector<Bytes>& valid, unsigned seed) {
         check_stream<T>(valid, seed + 2);
         check_polls<T>(valid, seed + 3);
         check_recovery<T>(valid, seed + 4);
+        check_ring<T>(valid, seed + 5);
     }
 }
 
@@ -701,6 +771,7 @@ void check_protocol(unsigned seed) {
         check_stream<T>(valid, seed + 2);
         check_polls<T>(valid, seed + 3);
         check_recovery<T>(valid, seed + 4);
+        check_ring<T>(valid, seed + 5);
     }
 }
 

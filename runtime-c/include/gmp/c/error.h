@@ -23,10 +23,11 @@ typedef enum gmsg_error {
     GMSG_ERR_INVALID_VALUE,  /* generic semantic failure (used by custom codecs) */
     GMSG_ERR_CUSTOM,         /* reserved for user codecs */
     GMSG_ERR_UNKNOWN_ENUM,   /* a `strict` enum field held a value that is not one of the enum's values */
-    GMSG_ERR_VALUE_OUT_OF_LIMITS /* a field value is outside its min_value / max_value / min_raw / max_raw limits */
+    GMSG_ERR_VALUE_OUT_OF_LIMITS, /* a field value is outside its min_value / max_value / min_raw / max_raw limits */
+    GMSG_ERR_OVERRUN             /* input bytes were lost before parsing (a full gmsg_ring dropped them) */
 } gmsg_error;
 
-#define GMSG_ERROR_COUNT 16
+#define GMSG_ERROR_COUNT 17
 
 /* Short description, e.g. "bad checksum". */
 GMSG_INLINE const char* gmsg_error_str(gmsg_error e) {
@@ -47,6 +48,7 @@ GMSG_INLINE const char* gmsg_error_str(gmsg_error e) {
         case GMSG_ERR_CUSTOM: return "custom error";
         case GMSG_ERR_UNKNOWN_ENUM: return "unknown enum value";
         case GMSG_ERR_VALUE_OUT_OF_LIMITS: return "value out of limits";
+        case GMSG_ERR_OVERRUN: return "overrun";
     }
     return "unknown";
 }

@@ -1,0 +1,6 @@
+Status  uptime=3600s voltage=12.600V mode=run
+dropped 1 byte(s): bad sync
+dropped 2 byte(s): bad sync
+Samples { channel: 3, count: 3, values: [100, -100, 250] }
+Status  uptime=3600s voltage=12.600V mode=fault fault=0x0042 temp=87.5C
+frames=3 errors=0 skipped=3

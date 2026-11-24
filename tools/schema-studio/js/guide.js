@@ -705,6 +705,36 @@ message_type: { field: kind }
       <p>For <code>length_prefixed</code> framing the scanner also checks the length against the frame's message type as soon as
       the header has arrived: a body shorter than the message (or, with <code>exact_size</code>, longer) is rejected with
       <code>BadLength</code> at once.</p>
+      <h3 id="g-ring">Interrupt input: a byte ring</h3>
+      <p>${ln('Bytes that arrive in an interrupt should only be stored there; decoding and callbacks belong in the main loop. The interrupt pushes into a <code>gmsg::ByteRing&lt;N&gt;</code> (a lock-free single-producer / single-consumer queue, N a power of two) and the main loop drains it:',
+        'Bytes that arrive in an interrupt should only be stored there; decoding and callbacks belong in the main loop. The interrupt pushes into a <code>gmsg_ring</code> (<code>gmp/c/ring.h</code>, a lock-free single-producer / single-consumer queue over your buffer, a power of two) and the main loop drains it:',
+        'A <code>gmsg.ByteRing</code> is a single-producer / single-consumer byte queue. With <code>{ shared: true }</code> its storage is a <code>SharedArrayBuffer</code>, so a Worker can receive (<code>gmsg.ByteRing.attach(ring.buffer)</code>) while another thread parses:',
+        'A <code>gmsg.ByteRing</code> is a single-producer / single-consumer byte queue: a reader thread fills it and the parsing thread drains it:')}</p>
+      ${ln(code(`gmsg::ByteRing<256> rx;
+void uart_isr() { rx.push(UART->DR); }          // producer: store only
+
+for (;;) parser.feed(rx);                       // consumer: decode + callbacks here`),
+code(`static uint8_t rx_buf[256];
+static gmsg_ring rx;                            /* gmsg_ring_init(&rx, rx_buf, sizeof rx_buf) */
+void uart_isr(void) { gmsg_ring_push(&rx, (uint8_t)UART->DR); }
+
+for (;;) demo_link_stream_feed_ring(&s, &rx, SIZE_MAX);`, 'c'),
+code(`const rx = new gmsg.ByteRing(4096, { shared: true });
+worker.postMessage(rx.buffer);   // in the worker: gmsg.ByteRing.attach(buffer).pushBytes(chunk)
+
+parser.feed(rx);                 // drain and deliver`, 'js'),
+code(`rx = gmsg.ByteRing(4096)
+reader = threading.Thread(target=lambda: [rx.push_bytes(port.read(64)) for _ in iter(int, 1)])
+reader.start()
+
+parser.feed(rx)                  # drain and deliver`, 'py'))}
+      <p>A full ring drops the newest bytes (${ln('<code>rx.dropped()</code>', '<code>gmsg_ring_dropped(&amp;rx)</code>', '<code>rx.dropped</code>', '<code>rx.dropped</code>')})
+      and keeps dropping until the main loop has read everything before the gap. The parser then delivers the frames complete
+      before the gap, drops the frame in progress and reports it as
+      <code>${ln('Overrun', 'GMSG_ERR_OVERRUN', 'gmsg.Err.Overrun', 'gmsg.Err.OVERRUN')}</code> (counted in
+      ${ln('<code>stats().overruns</code>', '<code>stats.overruns</code>', '<code>stats.overruns</code>', '<code>stats.overruns</code>')}).
+      ${ln('<code>rx.high_water()</code>', '<code>gmsg_ring_high_water(&amp;rx)</code>', '<code>rx.highWater</code>', '<code>rx.high_water</code>')} shows how full the
+      ring got.${ln(' On 8- and 16-bit MCUs use a narrower index: <code>gmsg::ByteRing&lt;128, std::uint8_t&gt;</code>.', ' On 8- and 16-bit MCUs set <code>GMSG_RING_INDEX_BITS</code> to 8 or 16; without C11 atomics the indices are ordered by <code>GMSG_RING_FENCE()</code>.', '', '')}</p>
       <h3 id="g-extra">Data after the message</h3>
       <p>A frame can carry more than its message uses (a longer length, extra text tokens). By default it is ignored, so
       newer senders that append fields still work, and reported:
@@ -972,6 +1002,7 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     ['UnknownType', 'UNKNOWN_TYPE', 'No message has the frame\'s type id.'],
     ['UnknownEnum', 'UNKNOWN_ENUM', 'A strict enum field holds an undeclared value.'],
     ['ValueOutOfLimits', 'VALUE_OUT_OF_LIMITS', 'A value is outside its min_value / max_value / min_raw / max_raw.'],
+    ['Overrun', 'OVERRUN', 'Input bytes were lost before parsing (a full byte ring dropped them); the frame in progress is dropped.'],
     ['BufferFull', 'BUFFER_FULL', 'Output buffer too small, or stream buffer full without a frame.'],
     ['ParseError / MissingField', 'PARSE / MISSING_FIELD', 'A text token is invalid / a required token is empty.'],
     ['InvalidValue / Custom', 'INVALID_VALUE / CUSTOM', 'For custom codecs (also: an unknown escape code).'],
@@ -1150,7 +1181,7 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
         ['link.off<StatusView>(), link.has<StatusView>(), link.clear()', null, 'Remove, test and clear listeners.'],
         ['on<&App::on_frame>, on<&App::on_drop>', 's.cb.on_frame, s.cb.on_error', 'Every valid frame (after its message callback), and dropped bytes / rejected frames with the reason.'],
         ['parser.stats()', 'const gmsg_stream_stats* demo_link_stream_stats(const demo_link_stream* s)',
-          'Counters: frames, frame_errors, bytes_skipped, overflows, resyncs, flushes, frames_with_extra.'],
+          'Counters: frames, frame_errors, bytes_skipped, overflows, resyncs, flushes, frames_with_extra, overruns.'],
         ['parser.resync(handler)', 'bool demo_link_stream_resync(demo_link_stream* s)',
           'Give up on an incomplete frame at the head (e.g. a corrupted length): reported as Truncated, then the next scan resynchronises.'],
         ['parser.flush(handler)', 'bool demo_link_stream_flush(demo_link_stream* s)', 'Drop everything buffered (reported as Truncated).'],
@@ -1158,6 +1189,12 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
           'Resync automatically once the link has been idle for t (any time unit; the parser has no clock).'],
         ['parser.last_error(), parser.buffered(), parser.reset()', 'demo_link_stream_last_error(&s), demo_link_stream_buffered(&s), demo_link_stream_reset(&s)',
           'Reason of the last drop, bytes waiting, and start over (clears stats).'],
+        ['gmsg::ByteRing<256> rx;  rx.push(byte)', 'gmsg_ring rx;  gmsg_ring_init(&rx, buf, 256);  gmsg_ring_push(&rx, b)',
+          'A lock-free single-producer / single-consumer byte ring: the interrupt pushes, the main loop parses.'],
+        ['parser.feed(rx), parser.feed(rx, max_bytes), parser.push(rx)', 'demo_link_stream_feed_ring(&s, &rx, SIZE_MAX), demo_link_stream_push_ring(&s, &rx, max)',
+          'Drain the ring: deliver frames (feed), or move bytes only for the pull API (push). Input the full ring dropped is reported as Overrun.'],
+        ['rx.dropped(), rx.high_water()', 'gmsg_ring_dropped(&rx), gmsg_ring_high_water(&rx)',
+          'Bytes dropped because the ring was full, and the highest fill level (size the ring from it).'],
       ] },
     { id: 'poll', title: 'Pull API: ask for the next message',
       intro: 'Push bytes, then poll in your main loop or while waiting for a reply. A polled view stays valid until the parser is used again.',
@@ -1266,7 +1303,10 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     'demo::Link::CallbackStream<> link;  link.on<&App::on_status>(app)': ["parser.on('Status', (view, header) => …)  →  off()", 'Listeners per message name (or class); the header view is the second argument. on() returns a function that removes the listener.'],
     'link.off<StatusView>(), link.has<StatusView>(), link.clear()': [null],
     'on<&App::on_frame>, on<&App::on_drop>': ["parser.on('frame', fn), parser.on('error', (e) => …)", 'Every valid frame (after its message listeners), and dropped bytes / rejected frames as a GmpError with .bytes and .offset.'],
-    'parser.stats()': ['parser.stats', 'Counters: frames, frameErrors, bytesSkipped, overflows, resyncs, flushes, framesWithExtra.'],
+    'parser.stats()': ['parser.stats', 'Counters: frames, frameErrors, bytesSkipped, overflows, resyncs, flushes, framesWithExtra, overruns.'],
+    'gmsg::ByteRing<256> rx;  rx.push(byte)': ['const rx = new gmsg.ByteRing(256, { shared: true });  rx.push(b), rx.pushBytes(bytes)', 'A single-producer / single-consumer byte ring; with shared: true a Worker can fill it (gmsg.ByteRing.attach(rx.buffer)).'],
+    'parser.feed(rx), parser.feed(rx, max_bytes), parser.push(rx)': ['parser.feed(rx[, max]), parser.push(rx[, max]), parser.messages(rx), parser.events(rx)'],
+    'rx.dropped(), rx.high_water()': ['rx.dropped, rx.highWater'],
     'parser.resync(handler)': ['parser.resync()', 'Give up on an incomplete frame at the head: reported to the error listeners as Truncated.'],
     'parser.flush(handler)': ['parser.flush()'],
     'parser.set_idle_timeout(t), parser.tick(now, handler)': ['parser.setIdleTimeout(t), parser.tick(Date.now())'],
@@ -1355,7 +1395,10 @@ stream.on('frame', lambda v, h: log.info('%s', v))`))}
     'demo::Link::CallbackStream<> link;  link.on<&App::on_status>(app)': ['parser.on(demo.Status, lambda view, header: …)  →  off()', 'Listeners per message class (or name); the header view is the second argument. on() returns a function that removes the listener.'],
     'link.off<StatusView>(), link.has<StatusView>(), link.clear()': [null],
     'on<&App::on_frame>, on<&App::on_drop>': ["parser.on('frame', fn), parser.on('error', lambda e: …)", 'Every valid frame (after its message listeners), and dropped bytes / rejected frames as a GmpError with .data and .offset.'],
-    'parser.stats()': ['parser.stats', 'Counters: frames, frame_errors, bytes_skipped, overflows, resyncs, flushes, frames_with_extra.'],
+    'parser.stats()': ['parser.stats', 'Counters: frames, frame_errors, bytes_skipped, overflows, resyncs, flushes, frames_with_extra, overruns.'],
+    'gmsg::ByteRing<256> rx;  rx.push(byte)': ['rx = gmsg.ByteRing(256);  rx.push(b), rx.push_bytes(data)', 'A single-producer / single-consumer byte ring: a reader thread fills it, the parsing thread drains it.'],
+    'parser.feed(rx), parser.feed(rx, max_bytes), parser.push(rx)': ['parser.feed(rx, max_bytes=None), parser.push(rx), parser.messages(rx), parser.events(rx)'],
+    'rx.dropped(), rx.high_water()': ['rx.dropped, rx.high_water'],
     'parser.resync(handler)': ['parser.resync()', 'Give up on an incomplete frame at the head: reported to the error listeners as TRUNCATED.'],
     'parser.flush(handler)': ['parser.flush()'],
     'parser.set_idle_timeout(t), parser.tick(now, handler)': ['parser.set_idle_timeout(t), parser.tick(time.monotonic())'],

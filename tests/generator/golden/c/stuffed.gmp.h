@@ -241,6 +241,10 @@ gmsg_error link_stuffed_sync_link_stream_init(link_stuffed_sync_link_stream* s, 
 static inline size_t link_stuffed_sync_link_stream_feed(link_stuffed_sync_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_sync_link_stream_push(link_stuffed_sync_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_sync_link_stream_next(link_stuffed_sync_link_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t link_stuffed_sync_link_stream_feed_ring(link_stuffed_sync_link_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t link_stuffed_sync_link_stream_push_ring(link_stuffed_sync_link_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -402,6 +406,10 @@ gmsg_error link_stuffed_wire_checksum_stream_init(link_stuffed_wire_checksum_str
 static inline size_t link_stuffed_wire_checksum_stream_feed(link_stuffed_wire_checksum_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_wire_checksum_stream_push(link_stuffed_wire_checksum_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_wire_checksum_stream_next(link_stuffed_wire_checksum_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t link_stuffed_wire_checksum_stream_feed_ring(link_stuffed_wire_checksum_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t link_stuffed_wire_checksum_stream_push_ring(link_stuffed_wire_checksum_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -563,6 +571,10 @@ gmsg_error link_stuffed_wire_length_stream_init(link_stuffed_wire_length_stream*
 static inline size_t link_stuffed_wire_length_stream_feed(link_stuffed_wire_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_wire_length_stream_push(link_stuffed_wire_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_wire_length_stream_next(link_stuffed_wire_length_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t link_stuffed_wire_length_stream_feed_ring(link_stuffed_wire_length_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t link_stuffed_wire_length_stream_push_ring(link_stuffed_wire_length_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -724,6 +736,10 @@ gmsg_error link_stuffed_crc_length_stream_init(link_stuffed_crc_length_stream* s
 static inline size_t link_stuffed_crc_length_stream_feed(link_stuffed_crc_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_crc_length_stream_push(link_stuffed_crc_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_crc_length_stream_next(link_stuffed_crc_length_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t link_stuffed_crc_length_stream_feed_ring(link_stuffed_crc_length_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t link_stuffed_crc_length_stream_push_ring(link_stuffed_crc_length_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -885,6 +901,10 @@ gmsg_error link_stuffed_wire_crc_length_stream_init(link_stuffed_wire_crc_length
 static inline size_t link_stuffed_wire_crc_length_stream_feed(link_stuffed_wire_crc_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_wire_crc_length_stream_push(link_stuffed_wire_crc_length_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_wire_crc_length_stream_next(link_stuffed_wire_crc_length_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t link_stuffed_wire_crc_length_stream_feed_ring(link_stuffed_wire_crc_length_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t link_stuffed_wire_crc_length_stream_push_ring(link_stuffed_wire_crc_length_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -1046,6 +1066,10 @@ gmsg_error link_stuffed_wire_crc_over_wire_stream_init(link_stuffed_wire_crc_ove
 static inline size_t link_stuffed_wire_crc_over_wire_stream_feed(link_stuffed_wire_crc_over_wire_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_wire_crc_over_wire_stream_push(link_stuffed_wire_crc_over_wire_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_wire_crc_over_wire_stream_next(link_stuffed_wire_crc_over_wire_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t link_stuffed_wire_crc_over_wire_stream_feed_ring(link_stuffed_wire_crc_over_wire_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t link_stuffed_wire_crc_over_wire_stream_push_ring(link_stuffed_wire_crc_over_wire_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -1151,6 +1175,10 @@ gmsg_error link_stuffed_fixed_link_stream_init(link_stuffed_fixed_link_stream* s
 static inline size_t link_stuffed_fixed_link_stream_feed(link_stuffed_fixed_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_fixed_link_stream_push(link_stuffed_fixed_link_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_fixed_link_stream_next(link_stuffed_fixed_link_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t link_stuffed_fixed_link_stream_feed_ring(link_stuffed_fixed_link_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t link_stuffed_fixed_link_stream_push_ring(link_stuffed_fixed_link_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */
@@ -1308,6 +1336,10 @@ gmsg_error link_stuffed_delimited_stream_init(link_stuffed_delimited_stream* s, 
 static inline size_t link_stuffed_delimited_stream_feed(link_stuffed_delimited_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }
 static inline size_t link_stuffed_delimited_stream_push(link_stuffed_delimited_stream* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }
 static inline bool link_stuffed_delimited_stream_next(link_stuffed_delimited_stream* s) { return gmsg_stream_next(&s->base); }
+/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full
+ * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */
+static inline size_t link_stuffed_delimited_stream_feed_ring(link_stuffed_delimited_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }
+static inline size_t link_stuffed_delimited_stream_push_ring(link_stuffed_delimited_stream* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }
 /* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become
  * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the
  * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */

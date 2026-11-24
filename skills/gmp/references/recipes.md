@@ -202,9 +202,10 @@ int main() {
         "$GPGGA,000000,,,,,0,00,,,,,,,*66\r\n";
 
     nm::Nmea::Stream<> parser;
+    bool printed = false;
     parser.feed(gmsg::as_bytes(log.data(), log.size()),
                 gmsg::overloaded{
-                    [](const nm::GGAView& g) {
+                    [&](const nm::GGAView& g) {
                         // Text views parse lazily: each accessor returns gmsg::Result<T>.
                         std::printf("GGA time=%.0f quality=%s sats=%u", g.utc_time().value_or(0.0),
                                     nm::to_string(g.quality().value_or(nm::FixQuality::invalid)).data(),
@@ -213,6 +214,10 @@ int main() {
                         if (lat && *lat) std::printf(" lat=%.3f", **lat);
                         else std::printf(" (no fix)");
                         std::printf("\n");
+                        if (!printed) {
+                            printed = true;
+                            gmsg::println(g, stdout);  // the whole sentence, every field
+                        }
                     },
                     [](const nm::TXTView& t) {
                         std::printf("TXT \"%.*s\"\n", static_cast<int>(t.text().size()), t.text().data());
@@ -693,7 +698,8 @@ int main() {
 
 ```yaml
 # examples/custom_codec/meter.yaml
-# Custom field codec (BCD date/time) and a custom checksum function, for C++ (cpp:) and C (c:).
+# Custom field codec (BCD date/time) and a custom checksum function, for C++ (cpp:), C (c:), JavaScript (js:)
+# and Python (python:).
 schema_version: 1
 namespace: meter
 defaults: { endian: little }
@@ -704,11 +710,15 @@ custom:
       wire_size: 6
       cpp: { header: "meter_codecs.hpp", type: "meter::DateTime", decode: "meter::decode_bcd", encode: "meter::encode_bcd" }
       c: { header: "meter_codecs.h", type: "meter_datetime", decode: "meter_decode_bcd", encode: "meter_encode_bcd", print: "meter_print_datetime" }
+      js: { module: "./meter_codecs.js", decode: decodeBcd, encode: encodeBcd, print: printDateTime }
+      python: { module: meter_codecs, decode: decode_bcd, encode: encode_bcd, print: print_datetime }
   checksums:
     mod256:
       size: 1
       cpp: { header: "meter_codecs.hpp", function: "meter::mod256" }
       c: { header: "meter_codecs.h", function: "meter_mod256" }
+      js: { module: "./meter_codecs.js", function: mod256 }
+      python: { module: meter_codecs, function: mod256 }
 
 messages:
   Reading:
@@ -731,8 +741,11 @@ protocols:
 #pragma once
 // User-supplied codecs referenced from meter.yaml.
 
+#include <cstdio>
+
 #include <gmp/byte_reader.hpp>
 #include <gmp/byte_writer.hpp>
+#include <gmp/print.hpp>
 
 namespace meter {
 
@@ -758,6 +771,14 @@ inline gmsg::VoidResult encode_bcd(gmsg::ByteWriter& w, const DateTime& t) {
     for (int v : {t.year - 2000, t.month, t.day, t.hour, t.minute, t.second})
         if (auto e = w.write<std::uint8_t>(to_bcd(v)); !e) return e;
     return {};
+}
+
+/// Print hook, found by ADL: 2026-11-20 14:30:05. Without it the field prints as <?>.
+inline void gmsg_print(gmsg::Printer& p, const DateTime& t) {
+    char b[24];
+    const int n = std::snprintf(b, sizeof b, "%04d-%02d-%02d %02d:%02d:%02d", t.year, t.month, t.day, t.hour, t.minute,
+                                t.second);
+    if (n > 0) p.text(std::string_view(b, static_cast<std::size_t>(n)));
 }
 
 /// Custom checksum: modulo-256 sum.
@@ -798,6 +819,9 @@ int main() {
     if (!ts) return 1;
     std::printf("%04d-%02d-%02d %02d:%02d:%02d  %.2f kWh\n", ts->year, ts->month, ts->day, ts->hour, ts->minute,
                 ts->second, v.kwh_scaled());
+
+    // print uses the gmsg_print hook of the custom type (meter_codecs.hpp)
+    gmsg::println(*any, stdout);
     return 0;
 }
 ```

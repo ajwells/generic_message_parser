@@ -1,2 +1,1 @@
-gmp_add_example(example_nmea_text SCHEMAS ${CMAKE_CURRENT_SOURCE_DIR}/nmea.yaml SOURCES main.cpp)
-gmp_add_example(example_nmea_text_c LANG c SCHEMAS ${CMAKE_CURRENT_SOURCE_DIR}/nmea.yaml SOURCES main.c)
+gmp_add_example_all(example_nmea_text SCHEMA nmea.yaml MAIN main EXPECTED expected_output.txt)

@@ -14,9 +14,10 @@ int main() {
         "$GPGGA,000000,,,,,0,00,,,,,,,*66\r\n";
 
     nm::Nmea::Stream<> parser;
+    bool printed = false;
     parser.feed(gmsg::as_bytes(log.data(), log.size()),
                 gmsg::overloaded{
-                    [](const nm::GGAView& g) {
+                    [&](const nm::GGAView& g) {
                         // Text views parse lazily: each accessor returns gmsg::Result<T>.
                         std::printf("GGA time=%.0f quality=%s sats=%u", g.utc_time().value_or(0.0),
                                     nm::to_string(g.quality().value_or(nm::FixQuality::invalid)).data(),
@@ -25,6 +26,10 @@ int main() {
                         if (lat && *lat) std::printf(" lat=%.3f", **lat);
                         else std::printf(" (no fix)");
                         std::printf("\n");
+                        if (!printed) {
+                            printed = true;
+                            gmsg::println(g, stdout);  // the whole sentence, every field
+                        }
                     },
                     [](const nm::TXTView& t) {
                         std::printf("TXT \"%.*s\"\n", static_cast<int>(t.text().size()), t.text().data());

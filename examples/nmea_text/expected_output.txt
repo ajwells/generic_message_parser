@@ -1,0 +1,17 @@
+GGA time=123519 quality=gps sats=8 lat=4807.038
+GGA {
+  utc_time: 123519
+  latitude: 4807.038
+  lat_hemi: 'N'
+  longitude: 1131
+  lon_hemi: 'E'
+  quality: gps (0x01)
+  satellites: 8
+  hdop: 0.9
+  altitude: 545.4
+  altitude_unit: 'M'
+}
+rejected: bad checksum
+TXT "ANTSTATUS=OK"
+GGA time=0 quality=invalid sats=0 (no fix)
+encoded: $GPTXT,01,01,02,HELLO*0F

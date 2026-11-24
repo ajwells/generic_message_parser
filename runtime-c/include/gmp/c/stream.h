@@ -18,6 +18,11 @@
  *                                  unsigned time the application passes; wraparound is fine)
  *   resync / flush / tick only drop data; frames that become complete are delivered by the next
  *   gmsg_stream_next / gmsg_stream_feed / poll call.
+ *   gmsg_stream_push_ring(s, ring, max) / gmsg_stream_feed_ring(s, ring, max)
+ *                                  move bytes from a gmsg_ring (gmp/c/ring.h) filled by an interrupt, at most
+ *                                  `max` (SIZE_MAX: all). Bytes the full ring dropped are an overrun: the frames
+ *                                  complete before the gap are delivered, then the frame in progress is dropped
+ *                                  and reported to on_error as GMSG_ERR_OVERRUN.
  *
  * Views handed to callbacks point into the buffer and are valid only during the callback. Views returned by the
  * pull API stay valid until the next call that changes the stream (push / feed / next / step / pull / reset);
@@ -30,6 +35,7 @@
 #include "gmp/c/error.h"
 #include "gmp/c/framing.h"
 #include "gmp/c/mem.h"
+#include "gmp/c/ring.h"
 
 GMSG_C_BEGIN
 
@@ -41,6 +47,7 @@ typedef struct gmsg_stream_stats {
     uint32_t resyncs;        /* incomplete frames given up by gmsg_stream_resync (also from gmsg_stream_tick) */
     uint32_t flushes;        /* gmsg_stream_flush calls that dropped buffered bytes */
     uint32_t frames_with_extra; /* delivered frames with data after their message (ignored) */
+    uint32_t overruns;       /* gaps in the input taken from a gmsg_ring (each drops the frame in progress) */
 } gmsg_stream_stats;
 
 struct gmsg_stream;
@@ -69,6 +76,8 @@ typedef struct gmsg_stream {
     uint32_t idle_timeout;   /* 0 = off */
     bool ticked;
     size_t last_extra;       /* set by `process`: data after the message of the frame being accepted */
+    bool gap_pending;        /* input was lost at buf[gap] (taken from a gmsg_ring); reported by the next step */
+    size_t gap;
 } gmsg_stream;
 
 /* GMSG_ERR_BUFFER_FULL when capacity < min_capacity (the protocol's max frame). */
@@ -128,6 +137,15 @@ GMSG_API bool gmsg_stream_tick(gmsg_stream* s, uint32_t now);
 /* Push data[0..n) and process every complete frame. Returns the number of frames delivered. */
 GMSG_API size_t gmsg_stream_feed(gmsg_stream* s, const uint8_t* data, size_t n);
 
+/* Move as many bytes from `ring` as fit (at most `max`; SIZE_MAX for no limit) into the buffer without processing
+ * them (pull API). Returns bytes moved. When the ring has dropped input, its gap is taken over once everything
+ * before it has been moved; the next step reports it as GMSG_ERR_OVERRUN. */
+GMSG_API size_t gmsg_stream_push_ring(gmsg_stream* s, gmsg_ring* ring, size_t max);
+
+/* Drain `ring` (at most `max` bytes; SIZE_MAX for no limit) and process every complete frame. Returns the number of
+ * frames delivered. */
+GMSG_API size_t gmsg_stream_feed_ring(gmsg_stream* s, gmsg_ring* ring, size_t max);
+
 /* ---- implementation (header-only build, or runtime-c/src/stream.c of the library build) -------------------------------- */
 
 #if GMSG_DEFINE_FUNCTIONS_ || defined(GMSG_IMPL_STREAM_)
@@ -151,6 +169,8 @@ GMSG_API void gmsg_stream_reset(gmsg_stream* s) {
     s->holding = false;
     s->last_error = GMSG_OK;
     s->ticked = false;
+    s->gap_pending = false;
+    s->gap = 0;
     gmsg_memset(&s->stats, 0, sizeof s->stats);
 }
 
@@ -161,7 +181,7 @@ GMSG_API uint32_t gmsg_stream_generation(const gmsg_stream* s) { return s->gener
 GMSG_PRIV_ void gmsg_stream_consume_(gmsg_stream* s, size_t n) {
     const size_t avail = s->tail - s->head;
     s->head += n < avail ? n : avail;
-    if (s->head == s->tail) s->head = s->tail = 0;
+    if (s->head == s->tail) s->head = s->tail = s->gap = 0; /* a gap left can only be at the end */
 }
 
 GMSG_PRIV_ void gmsg_stream_hold_(gmsg_stream* s, size_t n) {
@@ -181,6 +201,7 @@ GMSG_PRIV_ void gmsg_stream_compact_(gmsg_stream* s) {
     if (s->head == 0) return;
     gmsg_memmove(s->buf, s->buf + s->head, s->tail - s->head);
     s->tail -= s->head;
+    if (s->gap_pending) s->gap -= s->head;
     s->head = 0;
 }
 
@@ -204,18 +225,29 @@ GMSG_PRIV_ gmsg_step gmsg_step_make_(gmsg_step_kind k, gmsg_error e, const uint8
     return st;
 }
 
+/* Drop the n bytes before the gap (the frame in progress when input was lost) as GMSG_ERR_OVERRUN. */
+GMSG_PRIV_ gmsg_step gmsg_stream_overrun_(gmsg_stream* s, size_t n) {
+    s->gap_pending = false;
+    ++s->stats.overruns;
+    s->stats.bytes_skipped += (uint32_t)n;
+    s->last_error = GMSG_ERR_OVERRUN;
+    gmsg_stream_hold_(s, n);
+    return gmsg_step_make_(GMSG_STEP_ERROR, GMSG_ERR_OVERRUN, s->buf + s->head, n);
+}
+
 GMSG_API gmsg_step gmsg_stream_step(gmsg_stream* s) {
     gmsg_stream_release_(s);
     for (;;) {
         const uint8_t* pending;
         size_t avail;
         gmsg_frame_scan sc;
+        if (s->gap_pending && s->head == s->gap) return gmsg_stream_overrun_(s, 0);
         if (s->head == s->tail) {
             s->head = s->tail = 0;
             return gmsg_step_make_(GMSG_STEP_NEED_MORE, GMSG_OK, NULL, 0);
         }
         pending = s->buf + s->head;
-        avail = s->tail - s->head;
+        avail = (s->gap_pending ? s->gap : s->tail) - s->head; /* never scan across a gap */
         sc = s->scan(pending, avail);
         if (sc.kind == GMSG_SCAN_FRAME) {
             uint8_t* frame = s->buf + s->head;
@@ -246,6 +278,7 @@ GMSG_API gmsg_step gmsg_stream_step(gmsg_stream* s) {
             s->last_error = sc.error;
             return gmsg_step_make_(GMSG_STEP_ERROR, sc.error, pending, k);
         }
+        if (s->gap_pending) return gmsg_stream_overrun_(s, avail); /* the frame in progress lost bytes */
         if (avail >= s->capacity) {
             /* buffer full but no frame: drop one byte and resync */
             ++s->stats.overflows;
@@ -279,7 +312,7 @@ GMSG_API bool gmsg_stream_resync(gmsg_stream* s) {
     const uint8_t* pending;
     size_t avail;
     gmsg_stream_release_(s);
-    if (s->head == s->tail) return false;
+    if (s->head == s->tail || s->gap_pending) return false; /* empty, or the next step drops it as an overrun */
     pending = s->buf + s->head;
     avail = s->tail - s->head;
     if (s->scan(pending, avail).kind != GMSG_SCAN_NEED_MORE) return false; /* nothing stuck at the head */
@@ -295,6 +328,12 @@ GMSG_API bool gmsg_stream_resync(gmsg_stream* s) {
 GMSG_API bool gmsg_stream_flush(gmsg_stream* s) {
     size_t avail;
     gmsg_stream_release_(s);
+    if (s->gap_pending) { /* report the lost input first, for the bytes before the gap */
+        const gmsg_step st = gmsg_stream_overrun_(s, s->gap - s->head);
+        if (s->on_error) s->on_error(s, st.error, st.data, st.size);
+        gmsg_stream_release_(s);
+        if (s->head == s->tail) return true;
+    }
     if (s->head == s->tail) return false;
     avail = s->tail - s->head;
     ++s->stats.flushes;
@@ -329,6 +368,47 @@ GMSG_API size_t gmsg_stream_feed(gmsg_stream* s, const uint8_t* data, size_t n) 
         while (gmsg_stream_next(s)) {
         }
     } while (n > 0);
+    return (size_t)(s->stats.frames - before);
+}
+
+GMSG_API size_t gmsg_stream_push_ring(gmsg_stream* s, gmsg_ring* ring, size_t max) {
+    size_t total = 0;
+    gmsg_stream_release_(s);
+    while (total < max) {
+        size_t avail, k;
+        const uint8_t* part = gmsg_ring_readable(ring, &avail);
+        if (avail == 0) {
+            if (s->gap_pending || !gmsg_ring_overrun_pending(ring)) break; /* one gap at a time in the buffer */
+            (void)gmsg_ring_readable(ring, &avail);
+            if (avail != 0) continue; /* bytes that arrived before the gap became visible */
+            gmsg_ring_clear_overrun(ring);
+            s->gap_pending = true;
+            s->gap = s->tail;
+            break;
+        }
+        if (s->head > 0 && (s->capacity - s->tail) < avail) gmsg_stream_compact_(s);
+        k = avail < s->capacity - s->tail ? avail : s->capacity - s->tail;
+        if (k > max - total) k = max - total;
+        if (k == 0) break;
+        gmsg_memcpy(s->buf + s->tail, part, k);
+        s->tail += k;
+        s->received += (uint32_t)k;
+        gmsg_ring_consume(ring, k);
+        total += k;
+    }
+    return total;
+}
+
+GMSG_API size_t gmsg_stream_feed_ring(gmsg_stream* s, gmsg_ring* ring, size_t max) {
+    const uint32_t before = s->stats.frames;
+    size_t total = 0;
+    for (;;) {
+        const size_t k = gmsg_stream_push_ring(s, ring, max - total);
+        total += k;
+        while (gmsg_stream_next(s)) { /* also reports a gap the push took over */
+        }
+        if (k == 0) break;
+    }
     return (size_t)(s->stats.frames - before);
 }
 

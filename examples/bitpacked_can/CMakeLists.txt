@@ -1,1 +1,1 @@
-gmp_add_example(example_bitpacked_can SCHEMAS ${CMAKE_CURRENT_SOURCE_DIR}/can.yaml SOURCES main.cpp)
+gmp_add_example_all(example_bitpacked_can SCHEMA can.yaml MAIN main EXPECTED expected_output.txt)

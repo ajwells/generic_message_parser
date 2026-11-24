@@ -30,7 +30,7 @@ static void test_config(void) {
 
 static void test_error(void) {
     CHECK(GMSG_OK == 0);
-    CHECK(GMSG_ERR_VALUE_OUT_OF_LIMITS == GMSG_ERROR_COUNT - 1);
+    CHECK(GMSG_ERR_OVERRUN == GMSG_ERROR_COUNT - 1);
     CHECK(gmsg_memcmp(gmsg_error_str(GMSG_ERR_BAD_CHECKSUM), "bad checksum", 13) == 0);
     CHECK(gmsg_memcmp(gmsg_error_str((gmsg_error)99), "unknown", 8) == 0);
 }
@@ -297,6 +297,175 @@ static void test_float_text(void) {
 #endif
 }
 
+/* gmsg_ring: init checks, push / wrap / readable parts, full, drop, overrun, high water, index wrap. */
+static void test_ring(void) {
+    uint8_t store[256];
+    uint8_t out[256];
+    gmsg_ring r;
+    size_t n, i;
+    const uint8_t more[7] = {10, 11, 12, 13, 14, 15, 16};
+    const uint8_t big[10] = {0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33};
+    const uint8_t* part;
+#if GMSG_C11 && !defined(__STDC_NO_ATOMICS__) && !defined(GMP_TEST_RING_FENCE)
+    CHECK(GMSG_RING_ATOMICS == 1);
+#else
+    CHECK(GMSG_RING_ATOMICS == 0);
+#endif
+    CHECK(gmsg_ring_init(&r, store, 6) == GMSG_ERR_OUT_OF_RANGE);
+    CHECK(gmsg_ring_init(&r, store, 1) == GMSG_ERR_OUT_OF_RANGE);
+    CHECK(gmsg_ring_init(&r, NULL, 8) == GMSG_ERR_OUT_OF_RANGE);
+#if GMSG_RING_INDEX_BITS == 8
+    CHECK(gmsg_ring_init(&r, store, 256) == GMSG_ERR_OUT_OF_RANGE);
+    CHECK(gmsg_ring_init(&r, store, 128) == GMSG_OK);
+#else
+    CHECK(gmsg_ring_init(&r, store, 256) == GMSG_OK);
+#endif
+    CHECK(gmsg_ring_init(&r, store, 8) == GMSG_OK);
+    CHECK(gmsg_ring_capacity(&r) == 8);
+    CHECK(gmsg_ring_empty(&r));
+    (void)gmsg_ring_readable(&r, &n);
+    CHECK(n == 0);
+    for (i = 0; i < 6; ++i) CHECK(gmsg_ring_push(&r, (uint8_t)i));
+    CHECK(gmsg_ring_size(&r) == 6);
+    gmsg_ring_consume(&r, 5);
+    CHECK(gmsg_ring_push_n(&r, more, 7) == 7);
+    CHECK(gmsg_ring_size(&r) == 8);
+    CHECK(gmsg_ring_high_water(&r) == 8);
+    part = gmsg_ring_readable(&r, &n);
+    CHECK(n == 3 && part[0] == 5);
+    CHECK(gmsg_ring_read(&r, out, sizeof out) == 8);
+    CHECK(out[0] == 5 && out[1] == 10 && out[7] == 16);
+    CHECK(gmsg_ring_empty(&r));
+    CHECK(!gmsg_ring_overrun_pending(&r));
+
+    for (i = 0; i < 8; ++i) CHECK(gmsg_ring_push(&r, (uint8_t)i));
+    CHECK(!gmsg_ring_push(&r, 99));
+    CHECK(gmsg_ring_overrun_pending(&r));
+    CHECK(gmsg_ring_dropped(&r) == 1);
+    gmsg_ring_consume(&r, 4);
+    CHECK(!gmsg_ring_push(&r, 98));
+    CHECK(gmsg_ring_push_n(&r, more, 7) == 0);
+    CHECK(gmsg_ring_dropped(&r) == 9);
+    CHECK(gmsg_ring_size(&r) == 4);
+    gmsg_ring_consume(&r, 4);
+    gmsg_ring_clear_overrun(&r);
+    CHECK(gmsg_ring_push(&r, 7));
+    CHECK(gmsg_ring_push_n(&r, big, 10) == 7);
+    CHECK(gmsg_ring_overrun_pending(&r));
+    CHECK(gmsg_ring_dropped(&r) == 12);
+
+    /* many wraps of the free-running indices (8-bit indices wrap every 256 bytes) */
+    {
+        uint8_t next_in = 0, next_out = 0;
+        uint32_t seed = 7;
+        int round, ok = 1;
+        CHECK(gmsg_ring_init(&r, store, 128) == GMSG_OK);
+        for (round = 0; round < 3000; ++round) {
+            size_t burst, take, got;
+            seed = seed * 1103515245u + 12345u;
+            burst = (seed >> 16) % 100;
+            for (i = 0; i < burst && gmsg_ring_size(&r) < 128; ++i) ok &= gmsg_ring_push(&r, next_in++);
+            seed = seed * 1103515245u + 12345u;
+            take = (seed >> 16) % 120;
+            got = gmsg_ring_read(&r, out, take);
+            for (i = 0; i < got; ++i) ok &= out[i] == next_out++;
+        }
+        CHECK(ok);
+        CHECK(!gmsg_ring_overrun_pending(&r));
+        CHECK(gmsg_ring_high_water(&r) <= 128);
+    }
+}
+
+/* A stream over a hand-written protocol: 0x24 <len> <payload...>; payload byte 0 odd = bad checksum. Events are
+ * logged as "P<n> " (frame with payload byte 0 = 2n) and "E<code>:<size> ". */
+static char g_log[256];
+static size_t g_log_n;
+static void log_char(char c) {
+    if (g_log_n + 1 < sizeof g_log) g_log[g_log_n++] = c;
+    g_log[g_log_n] = 0;
+}
+static void log_num(size_t v) {
+    char d[20];
+    int k = 0;
+    do { d[k++] = (char)('0' + v % 10); v /= 10; } while (v != 0);
+    while (k > 0) log_char(d[--k]);
+}
+static gmsg_frame_scan t_scan(const uint8_t* b, size_t n) {
+    size_t k = 0;
+    if (n == 0) return gmsg_scan_need_more(0);
+    if (b[0] != 0x24) {
+        while (k < n && b[k] != 0x24) ++k;
+        return gmsg_scan_skip(k, GMSG_ERR_BAD_SYNC);
+    }
+    if (n < 2 || n < (size_t)b[1] + 2) return gmsg_scan_need_more(0);
+    return gmsg_scan_frame((size_t)b[1] + 2, (size_t)b[1] + 2, 1);
+}
+static gmsg_error t_process(gmsg_stream* s, uint8_t* f, size_t n) {
+    (void)s;
+    if (n < 3 || (f[2] & 1)) return GMSG_ERR_BAD_CHECKSUM;
+    log_char('P');
+    log_num(f[2] / 2u);
+    log_char(' ');
+    return GMSG_OK;
+}
+static void t_error(gmsg_stream* s, gmsg_error e, const uint8_t* d, size_t n) {
+    (void)s;
+    (void)d;
+    log_char('E');
+    log_num((size_t)e);
+    log_char(':');
+    log_num(n);
+    log_char(' ');
+}
+static int log_is(const char* want) {
+    size_t i = 0;
+    while (want[i] && g_log[i] == want[i]) ++i;
+    return want[i] == 0 && g_log[i] == 0;
+}
+
+/* gmsg_stream with a gmsg_ring: overruns, byte limits, flush, and bytes pushed after a taken-over gap (the scan stops
+ * at the gap; compaction moves it). */
+static void test_stream_ring(void) {
+    static uint8_t ring_buf[16], sbuf[40];
+    static const uint8_t abc[] = {0x24, 2, 2, 0, 0x24, 2, 4, 0, 0x24, 8, 6, 0, 0, 0, 0, 0, 0, 0};
+    static const uint8_t d[] = {0x24, 2, 8, 0};
+    gmsg_ring ring;
+    gmsg_stream s;
+    size_t cap;
+    CHECK(gmsg_ring_init(&ring, ring_buf, sizeof ring_buf) == GMSG_OK);
+    for (cap = 16; cap <= 40; cap += 24) {
+        CHECK(gmsg_stream_init(&s, sbuf, cap, cap, t_scan, t_process, t_error) == GMSG_OK);
+        g_log_n = 0;
+        g_log[0] = 0;
+        CHECK(gmsg_ring_push_n(&ring, abc, sizeof abc) == 16); /* the last 2 bytes are dropped */
+        CHECK(gmsg_stream_push_ring(&s, &ring, SIZE_MAX) == 16);
+        CHECK(gmsg_stream_next(&s)); /* P1 */
+        CHECK(gmsg_stream_push(&s, d, sizeof d) == 4); /* capacity 16: compacts */
+        while (gmsg_stream_next(&s)) {
+        }
+        CHECK(log_is("P1 P2 E16:8 P4 "));
+        CHECK(s.stats.overruns == 1);
+    }
+    /* feed_ring with a byte limit, a gap between frames, and flush with a gap waiting */
+    g_log_n = 0;
+    g_log[0] = 0;
+    CHECK(gmsg_ring_push_n(&ring, abc, 8) == 8);
+    CHECK(gmsg_ring_push_n(&ring, abc, 8) == 8);
+    CHECK(!gmsg_ring_push(&ring, 0x24));
+    CHECK(gmsg_stream_feed_ring(&s, &ring, 5) == 1);
+    CHECK(gmsg_stream_feed_ring(&s, &ring, SIZE_MAX) == 3);
+    CHECK(log_is("P1 P2 P1 P2 E16:0 "));
+    g_log_n = 0;
+    g_log[0] = 0;
+    CHECK(gmsg_ring_push_n(&ring, abc, sizeof abc) == 16);
+    CHECK(gmsg_stream_push_ring(&s, &ring, SIZE_MAX) == 16);
+    CHECK(gmsg_stream_push(&s, d, 2) == 2);
+    CHECK(!gmsg_stream_resync(&s));
+    CHECK(gmsg_stream_flush(&s));
+    CHECK(log_is("E16:16 E1:2 "));
+    CHECK(gmsg_stream_buffered(&s) == 0);
+}
+
 int main(void) {
     test_config();
     test_error();
@@ -307,6 +476,8 @@ int main(void) {
     test_checksums();
     test_crc_presets_vs_bitwise();
     test_float_text();
+    test_ring();
+    test_stream_ring();
     printf("%d checks, %d failed (C%s, GMSG_USE_LIBC=%d, GMSG_CRC_TABLES=%d, GMSG_RUNTIME_LIBRARY=%d)\n", g_checks,
            g_failures, GMSG_C11 ? "11" : "99", GMSG_USE_LIBC, GMSG_CRC_TABLES, GMSG_RUNTIME_LIBRARY);
     return g_failures;

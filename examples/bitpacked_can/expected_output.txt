@@ -1,0 +1,2 @@
+rpm=500.0 gear=drive coolant=90C throttle=51.2% counter=9 flags=0xBEEF
+encoded: 70 D7 87 00 00 10 00 00

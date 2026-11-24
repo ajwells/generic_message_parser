@@ -98,8 +98,8 @@ parser.feed(chunk, gmsg::overloaded{
   - After a bad frame the parser rescans from the next byte (length-prefixed and fixed framing with sync) or after the
     frame (delimited), so a corrupt frame does not cause the next good frame to be lost.
   - If the buffer fills without a complete frame, one byte is dropped (`BufferFull`) and scanning continues.
-- **`stats()`** returns `frames`, `frame_errors`, `bytes_skipped`, `overflows`, `resyncs`, `flushes` and
-  `frames_with_extra`. `reset()` clears the buffer and stats; `buffered()` is the number of pending bytes.
+- **`stats()`** returns `frames`, `frame_errors`, `bytes_skipped`, `overflows`, `resyncs`, `flushes`,
+  `frames_with_extra` and `overruns`. `reset()` clears the buffer and stats; `buffered()` is the number of pending bytes.
 - **Length check by message type** (`length_prefixed` framing whose length counts unescaped bytes): as soon as the
   header has arrived, a length the frame's message type cannot have is rejected with `BadLength` instead of waiting
   for the body: shorter than the message's minimum size, or (with `exact_size`) longer than its maximum. Unknown type
@@ -107,7 +107,8 @@ parser.feed(chunk, gmsg::overloaded{
 - Views passed to the handler point into the parser's buffer and are valid only during the call. Copy what you need,
   or call `to_struct()`.
 - Handlers run synchronously inside `feed()` / `next()`. If `feed()` is called from an interrupt, the handlers run there
-  too.
+  too. To keep decoding out of the interrupt, push the bytes into a `gmsg::ByteRing` there and drain it from the main
+  loop (see [interrupt input](#interrupt-input-byte-ring)).
 
 ### Pulling messages (`poll`)
 
@@ -238,6 +239,53 @@ parser.flush(handler);                          // drop everything buffered
   `stream.resync()`, `flush()`, `set_idle_timeout(t)`, `tick(now)` (e.g. `time.monotonic()`; errors go to the `'error'`
   listeners).
 
+### Interrupt input (byte ring)
+
+When bytes arrive in an interrupt (UART RX, USB, a DMA half-transfer), the interrupt should only store them; decoding
+and callbacks belong in the main loop. `gmsg::ByteRing<N>` (`gmp/byte_ring.hpp`) is a lock-free single-producer /
+single-consumer byte queue for that:
+
+```cpp
+gmsg::ByteRing<256> rx;                          // N: a power of two
+demo::Link::CallbackStream<> parser;
+
+extern "C" void USART1_IRQHandler() { rx.push(static_cast<std::uint8_t>(USART1->DR)); }   // producer
+
+for (;;) {                                       // consumer: main loop
+    parser.feed(rx);                             // or feed(rx, max_bytes) to bound the time per call
+    // ... other work; rx.high_water() tells how full the ring got
+}
+```
+
+- **Producer side** (one interrupt or thread): `push(byte)` returns `false` when the byte was dropped;
+  `push(span)` returns how many bytes went in. It never blocks and never disables interrupts.
+- **Consumer side** (one context): `parser.feed(ring)` / `feed(ring, max_bytes)` move bytes straight from the ring
+  storage into the parser and deliver frames; `parser.push(ring)` moves bytes only (then `poll()`). Raw access without a
+  parser: `readable()` + `consume(n)`, or `read(span)`.
+- **Synchronisation:** the free-running indices are `std::atomic` with acquire / release ordering. On 8- and 16-bit
+  targets, where a 32-bit access is not a single instruction, use a narrower index: `ByteRing<128, std::uint8_t>`
+  (N up to half the index range).
+- **Overflow:** a full ring drops the newest byte and counts it (`dropped()`), and marks an overrun. Until the main
+  loop has read every byte that arrived before the gap, further input is dropped too, so the ring holds at most one gap.
+  The parser draining the ring then delivers the frames complete before the gap, drops the frame in progress and
+  reports it as `FrameError{Overrun, its bytes}` (empty when the gap fell between frames), counted in
+  `stats().overruns`. Scanning continues with the bytes after the gap. With the pull API the error comes from
+  `poll_event()` like any other.
+- Size the ring for the longest time the main loop can be away, at the line rate: `high_water()` shows the highest
+  fill level reached.
+- **C:** `gmp/c/ring.h`: `gmsg_ring_init(&r, buf, size)` (caller buffer, a power of two), `gmsg_ring_push(&r, b)`,
+  `gmsg_ring_push_n`, `gmsg_ring_dropped`, `gmsg_ring_high_water`; streams drain it with
+  `<p>_stream_feed_ring(&s, &r, max)` / `_push_ring` (`SIZE_MAX` for no limit), and the overrun goes to
+  `cb.on_error` as `GMSG_ERR_OVERRUN`. Indices are C11 `_Atomic` when `<stdatomic.h>` is available; C99 and
+  compilers without atomics use `volatile` indices ordered by `GMSG_RING_FENCE()` (default `__sync_synchronize()` on
+  GCC / Clang). `GMSG_RING_INDEX_BITS` (32, 16 or 8) narrows the indices.
+- **JavaScript:** `new gmsg.ByteRing(capacity)`, `ring.push(byte)` / `pushBytes(bytes)`, `stream.feed(ring[, max])`,
+  `stream.push(ring[, max])`, and `messages(ring)` / `events(ring)`. With `{ shared: true }` the storage is a
+  `SharedArrayBuffer`: hand `ring.buffer` to a Worker, attach there with `gmsg.ByteRing.attach(buffer)`, and receive in
+  one thread while parsing in another (indices use `Atomics`).
+- **Python:** `gmsg.ByteRing(capacity)`, `ring.push(byte)` / `push_bytes(data)`, `stream.feed(ring, max_bytes=None)`,
+  `stream.push(ring)`, `messages(ring)` / `events(ring)`: a reader thread fills the ring, the parsing thread drains it.
+
 ### Data after the message
 
 A frame (or buffer) can hold more data than its message uses: a `length_prefixed` length larger than the message, or
@@ -352,15 +400,17 @@ readable name.
 | `MissingField` | A required text token is empty, or a conditional field's optional is empty on encode. |
 | `UnknownEnum` | A field of a `strict` enum holds a value that is not declared (on decode, or in a struct being encoded). |
 | `ValueOutOfLimits` | A value is outside its `min_value`/`max_value`/`min_raw`/`max_raw` (on decode, or in a struct being encoded). |
+| `Overrun` | Input bytes were lost before parsing: a full `ByteRing` dropped them. Reported by the stream that drains the ring; the frame in progress is dropped. See [interrupt input](#interrupt-input-byte-ring). |
 | `InvalidValue`, `Custom` | For use by custom codecs. |
 
 ## C output
 
 `gmpc --lang c` (or `gmp_generate(... LANG c)`) writes `<schema>.gmp.h` and `<schema>.gmp.c` for C99 or later, using
 the C runtime in `runtime-c/` (header-only, or a compiled library: see [C runtime](#c-runtime-header-only-or-library)).
-The generated header also compiles as C++. C programs using the same schemas as the C++ examples are `main.c` in
+The generated header also compiles as C++. Every example has a C version, `main.c`, for example
 [examples/binary_telemetry](examples/binary_telemetry) (stream + callbacks), [examples/nmea_text](examples/nmea_text)
-(push + `_poll_event`) and [examples/custom_codec](examples/custom_codec) (`c:` codecs and a print hook).
+(push + `_poll_event`), [examples/reserved_sync](examples/reserved_sync) (escaping, whole-buffer parse) and
+[examples/custom_codec](examples/custom_codec) (`c:` codecs and a print hook).
 
 Everything the C++ backend generates is generated for C:
 - binary messages: structs and views, with bits, `const`, `pad`, `when`, bytes/strings/arrays, nested messages,
@@ -520,7 +570,7 @@ in Node.js, import them through a bundler, or load them with `<script>` tags in 
 where the runtime is the global `gmsg` and the generated module the global named after the namespace
 (`acme::telemetry` → `acme_telemetry`; `--opt global=NAME` picks another). The generated module requires the runtime as
 `./gmsg.js`, so put the two side by side, or set `--opt runtime=<module id>`. `gmp_generate(... LANG js)` copies the
-runtime into its output directory.
+runtime into its output directory. Every example in [examples/](examples) has a JavaScript version, `main.js`.
 
 ```js
 const gmsg = require('./gmsg.js');
@@ -580,7 +630,7 @@ generator sources).
 `gmpc --lang python` (or `gmp_generate(... LANG python)`) writes one module per schema, `<schema>_gmp.py`, for Python
 3.12 and later. It imports the runtime package [`gmsg`](runtime-py) (`runtime-py/gmsg`, pure Python, no dependencies):
 install it with `pip install ./runtime-py`, or put `runtime-py` on `sys.path` / `PYTHONPATH`. `--opt runtime=pkg.gmsg`
-imports a vendored copy instead.
+imports a vendored copy instead. Every example in [examples/](examples) has a Python version, `main.py`.
 
 ```python
 import gmsg
@@ -659,7 +709,7 @@ ctest --test-dir build
 |--------------|---------|-------------|
 | `GMP_BUILD_GENERATOR` | `ON` | Build `gmpc`. Turn off when cross-compiling only the runtime and pointing `gmp_generate` at a host `gmpc`. |
 | `GMP_BUILD_TESTS` | `ON` when top level | Runtime, generator and round-trip tests. |
-| `GMP_BUILD_EXAMPLES` | `ON` when top level | Programs in `examples/`. |
+| `GMP_BUILD_EXAMPLES` | `ON` when top level | Programs in `examples/` (C++, C; the JavaScript / Python versions when Node.js / Python 3.12+ are found), with output tests. |
 | `GMP_BUILD_BENCH` | `OFF` | Throughput benchmark `gmp_bench` (build in Release). |
 
 The JavaScript tests run under Node.js, found on `PATH` or in an emsdk install (`EMSDK`, or `~/emsdk`); without Node

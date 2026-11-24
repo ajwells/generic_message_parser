@@ -153,7 +153,7 @@ TEST_CASE("C runtime bit fields match the C++ runtime") {
 }
 
 TEST_CASE("C runtime error codes match the C++ runtime") {
-    REQUIRE(gmpct_error_count() == static_cast<int>(gmsg::Error::ValueOutOfLimits) + 1);
+    REQUIRE(gmpct_error_count() == static_cast<int>(gmsg::Error::Overrun) + 1);
     for (int e = 0; e < gmpct_error_count(); ++e) {
         INFO("error " << e);
         CHECK(std::string_view(gmpct_error_str(e)) == gmsg::to_string(static_cast<gmsg::Error>(e)));

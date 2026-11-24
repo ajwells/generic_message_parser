@@ -254,7 +254,63 @@ struct ProtocolCase {
                                ",\"stats\":[" + std::to_string(st.frames) + "," + std::to_string(st.frame_errors) + "," +
                                std::to_string(st.bytes_skipped) + "," + std::to_string(st.overflows) + "," +
                                std::to_string(st.resyncs) + "," + std::to_string(st.flushes) + "," +
-                               std::to_string(st.frames_with_extra) + "]}";
+                               std::to_string(st.frames_with_extra) + "," + std::to_string(st.overruns) + "]}";
+                }
+                // ring run: bursts into a 32-byte ByteRing (P<n> as one span, B<n> byte by byte), drained by
+                // F<max> (feed(ring, max)) or U<max> (push(ring, max), then next() until more input is needed);
+                // max 0 means no limit. At the end the ring is drained completely and the parser flushed (R<did>).
+                {
+                    std::string ev, script;
+                    typename P::template Stream<> parser;
+                    gmsg::ByteRing<32> ring;
+                    auto on_view = [&](const auto& v) { ev += "M:" + text(v, true) + "\n"; };
+                    auto handler = gmsg::overloaded{
+                        [&](const gmsg::FrameError& e) {
+                            ev += "E" + std::to_string(static_cast<int>(e.error)) + ":" + std::to_string(e.data.size()) + "\n";
+                        },
+                        [&](const auto&... a) {
+                            if constexpr (sizeof...(a) == 2) {
+                                const auto& [h, v] = std::tie(a...);
+                                ev += "H:" + text(h, true) + "\n";
+                                on_view(v);
+                            } else {
+                                (on_view(a), ...);
+                            }
+                        },
+                    };
+                    auto drain = [&](char how, std::size_t max) {
+                        script += how + std::to_string(max) + " ";
+                        const std::size_t limit = max ? max : static_cast<std::size_t>(-1);
+                        if (how == 'F') {
+                            (void)parser.feed(ring, limit, handler);
+                        } else {
+                            (void)parser.push(ring, limit);
+                            while (parser.next(handler)) {}
+                        }
+                    };
+                    for (std::size_t pos = 0; pos < wire.size();) {
+                        const std::size_t n = std::min<std::size_t>(1 + rng() % 40, wire.size() - pos);
+                        if (rng() % 3 == 0) {
+                            script += "B" + std::to_string(n) + " ";
+                            for (std::size_t i = 0; i < n; ++i) (void)ring.push(wire[pos + i]);
+                        } else {
+                            script += "P" + std::to_string(n) + " ";
+                            (void)ring.push(gmsg::bytes_view(wire.data() + pos, n));
+                        }
+                        pos += n;
+                        const auto k = rng() % 4;
+                        if (k != 0) drain(k == 3 ? 'U' : 'F', rng() % 3 == 0 ? 0 : 1 + rng() % 50);
+                    }
+                    while (!ring.empty() || ring.overrun_pending()) drain('F', 0);
+                    ev += std::string("R") + (parser.flush(handler) ? "1" : "0") + "\n";
+                    const auto& st = parser.stats();
+                    streams += ",\n" + std::string("{\"hex\":") + hex(wire) + ",\"chunk\":0,\"ring\":" + js(script) +
+                               ",\"events\":" + js(ev) + ",\"stats\":[" + std::to_string(st.frames) + "," +
+                               std::to_string(st.frame_errors) + "," + std::to_string(st.bytes_skipped) + "," +
+                               std::to_string(st.overflows) + "," + std::to_string(st.resyncs) + "," +
+                               std::to_string(st.flushes) + "," + std::to_string(st.frames_with_extra) + "," +
+                               std::to_string(st.overruns) + "],\"ringStats\":[" + std::to_string(ring.dropped()) + "," +
+                               std::to_string(ring.high_water()) + "]}";
                 }
             }
         }

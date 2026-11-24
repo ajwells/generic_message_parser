@@ -31,6 +31,7 @@ from .framing import (NO_ESCAPE, DelimitedConfig, EscapeConfig, FixedConfig, Fra
                       map_escape, matches_at, read_frame_header, scan_delimited, scan_fixed, scan_length_prefixed,
                       unescape, unescaped_size, walk_escaped, xor_escape)
 from .printer import Printer, to_text
+from .ring import ByteRing
 from .stream import Received, StreamParser, StreamStats, extra_of
 
 __version__ = "0.1.0"
@@ -54,7 +55,7 @@ __all__ = [
     "unescape", "unescaped_size", "check_escaped", "escape_overhead", "escape_range", "escape",
     "FrameScan", "FixedConfig", "LengthPrefixedConfig", "DelimitedConfig", "find_pattern_at_start", "matches_at",
     "scan_fixed", "scan_length_prefixed", "scan_delimited",
-    "StreamParser", "StreamStats", "Received", "extra_of",
+    "StreamParser", "StreamStats", "Received", "extra_of", "ByteRing",
     "format_float", "format_general", "parse_float",
     "Printer", "to_text", "use_native", "NATIVE",
     "GmpEnum", "known_enum", "Opened", "FieldRange", "TextField", "i64", "count", "limited", "as_view", "fixed_array",

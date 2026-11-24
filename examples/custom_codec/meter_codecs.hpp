@@ -1,8 +1,11 @@
 #pragma once
 // User-supplied codecs referenced from meter.yaml.
 
+#include <cstdio>
+
 #include <gmp/byte_reader.hpp>
 #include <gmp/byte_writer.hpp>
+#include <gmp/print.hpp>
 
 namespace meter {
 
@@ -28,6 +31,14 @@ inline gmsg::VoidResult encode_bcd(gmsg::ByteWriter& w, const DateTime& t) {
     for (int v : {t.year - 2000, t.month, t.day, t.hour, t.minute, t.second})
         if (auto e = w.write<std::uint8_t>(to_bcd(v)); !e) return e;
     return {};
+}
+
+/// Print hook, found by ADL: 2026-11-20 14:30:05. Without it the field prints as <?>.
+inline void gmsg_print(gmsg::Printer& p, const DateTime& t) {
+    char b[24];
+    const int n = std::snprintf(b, sizeof b, "%04d-%02d-%02d %02d:%02d:%02d", t.year, t.month, t.day, t.hour, t.minute,
+                                t.second);
+    if (n > 0) p.text(std::string_view(b, static_cast<std::size_t>(n)));
 }
 
 /// Custom checksum: modulo-256 sum.

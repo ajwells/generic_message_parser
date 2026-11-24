@@ -3,6 +3,10 @@
 `protocol` (a generated protocol class) provides: max_frame, scan(pending) -> FrameScan, and process(frame: bytes)
 -> Received (raises GmpError when the frame is invalid). Messages are delivered to listeners (`on(...)`) or pulled
 (`poll()`, iterators). The frame handed to process() is an immutable copy, so views never expire.
+
+Input from another thread: the producer pushes into a ByteRing (gmsg.ring) and the consumer calls feed(ring) (or
+push(ring) + poll()). Bytes the full ring dropped are an overrun: the frames complete before the gap are delivered,
+then the frame in progress is dropped and reported as Err.OVERRUN.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from typing import Any, Callable, Iterator
 from .core import to_bytes
 from .errors import Err, GmpError, fail
 from .framing import FrameScan
+from .ring import ByteRing
 
 
 @dataclass
@@ -36,6 +41,7 @@ class StreamStats:
     resyncs: int = 0            # incomplete frames given up by resync() (also from tick())
     flushes: int = 0            # flush() calls that dropped buffered bytes
     frames_with_extra: int = 0  # delivered frames with data after their message
+    overruns: int = 0           # gaps in the input taken from a ByteRing (each drops the frame in progress)
 
 
 def extra_of(v: Any) -> int:
@@ -79,6 +85,8 @@ class StreamParser:
         self._ticked = False
         self._seen = 0
         self._last_activity = 0
+        self._gap_pending = False  # input was lost at _buf[_gap] (taken from a ByteRing); reported by the next step
+        self._gap = 0
 
     @property
     def buffered(self) -> int:
@@ -116,8 +124,12 @@ class StreamParser:
         self._emit("error", e)
 
     # ---- input --------------------------------------------------------------------------------------------------
-    def push(self, data: Any) -> int:
-        """Copy as much of `data` as fits; returns the number of bytes accepted."""
+    def push(self, data: Any, max_bytes: int | None = None) -> int:
+        """Copy as much of `data` as fits; returns the number of bytes accepted. With a ByteRing: move as many bytes as
+        fit (at most `max_bytes`) without processing them (pull API); a gap in the ring is taken over once everything
+        before it has been moved, and the next step reports it as Err.OVERRUN."""
+        if isinstance(data, ByteRing):
+            return self._push_ring(data, max_bytes)
         b = to_bytes(data)
         if self._head > 0 and self.capacity - self._tail < len(b):
             self._compact()
@@ -127,8 +139,21 @@ class StreamParser:
         self._received += n
         return n
 
-    def feed(self, data: Any) -> int:
-        """Push all of `data` and deliver every complete frame to the listeners. Returns the number of frames."""
+    def feed(self, data: Any, max_bytes: int | None = None) -> int:
+        """Push all of `data` and deliver every complete frame to the listeners. Returns the number of frames.
+        With a ByteRing: drain it (at most `max_bytes`); a gap in the ring goes to the 'error' listeners as
+        Err.OVERRUN."""
+        if isinstance(data, ByteRing):
+            before = self.stats.frames
+            total = 0
+            while True:
+                n = self._push_ring(data, None if max_bytes is None else max_bytes - total)
+                total += n
+                while self.next():  # also reports a gap the push took over
+                    pass
+                if not n:
+                    break
+            return self.stats.frames - before
         b = memoryview(to_bytes(data))
         before = self.stats.frames
         while True:
@@ -154,7 +179,7 @@ class StreamParser:
         """Give up on the frame at the head of the buffer when it is incomplete (e.g. a corrupted length claims more
         bytes than will arrive): report it to the 'error' listeners as Truncated with its buffered bytes, drop its
         first byte and let the next scan resynchronise. False when the buffer is empty or its head frame is complete."""
-        if self._head == self._tail:
+        if self._head == self._tail or self._gap_pending:  # the next step drops it as an overrun
             return False
         pending = bytes(self._buf[self._head:self._tail])
         if self.protocol.scan(pending).kind != "need_more":
@@ -170,6 +195,10 @@ class StreamParser:
     def flush(self) -> bool:
         """Drop every buffered byte, reported to the 'error' listeners as one Truncated error. False when nothing was
         buffered."""
+        if self._gap_pending:  # report the lost input first, for the bytes before the gap
+            self._report(self._overrun(self._gap - self._head)[1])
+            if self._head == self._tail:
+                return True
         if self._head == self._tail:
             return False
         offset = self._consumed
@@ -238,7 +267,15 @@ class StreamParser:
             self._deliver(f)
 
     def messages(self, data: Any = b"") -> Iterator[Any]:
-        """The messages in `data` (pushed in pieces as room allows), then anything already buffered."""
+        """The messages in `data` (pushed in pieces as room allows), then anything already buffered. With a ByteRing:
+        the messages of what it holds now."""
+        if isinstance(data, ByteRing):
+            while True:
+                n = self._push_ring(data)
+                while (m := self.poll()) is not None:
+                    yield m
+                if not n:
+                    return
         b = memoryview(to_bytes(data))
         while True:
             n = self.push(b)
@@ -250,6 +287,13 @@ class StreamParser:
 
     def events(self, data: Any = b"") -> Iterator[Received | GmpError]:
         """Like messages(), yielding poll_event() results (messages and errors)."""
+        if isinstance(data, ByteRing):
+            while True:
+                n = self._push_ring(data)
+                while (e := self.poll_event()) is not None:
+                    yield e
+                if not n:
+                    return
         b = memoryview(to_bytes(data))
         while True:
             n = self.push(b)
@@ -265,6 +309,8 @@ class StreamParser:
         self.last_error = Err.NONE
         self._consumed = 0
         self._ticked = False
+        self._gap_pending = False
+        self._gap = 0
 
     # ---- internals ----------------------------------------------------------------------------------------------
     def _pull(self) -> Received | None:
@@ -280,10 +326,12 @@ class StreamParser:
         """Scan to the next frame or reportable error (StreamParser::step). Consumed bytes are dropped at once:
         frames and error data are copies."""
         while True:
+            if self._gap_pending and self._head == self._gap:
+                return self._overrun(0)
             if self._head == self._tail:
                 self._head = self._tail = 0
                 return "need_more", None
-            pending = memoryview(self._buf)[self._head:self._tail]
+            pending = memoryview(self._buf)[self._head:self._gap if self._gap_pending else self._tail]  # not across a gap
             s: FrameScan = self.protocol.scan(pending)
             offset = self._consumed
             if s.kind == "frame":
@@ -322,9 +370,11 @@ class StreamParser:
                 self._consume(n)
                 self.last_error = s.error
                 return "error", _error(s.error, data, offset)
-            full = len(pending) >= self.capacity
+            n = len(pending)
             pending.release()
-            if full:
+            if self._gap_pending:  # the frame in progress lost bytes
+                return self._overrun(n)
+            if n >= self.capacity:
                 self.stats.overflows += 1
                 self.stats.bytes_skipped += 1
                 data = bytes(self._buf[self._head:self._head + 1])
@@ -335,16 +385,59 @@ class StreamParser:
                 self._compact()
             return "need_more", None
 
+    def _overrun(self, n: int) -> tuple[str, Any]:
+        """Drop the `n` bytes before the gap (the frame in progress when input was lost) as Err.OVERRUN."""
+        self._gap_pending = False
+        self.stats.overruns += 1
+        self.stats.bytes_skipped += n
+        self.last_error = Err.OVERRUN
+        offset = self._consumed
+        data = bytes(self._buf[self._head:self._head + n])
+        self._consume(n)
+        return "error", _error(Err.OVERRUN, data, offset)
+
+    def _push_ring(self, ring: ByteRing, max_bytes: int | None = None) -> int:
+        total = 0
+        while max_bytes is None or total < max_bytes:
+            part = ring.readable()
+            if not len(part):
+                part.release()
+                if self._gap_pending or not ring.overrun_pending:  # one gap at a time in the buffer
+                    break
+                if not ring.empty:  # bytes that arrived before the gap became visible
+                    continue
+                ring.clear_overrun()
+                self._gap_pending = True
+                self._gap = self._tail
+                break
+            if self._head > 0 and self.capacity - self._tail < len(part):
+                self._compact()
+            n = min(len(part), self.capacity - self._tail)
+            if max_bytes is not None:
+                n = min(n, max_bytes - total)
+            if not n:
+                part.release()
+                break
+            self._buf[self._tail:self._tail + n] = part[:n]
+            part.release()
+            self._tail += n
+            self._received += n
+            ring.consume(n)
+            total += n
+        return total
+
     def _consume(self, n: int) -> None:
         n = min(n, self._tail - self._head)
         self._consumed += n
         self._head += n
         if self._head == self._tail:
-            self._head = self._tail = 0
+            self._head = self._tail = self._gap = 0  # a gap left can only be at the end
 
     def _compact(self) -> None:
         if self._head == 0:
             return
         self._buf[0:self._tail - self._head] = self._buf[self._head:self._tail]
         self._tail -= self._head
+        if self._gap_pending:
+            self._gap -= self._head
         self._head = 0

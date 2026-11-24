@@ -2,6 +2,7 @@
 // gmp/gmp.hpp - umbrella header included by generated code.
 
 #include "gmp/bits.hpp"
+#include "gmp/byte_ring.hpp"
 #include "gmp/byte_reader.hpp"
 #include "gmp/byte_writer.hpp"
 #include "gmp/callbacks.hpp"

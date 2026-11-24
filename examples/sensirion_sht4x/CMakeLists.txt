@@ -1,2 +1,2 @@
-gmp_add_example(example_sensirion_sht4x SCHEMAS ${CMAKE_CURRENT_SOURCE_DIR}/sht4x.yaml SOURCES main.cpp)
-gmp_add_example(example_sensirion_sht4x_enum SCHEMAS ${CMAKE_CURRENT_SOURCE_DIR}/sht4x_enum.yaml SOURCES main_enum.cpp)
+gmp_add_example_all(example_sensirion_sht4x SCHEMA sht4x.yaml MAIN main EXPECTED expected_output.txt)
+gmp_add_example_all(example_sensirion_sht4x_enum SCHEMA sht4x_enum.yaml MAIN main_enum EXPECTED expected_output_enum.txt)

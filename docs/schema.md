@@ -183,6 +183,8 @@ protocols:
   `exact_size`.
 - Streams recover on an idle link with `resync()` (give up an incomplete head frame), `flush()` (drop everything) and
   `set_idle_timeout(t)` + `tick(now)` (resync after `t` without new bytes; `now` is any monotonic unsigned time).
+- Interrupt input: the ISR pushes into a `gmsg::ByteRing<N>` (C `gmsg_ring`), the main loop calls `feed(ring)`. Input a
+  full ring dropped is reported as `Overrun` (the frame in progress is dropped), counted in `stats().overruns`.
 
 ### framing
 

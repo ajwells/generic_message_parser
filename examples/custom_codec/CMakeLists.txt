@@ -1,2 +1,3 @@
-gmp_add_example(example_custom_codec SCHEMAS ${CMAKE_CURRENT_SOURCE_DIR}/meter.yaml SOURCES main.cpp)
-gmp_add_example(example_custom_codec_c LANG c SCHEMAS ${CMAKE_CURRENT_SOURCE_DIR}/meter.yaml SOURCES main.c)
+# meter_codecs.hpp / .h are found through the include path; the JS / Python codec modules go next to the generated code.
+gmp_add_example_all(example_custom_codec SCHEMA meter.yaml MAIN main EXPECTED expected_output.txt
+        JS_FILES meter_codecs.js PY_FILES meter_codecs.py)

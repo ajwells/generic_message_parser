@@ -217,6 +217,10 @@ private:
             h_.line("static inline size_t " + st + "_feed(" + st + "* s, const uint8_t* data, size_t n) { return gmsg_stream_feed(&s->base, data, n); }");
             h_.line("static inline size_t " + st + "_push(" + st + "* s, const uint8_t* data, size_t n) { return gmsg_stream_push(&s->base, data, n); }");
             h_.line("static inline bool " + st + "_next(" + st + "* s) { return gmsg_stream_next(&s->base); }");
+            h_.line("/* Interrupt input: drain a gmsg_ring filled by an ISR (at most max bytes; SIZE_MAX: all). Bytes the full");
+            h_.line(" * ring dropped are reported to cb.on_error as GMSG_ERR_OVERRUN; _push_ring moves bytes only (pull API). */");
+            h_.line("static inline size_t " + st + "_feed_ring(" + st + "* s, gmsg_ring* ring, size_t max) { return gmsg_stream_feed_ring(&s->base, ring, max); }");
+            h_.line("static inline size_t " + st + "_push_ring(" + st + "* s, gmsg_ring* ring, size_t max) { return gmsg_stream_push_ring(&s->base, ring, max); }");
             h_.line("/* Recovery (they only drop data, reported to cb.on_error as GMSG_ERR_TRUNCATED; frames that become");
             h_.line(" * complete are delivered by the next _next / _feed / poll call): give up on an incomplete frame at the");
             h_.line(" * head, drop everything, or resync from _tick(s, now) after an idle timeout (0 = off; any time unit). */");

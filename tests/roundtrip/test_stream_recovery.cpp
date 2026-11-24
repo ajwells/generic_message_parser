@@ -168,3 +168,55 @@ TEST_CASE("tick: timeout 0 is off; a stored handler and pull mode get the same r
         CHECK(r.levels == std::vector<int>{1, 2});
     }
 }
+
+// ---- interrupt input through gmsg::ByteRing ------------------------------------------------------------------
+
+TEST_CASE("generated streams drain a ByteRing; an overrun drops the frame in progress") {
+    const Bytes a = frame_of(log_msg(1)), b = frame_of(log_msg(2)), c = frame_of(log_msg(3)), d = frame_of(log_msg(4));
+    gmsg::ByteRing<32> ring;
+    const std::size_t complete = a.size() + b.size() + c.size();
+    REQUIRE(complete < 32);
+    REQUIRE(complete + d.size() > 32);
+    for (const Bytes* f : {&a, &b, &c}) CHECK(ring.push(gmsg::bytes_view(*f)) == f->size());
+    ring.push(gmsg::bytes_view(d));  // only its start fits
+    CHECK(ring.overrun_pending());
+
+    SECTION("feed(ring) with a handler") {
+        Link::Stream<> sp;
+        Recorder rec;
+        CHECK(sp.feed(ring, rec) == 3);
+        CHECK(rec.levels == std::vector<int>{1, 2, 3});
+        CHECK(rec.errors == std::vector<gmsg::Error>{gmsg::Error::Overrun});
+        CHECK(rec.error_sizes == std::vector<std::size_t>{32 - complete});
+        CHECK(ring.push(gmsg::bytes_view(d)) == d.size());
+        CHECK(sp.feed(ring, rec) == 1);
+        CHECK(rec.levels == std::vector<int>{1, 2, 3, 4});
+    }
+    SECTION("CallbackStream: the error listener gets the overrun") {
+        struct App {
+            std::vector<int> levels;
+            std::vector<gmsg::Error> errors;
+            void on_log(const tel::LogView& v) { levels.push_back(v.level()); }
+            void on_error(const gmsg::FrameError& e) { errors.push_back(e.error); }
+        } app;
+        Link::CallbackStream<> sp;
+        sp.on<&App::on_log>(app).on<&App::on_error>(app);
+        CHECK(sp.feed(ring) == 3);
+        CHECK(app.levels == std::vector<int>{1, 2, 3});
+        CHECK(app.errors == std::vector<gmsg::Error>{gmsg::Error::Overrun});
+    }
+    SECTION("pull API: poll_event returns the overrun inline, in stream order") {
+        Link::Stream<> sp;
+        sp.push(ring);
+        std::vector<int> order;  // level, or -1 for the overrun
+        while (auto ev = sp.poll_event()) {
+            if (const auto* v = std::get_if<Link::AnyView>(&*ev)) order.push_back(std::get<tel::LogView>(*v).level());
+            else {
+                CHECK(std::get<gmsg::FrameError>(*ev).error == gmsg::Error::Overrun);
+                order.push_back(-1);
+            }
+        }
+        CHECK(order == std::vector<int>{1, 2, 3, -1});
+        CHECK(sp.stats().overruns == 1);
+    }
+}

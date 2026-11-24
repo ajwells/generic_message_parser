@@ -33,6 +33,7 @@ The API and every result are the same with and without it; the GMP test suite ru
 | `gmsg.checksum` | presets (`crc32`, `crc16_ccitt`, `xor8`, ...), `crc(width, poly, ...)`, `PRESETS` |
 | `gmsg.framing` | escape configurations, `FrameScan`, `scan_fixed` / `scan_length_prefixed` / `scan_delimited` |
 | `gmsg.stream` | `StreamParser`, `Received`, `StreamStats`, `extra_of` |
+| `gmsg.ring` | `ByteRing`: single-producer / single-consumer byte queue (a reader thread fills it, `stream.feed(ring)` drains it) |
 | `gmsg.text` | token splitting, `parse_int` / `parse_float`, `TextWriter` |
 | `gmsg.floattext` | `format_float`, `format_general`, `parse_float` |
 | `gmsg.printer` | `Printer`, `to_text` |

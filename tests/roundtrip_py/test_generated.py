@@ -124,7 +124,28 @@ def check_protocol(proto):
         s.on("frame", on_frame)
         s.on("error", lambda e: ev.append(f"E{int(e.code)}:{len(e.data)}\n"))
         wire = bytes.fromhex(c["hex"])
-        if c.get("chunk"):
+        ring = None
+        if c.get("ring"):
+            # ring run (js_crossref.cpp): the recorded pushes into a 32-byte ByteRing and the drains
+            ring = gmsg.ByteRing(32)
+            pos = 0
+            for tok in c["ring"].split():
+                n = int(tok[1:])
+                if tok[0] == "P":
+                    ring.push_bytes(wire[pos:pos + n])
+                    pos += n
+                elif tok[0] == "B":
+                    for i in range(n):
+                        ring.push(wire[pos + i])
+                    pos += n
+                elif tok[0] == "F":
+                    s.feed(ring, n or None)
+                else:
+                    s.push(ring, n or None)
+                    while s.next():
+                        pass
+            ev.append(f"R{1 if s.flush() else 0}\n")
+        elif c.get("chunk"):
             for pos in range(0, len(wire), c["chunk"]):
                 s.feed(wire[pos:pos + c["chunk"]])
         else:
@@ -149,8 +170,10 @@ def check_protocol(proto):
                 state["k"] += 1
         T.eq("".join(ev), c["events"], f"{proto['name']} stream {c['hex']} chunk {c.get('chunk')}")
         st = s.stats
-        T.eq([st.frames, st.frame_errors, st.bytes_skipped, st.overflows, st.resyncs, st.flushes, st.frames_with_extra],
-             c["stats"], f"{proto['name']} stream stats")
+        T.eq([st.frames, st.frame_errors, st.bytes_skipped, st.overflows, st.resyncs, st.flushes, st.frames_with_extra,
+              st.overruns], c["stats"], f"{proto['name']} stream stats")
+        if ring is not None:
+            T.eq([ring.dropped, ring.high_water], c["ringStats"], f"{proto['name']} ring stats")
 
 
 for msg in ref["messages"]:
